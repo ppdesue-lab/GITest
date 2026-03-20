@@ -98,13 +98,14 @@ set(third_party_libs
 
 #definitions and includes
 set(all_includes src
+    ${CMAKE_SOURCE_DIR}
     D:/gitclones/CarveraCAM/thirdparty/glm
     ${imgui_SOURCE_DIR}
+    
 )
 set(all_compiler_definitions 
   APP_ROOT_PATH=\"${CMAKE_SOURCE_DIR}\"
 )
-
 
 
 set(all_includes ${all_includes} ${stb_SOURCE_DIR})
