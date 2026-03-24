@@ -15,6 +15,11 @@ public:
     void DestroyWindow() override;
     void PollEvents() override;
     bool ShouldClose() const override;
+
+	void* GetNativeWindow() const override { return m_Data.glfwWindow; }
+
+    unsigned int GetWidth() const override { return m_Data.Width; }
+    unsigned int GetHeight() const override { return m_Data.Height; }
 private:
     WindowData m_Data;
 

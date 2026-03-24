@@ -5,17 +5,22 @@
 #include "Renderer/Renderer.h"
 #include "Renderer/RenderCommand.h"
 
+
+Application* Application::s_Instance = nullptr;
+
 Application::Application()
 {
     Log::Init();
     INFO("Application Initialized");
+    s_Instance = this;
 
     m_WindowInterface = CreateWindow(800, 600, "KEngine Application");
     
     RenderCommand::Init();
     // Push ImGui layer as overlay
-    auto imguiLayer = std::make_shared<ImGuiLayer>();
-    PushOverlay(imguiLayer);
+    m_ImGuiLayer = std::make_shared<ImGuiLayer>();
+    PushOverlay(m_ImGuiLayer);
+
 }
 
 void Application::Run()
@@ -29,11 +34,10 @@ void Application::Run()
         }
         
         // Render all layers
-        for (auto& layer : m_LayerStack)
-        {
-            layer->OnRender();
-        }
-
+        m_ImGuiLayer->Begin();
+        for (auto layer : m_LayerStack)
+            layer->OnImGuiRender();
+		m_ImGuiLayer->End();
         m_WindowInterface->PollEvents();
     }
 }

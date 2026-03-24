@@ -1,6 +1,7 @@
 #include "stdsfx.h"
 #include "kengine.h"
 
+#include <imgui.h>
 class ExampleLayer : public Layer
 {
 public:
@@ -26,6 +27,13 @@ public:
 
         RenderCommand::Clear();
     }
+
+    void OnImGuiRender() override
+    {
+        ImGui::Begin("Example Layer");
+        ImGui::Text("Hello from the Example Layer!");
+        ImGui::End();
+	}
 
     void OnEvent(Event& event) override
     {
