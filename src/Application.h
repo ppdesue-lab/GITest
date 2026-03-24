@@ -4,6 +4,7 @@
 #include "Log.h"
 #include "base.h"
 #include "Event.h"
+#include "ApplicationEvent.h"
 #include "LayerStack.h"
 #include "ImGuiLayer.h"
 #include <memory>
@@ -25,9 +26,13 @@ public:
     void PopOverlay(std::shared_ptr<Layer> overlay);
 
     static Application& Get() { return *s_Instance; }
+
+    bool OnWindowClose(WindowCloseEvent& e);
+    bool OnWindowResize(WindowResizeEvent& e);
 private:
     WindowInterface* m_WindowInterface = nullptr;
     LayerStack m_LayerStack;
+	bool m_Running = true;
 
 	Ref<ImGuiLayer> m_ImGuiLayer;
 

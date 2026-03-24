@@ -16,6 +16,7 @@ public:
     void PollEvents() override;
     bool ShouldClose() const override;
 
+	void SetEventCallback(const EventCallbackFn& callback) { m_Data.EventCallback = callback; }
 	void* GetNativeWindow() const override { return m_Data.glfwWindow; }
 
     unsigned int GetWidth() const override { return m_Data.Width; }

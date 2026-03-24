@@ -1,4 +1,4 @@
-#include "stdsfx.h"
+﻿#include "stdsfx.h"
 #include "kengine.h"
 
 #include <imgui.h>
@@ -30,14 +30,14 @@ public:
 
     void OnImGuiRender() override
     {
-        ImGui::Begin("Example Layer");
-        ImGui::Text("Hello from the Example Layer!");
+        ImGui::Begin(u8"中文");
+        ImGui::Text(u8"你好,imgui!");
         ImGui::End();
 	}
 
     void OnEvent(Event& event) override
     {
-
+        INFO("{}", event.GetName());
     }
 
 
