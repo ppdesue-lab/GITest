@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 file(GLOB_RECURSE SRC_FILES src/*.cpp src/*.h)
 
+
 #------------------third party
 include(FetchContent)
 #assimp

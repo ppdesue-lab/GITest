@@ -5,9 +5,10 @@
 class ExampleLayer : public Layer
 {
 public:
+    Scope<Axis> axis;
     ExampleLayer()
     {
-
+        axis = CreateScope<Axis>();
     }
 
     void OnAttach() override
@@ -24,8 +25,9 @@ public:
     void OnUpdate() override
     {
         RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
-
         RenderCommand::Clear();
+
+        RenderCommand::DrawLines(axis->GetVertexArray(), axis->GetCount());
     }
 
     void OnImGuiRender() override

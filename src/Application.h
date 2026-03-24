@@ -7,6 +7,7 @@
 #include "ApplicationEvent.h"
 #include "LayerStack.h"
 #include "ImGuiLayer.h"
+#include <Primitive/Primitive.h>
 #include <memory>
 
 class Application
