@@ -16,14 +16,14 @@ public:
     WindowInterface& GetWindowInterface() { return *m_WindowInterface; }
 
     void OnEvent(Event& e);
-    
+
     void PushLayer(std::shared_ptr<Layer> layer);
     void PushOverlay(std::shared_ptr<Layer> overlay);
     void PopLayer(std::shared_ptr<Layer> layer);
     void PopOverlay(std::shared_ptr<Layer> overlay);
-    
+
 private:
     WindowInterface* m_WindowInterface = nullptr;
     LayerStack m_LayerStack;
-        
+
 };

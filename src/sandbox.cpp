@@ -1,10 +1,47 @@
 #include "stdsfx.h"
 #include "kengine.h"
 
+class ExampleLayer : public Layer
+{
+public:
+    ExampleLayer()
+    {
+
+    }
+
+    void OnAttach() override
+    {
+
+    }
+
+
+    void OnDetach() override
+    {
+
+    }
+
+    void OnUpdate() override
+    {
+        RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
+
+        RenderCommand::Clear();
+    }
+
+    void OnEvent(Event& event) override
+    {
+
+    }
+
+
+};
+
 class SandboxApp : public Application
 {
 public:
-    SandboxApp() = default;
+    SandboxApp()
+    {
+        PushLayer(CreateRef<ExampleLayer>());
+    };
     ~SandboxApp() override = default;
 
 

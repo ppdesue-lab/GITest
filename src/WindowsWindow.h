@@ -4,6 +4,7 @@
 
 
 #include "WindowInterface.h"
+#include <Renderer/GraphicsContext.h>
 
 class WindowsWindow : public WindowInterface
 {
@@ -17,6 +18,7 @@ public:
 private:
     WindowData m_Data;
 
+    Scope<GraphicsContext> m_Context;
 };
 
 #endif

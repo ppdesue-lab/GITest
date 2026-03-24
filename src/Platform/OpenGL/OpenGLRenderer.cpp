@@ -27,12 +27,20 @@ void OpenGLRenderer::Clear()
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
-void OpenGLRenderer::DrawIndexed()
+void OpenGLRenderer::DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount)
 {
-	glDrawElements(GL_TRIANGLES, 0, GL_UNSIGNED_INT, nullptr);
+	vertexArray->Bind();
+	uint32_t count = indexCount ? indexCount : vertexArray->GetIndexBuffer()->GetCount();
+	glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, nullptr);
 }
 
-void OpenGLRenderer::DrawLines()
+void OpenGLRenderer::DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount)
 {
-	glDrawArrays(GL_LINES, 0, 0);
+	vertexArray->Bind();
+	glDrawArrays(GL_LINES, 0, indexCount);
+}
+
+void OpenGLRenderer::SetLineWidth(float width)
+{
+	glLineWidth(width);
 }

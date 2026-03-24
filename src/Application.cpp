@@ -2,6 +2,9 @@
 #include "Application.h"
 #include "ImGuiLayer.h"
 
+#include "Renderer/Renderer.h"
+#include "Renderer/RenderCommand.h"
+
 Application::Application()
 {
     Log::Init();
@@ -9,6 +12,7 @@ Application::Application()
 
     m_WindowInterface = CreateWindow(800, 600, "KEngine Application");
     
+    RenderCommand::Init();
     // Push ImGui layer as overlay
     auto imguiLayer = std::make_shared<ImGuiLayer>();
     PushOverlay(imguiLayer);

@@ -26,12 +26,19 @@ void WindowsWindow::Create(int width, int height, const std::string& title)
     m_Data.Height = height;
     m_Data.Title = title;
 
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // No OpenGL context
+    //glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    //glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    //glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
     m_Data.glfwWindow = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
     if (!m_Data.glfwWindow)
     {
         throw std::runtime_error("Failed to create GLFW window");
     }
+
+    //context for renderer
+    m_Context = GraphicsContext::Create(m_Data.glfwWindow);
+    m_Context->Init();
 }
 void WindowsWindow::DestroyWindow()
 {
@@ -43,8 +50,8 @@ void WindowsWindow::DestroyWindow()
 }
 void WindowsWindow::PollEvents()
 {
-
-    glfwSwapBuffers(static_cast<GLFWwindow*>(m_Data.glfwWindow));
+    m_Context->SwapBuffers();
+    //glfwSwapBuffers(static_cast<GLFWwindow*>(m_Data.glfwWindow));
     glfwPollEvents();
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Renderer/Renderer.h>
+#include <Renderer/VertexArray.h>
 
 class OpenGLRenderer : public Renderer
 {
@@ -11,6 +12,10 @@ public:
     virtual void Clear()override;
 
     //drawing
-    virtual void DrawIndexed() override;
-    virtual void DrawLines() override;
+    virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount=0) override;
+    virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount) override;
+
+
+    virtual void SetLineWidth(float width);
+
 };
