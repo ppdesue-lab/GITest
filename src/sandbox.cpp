@@ -6,9 +6,14 @@ class ExampleLayer : public Layer
 {
 public:
     Scope<Axis> axis;
+	Scope<Object3D> obj;
     ExampleLayer()
     {
         axis = CreateScope<Axis>();
+
+        obj = CreateScope<Object3D>();
+		obj->Load<VertexColor>("D:/Untitled.obj");
+        obj->Meshes[0]->Transfm.scale = glm::vec3(0.01, 0.01, 0.01);
     }
 
     void OnAttach() override
@@ -34,6 +39,8 @@ public:
         shader->SetMat4("u_Model", glm::mat4(1.0f));
 
         RenderCommand::DrawLines(axis->GetVertexArray(), axis->GetCount());
+
+		obj->Draw(camera->GetViewMatrix(), camera->GetProjectionMatrix());
     }
 
     void OnImGuiRender() override

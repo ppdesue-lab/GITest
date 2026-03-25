@@ -9,7 +9,10 @@ class Material
 public:
     ~Material() = default;
 
-    virtual void Bind() { MatShader->Bind(); };
+    virtual void Bind() {
+        assert(MatShader);
+        MatShader->Bind(); 
+    };
 
 	Ref<Shader> MatShader;
 };
@@ -17,9 +20,7 @@ public:
 class MaterialColor : public Material
 {
 public:
-    MaterialColor(const glm::vec3& color) :
-        Material(), Color(color) {
-    }
+    MaterialColor(const glm::vec3& color=glm::vec3(1,0,1));
 
     glm::vec3 Color;
 

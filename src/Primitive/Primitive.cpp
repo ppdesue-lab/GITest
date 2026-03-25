@@ -38,4 +38,6 @@ void Axis::Create()
 
     m_Count = indices.size();
 
+    m_VertexArray->Unbind();
+
 }

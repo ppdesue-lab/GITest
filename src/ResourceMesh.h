@@ -4,10 +4,6 @@
 #include "Resource.h"
 #include <glm/glm.hpp>
 
-struct Vertex
-{
-    
-};
 
 class ResourceMesh : public Resource<ResourceType::Mesh> {
 
