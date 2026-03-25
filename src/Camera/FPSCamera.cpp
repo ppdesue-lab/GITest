@@ -16,7 +16,7 @@ FPSCamera::FPSCamera()
     , m_aspectRatio(16.0f / 9.0f)
     , m_nearPlane(0.1f)
     , m_farPlane(1000.0f)
-    , m_inputEnabled(true)
+    , m_inputEnabled(false)
 {
     updateVectors();
 }
@@ -37,7 +37,7 @@ FPSCamera::FPSCamera(glm::vec3 position, glm::vec3 target, float fov, float aspe
     , m_aspectRatio(aspectRatio)
     , m_nearPlane(0.1f)
     , m_farPlane(1000.0f)
-    , m_inputEnabled(true)
+    , m_inputEnabled(false)
 {
     updateVectors();
 }
@@ -124,12 +124,12 @@ void FPSCamera::lookAt(float x, float y, float z)
     lookAt(glm::vec3(x, y, z));
 }
 
-glm::mat4 FPSCamera::getViewMatrix() const
+glm::mat4 FPSCamera::GetViewMatrix() const
 {
     return glm::lookAt(m_position, m_position + m_forward, glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
-glm::mat4 FPSCamera::getProjectionMatrix() const
+glm::mat4 FPSCamera::GetProjectionMatrix() const
 {
     return glm::perspective(glm::radians(m_fov), m_aspectRatio, m_nearPlane, m_farPlane);
 }
@@ -199,9 +199,22 @@ bool FPSCamera::isInputEnabled() const
     return m_inputEnabled;
 }
 
-void FPSCamera::processMouseMovement(float offsetX, float offsetY)
+void FPSCamera::processMouseMovement(float curX, float curY)
 {
-    if (!m_inputEnabled) return;
+
+    static float lastx = curX;
+    static float lasty = curY;
+
+    if (!m_inputEnabled)
+    {
+        lastx = curX;
+        lasty = curY;
+        return;
+    }
+    float offsetX = curX - lastx;
+    float offsetY = curY - lasty;
+    lastx = curX;
+    lasty = curY;
     
     m_yaw += offsetX * m_mouseSensitivity;
     m_pitch -= offsetY * m_mouseSensitivity;
@@ -216,7 +229,7 @@ void FPSCamera::processMouseMovement(float offsetX, float offsetY)
 
 void FPSCamera::processKeyboard(int forward, int right, int up, float deltaTime)
 {
-    if (!m_inputEnabled) return;
+    //if (!m_inputEnabled) return;
     
     float velocity = m_movementSpeed * deltaTime;
     

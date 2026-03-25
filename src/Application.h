@@ -4,17 +4,20 @@
 #include "Log.h"
 #include "base.h"
 #include "Event.h"
+#include "MouseEvent.h"
+#include "KeyEvent.h"
 #include "ApplicationEvent.h"
 #include "LayerStack.h"
 #include "ImGuiLayer.h"
 #include <Primitive/Primitive.h>
 #include <memory>
 #include <Renderer/Shader.h>
+#include <Camera/Camera.h>
 
 class Application
 {
 public:
-    Application();
+    Application(int width=800,int height=600);
     virtual ~Application() = default;
     virtual void Run();
 
@@ -31,8 +34,10 @@ public:
 
     bool OnWindowClose(WindowCloseEvent& e);
     bool OnWindowResize(WindowResizeEvent& e);
-
+public:
 	Ref<ShaderLibrary> GetShaderLibrary() { return m_ShaderLibrary; }
+	Ref<Camera> GetCamera() { return m_Camera; }
+
 private:
     WindowInterface* m_WindowInterface = nullptr;
     LayerStack m_LayerStack;
@@ -40,6 +45,7 @@ private:
 
 	Ref<ImGuiLayer> m_ImGuiLayer;
 	Ref<ShaderLibrary> m_ShaderLibrary;
+	Ref<Camera> m_Camera;
 
     static Application* s_Instance;
 };

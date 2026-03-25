@@ -14,7 +14,7 @@ void Axis::Create()
 {
     std::vector<glm::vec3>vertices =
     {
-        glm::vec3(0.0f, 0.0f, 0.0f),glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 0.0f, 0.0f),glm::vec3(1.0f, 1.0f, 1.0f),
         glm::vec3(Length.x, 0.0f, 0.0f),glm::vec3(1.0f, 0.0f, 0.0f),
         glm::vec3(0.0f, Length.y, 0.0f),glm::vec3(0.0f, 1.0f, 0.0f),
         glm::vec3(0.0f, 0.0f, Length.z),glm::vec3(0.0f, 0.0f, 1.0f)
@@ -23,8 +23,8 @@ void Axis::Create()
 
     m_VertexArray = VertexArray::Create();
 
-    uint32_t datasize = vertices.size() * sizeof(glm::vec3);
-    auto vertexBuffer = VertexBuffer::Create((float*)&vertices[0].x, datasize);
+    uint32_t sizeInBytes = vertices.size() * sizeof(glm::vec3);
+    auto vertexBuffer = VertexBuffer::Create((float*)&vertices[0].x, sizeInBytes);
     
     BufferLayout layout={
         BufferElement(ShaderDataType::Float3,"a_Position",false),
@@ -34,9 +34,8 @@ void Axis::Create()
     m_VertexArray->AddVertexBuffer(vertexBuffer);
     
     auto m_IndexBuffer = IndexBuffer::Create(indices.data(), indices.size());
-	m_VertexArray->Bind();
     m_VertexArray->SetIndexBuffer(m_IndexBuffer);
 
-    m_Count = 6;
+    m_Count = indices.size();
 
 }

@@ -37,7 +37,7 @@ void OpenGLRenderer::DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t i
 void OpenGLRenderer::DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount)
 {
 	vertexArray->Bind();
-	glDrawArrays(GL_LINES, 0, indexCount);
+	glDrawElements(GL_LINES, indexCount,GL_UNSIGNED_INT,nullptr);
 }
 
 void OpenGLRenderer::SetLineWidth(float width)

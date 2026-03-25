@@ -9,7 +9,7 @@ class Material
 public:
     ~Material() = default;
 
-    virtual void Bind() = 0;
+    virtual void Bind() { MatShader->Bind(); };
 
 	Ref<Shader> MatShader;
 };

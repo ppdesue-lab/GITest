@@ -27,9 +27,10 @@ public:
         RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
         RenderCommand::Clear();
         auto shader = Application::Get().GetShaderLibrary()->Get("DefaultColor");
+		auto camera = Application::Get().GetCamera();
         shader->Bind();
-		shader->SetMat4("u_View", glm::mat4(1.0f));
-		shader->SetMat4("u_Projection", glm::mat4(1.0f));
+		shader->SetMat4("u_View", camera->GetViewMatrix());
+		shader->SetMat4("u_Projection", camera->GetProjectionMatrix());
         shader->SetMat4("u_Model", glm::mat4(1.0f));
 
         RenderCommand::DrawLines(axis->GetVertexArray(), axis->GetCount());

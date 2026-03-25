@@ -6,7 +6,9 @@
 #include <GLM/gtc/quaternion.hpp>
 #include <GLM/gtx/quaternion.hpp>
 
-class FPSCamera
+#include "Camera.h"
+
+class FPSCamera : public Camera
 {
 public:
     FPSCamera();
@@ -33,8 +35,8 @@ public:
     void lookAt(glm::vec3 target);
     void lookAt(float x, float y, float z);
     
-    glm::mat4 getViewMatrix() const;
-    glm::mat4 getProjectionMatrix() const;
+    glm::mat4 GetViewMatrix() const override;
+    glm::mat4 GetProjectionMatrix() const override;
     
     void setFOV(float fov);
     float getFOV() const;
