@@ -22,6 +22,8 @@ Application::Application()
     m_ImGuiLayer = std::make_shared<ImGuiLayer>();
     PushOverlay(m_ImGuiLayer);
 
+	m_ShaderLibrary = CreateRef<ShaderLibrary>();
+    m_ShaderLibrary->LoadDefault();
 }
 
 void Application::Run()

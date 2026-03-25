@@ -9,6 +9,7 @@
 #include "ImGuiLayer.h"
 #include <Primitive/Primitive.h>
 #include <memory>
+#include <Renderer/Shader.h>
 
 class Application
 {
@@ -30,12 +31,15 @@ public:
 
     bool OnWindowClose(WindowCloseEvent& e);
     bool OnWindowResize(WindowResizeEvent& e);
+
+	Ref<ShaderLibrary> GetShaderLibrary() { return m_ShaderLibrary; }
 private:
     WindowInterface* m_WindowInterface = nullptr;
     LayerStack m_LayerStack;
 	bool m_Running = true;
 
 	Ref<ImGuiLayer> m_ImGuiLayer;
+	Ref<ShaderLibrary> m_ShaderLibrary;
 
     static Application* s_Instance;
 };

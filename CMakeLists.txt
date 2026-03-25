@@ -18,6 +18,7 @@ FetchContent_Declare(
   GIT_TAG v5.3.1
 )
 
+
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -51,7 +52,7 @@ FetchContent_Declare(
   GIT_TAG v0.1.36
 )
 
-set(GLAD_API gl=3.3 CACHE STRING "" FORCE)
+set(GLAD_API gl=4.6 CACHE STRING "" FORCE)
 
 FetchContent_MakeAvailable(glad)
 
@@ -84,9 +85,23 @@ FetchContent_Declare(
 # 获取并构建 imgui
 FetchContent_MakeAvailable(imgui)
 
+
 #make an imgui folder and put all of these files in the imgui folder
 add_subdirectory(src/thirdparty/imgui) #libimgui
 
+#shaderc_shared
+#FetchContent_Declare(
+#    shaderc
+#    GIT_REPOSITORY https://github.com/google/shaderc.git
+#    GIT_TAG v2025.5  # 指定版本标签
+#)
+#set(SHADERC_SKIP_TESTS ON)
+#set(SHADERC_SKIP_EXAMPLES ON)
+#set(SHADERC_SKIP_INSTALL ON)
+#FetchContent_MakeAvailable(shaderc)
+
+#---------------------------
+find_package(Vulkan REQUIRED)
 
 #------------------third party end
 set(third_party_libs
@@ -95,12 +110,17 @@ set(third_party_libs
   glad
   spdlog
   libimgui
+  Vulkan::Vulkan
+#C:/VulkanSDK/1.3.275.0/Lib/shaderc_shared.lib
+#C:/VulkanSDK/1.3.275.0/Lib/spirv-cross-core.lib
+#C:/VulkanSDK/1.3.275.0/Lib/spirv-cross-glsl.lib
 )
 
 #definitions and includes
 set(all_includes src
     ${CMAKE_SOURCE_DIR}
     D:/gitclones/CarveraCAM/thirdparty/glm
+    ${Vulkan_INCLUDE_DIRS}
     ${imgui_SOURCE_DIR}
     
 )

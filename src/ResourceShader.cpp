@@ -1,4 +1,4 @@
-#include "Shader.h"
+#include "ResourceShader.h"
 #include "Log.h"
 #include <fstream>
 #include <sstream>
