@@ -3,7 +3,6 @@
 #include <Renderer/RenderCommand.h>
 
 #include <functional>
-#include "ResourceMesh.h"
 
 
 void Mesh::Draw(const glm::mat4& view,const glm::mat4 proj)
@@ -153,7 +152,7 @@ bool Object3D::Load(const std::string& filepath) {
 			BufferElement(ShaderDataType::Float3,"a_Position",false),
 			BufferElement(ShaderDataType::Float3,"a_Normal",false),
 		};
-		meshmat = CreateRef<MaterialPhong>();
+		meshmat = CreateRef<MaterialMatcap>();
 	}
 
 	vbuffer->SetLayout(layout);
