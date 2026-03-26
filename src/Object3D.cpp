@@ -13,7 +13,15 @@ void Mesh::Draw(const glm::mat4& view,const glm::mat4 proj)
 	Mat->MatShader->SetMat4("u_Projection", proj);
 	//set model
 	Mat->MatShader->SetMat4("u_Model", Transfm.GetMatrix());
+	{
+		//phong stuff
+		glm::vec3 viewpos = glm::vec3(view[3]);
+		Mat->MatShader->SetFloat3("u_lightPos", glm::vec3(0,10,0));
+		Mat->MatShader->SetFloat3("u_viewPos", viewpos);
+		Mat->MatShader->SetFloat3("u_lightColor", glm::vec3(0, 1, 0));
+		Mat->MatShader->SetFloat3("u_objectColor", glm::vec3(1, 1, 1));
 
+	}
     RenderCommand::DrawIndexed(VertexObject);
 };
 
@@ -115,7 +123,7 @@ bool Object3D::Load(const std::string& filepath) {
 	};
 	
 	Assimp::Importer importer;
-	const aiScene* scene = importer.ReadFile(filepath, aiProcess_Triangulate | aiProcess_FlipUVs);
+	const aiScene* scene = importer.ReadFile(filepath, aiProcess_Triangulate | aiProcess_GenNormals | aiProcess_FlipUVs);
 	if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
 		std::cerr << "Failed to load mesh: " << filepath << std::endl;
 		return false;
@@ -129,12 +137,23 @@ bool Object3D::Load(const std::string& filepath) {
 	auto VertexObject = VertexArray::Create();
 	auto vbuffer = VertexBuffer::Create((float*)vertices.data(), vertices.size() * sizeof(T));
 	BufferLayout layout;
+	Ref<Material> meshmat = nullptr;
 	if constexpr (std::is_same_v<T, VertexColor>)
 	{
 		layout = {
 			BufferElement(ShaderDataType::Float3,"a_Position",false),
 			BufferElement(ShaderDataType::Float3,"a_Color",false),
 		};
+
+		meshmat = CreateRef<MaterialColor>();
+	}
+	else if constexpr (std::is_same_v<T, VertexNormal>)
+	{
+		layout = {
+			BufferElement(ShaderDataType::Float3,"a_Position",false),
+			BufferElement(ShaderDataType::Float3,"a_Normal",false),
+		};
+		meshmat = CreateRef<MaterialPhong>();
 	}
 
 	vbuffer->SetLayout(layout);
@@ -144,7 +163,7 @@ bool Object3D::Load(const std::string& filepath) {
 	VertexObject->Unbind();
 	mesh->VertexObject = VertexObject;
 
-	mesh->Mat = CreateRef<MaterialColor>();
+	mesh->Mat = meshmat;
 	Meshes.clear();
 	Meshes.push_back(mesh);
 
@@ -154,6 +173,7 @@ bool Object3D::Load(const std::string& filepath) {
 
 //template bool Object3D::Load<VertexBase>(const std::string& filepath);
 template bool Object3D::Load<VertexColor>(const std::string& filepath);
+template bool Object3D::Load<VertexNormal>(const std::string& filepath);
 
 
 //

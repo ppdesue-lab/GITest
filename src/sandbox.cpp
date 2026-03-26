@@ -12,7 +12,7 @@ public:
         axis = CreateScope<Axis>();
 
         obj = CreateScope<Object3D>();
-		obj->Load<VertexColor>("D:/Untitled.obj");
+		obj->Load<VertexNormal>("D:/Untitled.obj");
         obj->Meshes[0]->Transfm.scale = glm::vec3(0.01, 0.01, 0.01);
     }
 

@@ -1,4 +1,4 @@
-#include "stdsfx.h"
+﻿#include "stdsfx.h"
 #include "Shader.h"
 #include "Renderer.h"
 
@@ -116,5 +116,72 @@ void ShaderLibrary::LoadDefault()
 
 
 #pragma endregion
+#pragma region phong shader with color
+	{
+		auto vSource = R"(
+			#version 330 core
+			layout(location = 0) in vec3 a_Position;
+			layout(location = 1) in vec3 a_Normal;
+
+			uniform mat4 u_View;
+			uniform mat4 u_Projection;
+			uniform mat4 u_Model;
+			out vec3 v_Position;
+			out vec3 v_Normal;
+			void main()
+			{
+				v_Normal = mat3(transpose(inverse(u_Model))) * a_Normal;
+				vec4 fragPos = u_Model * vec4(a_Position, 1.0);
+				v_Position = fragPos.xyz;
+				gl_Position = u_Projection * u_View * fragPos;
+			}
+		)";
+
+		auto fSource = R"(
+			#version 330 core
+			
+			layout(location = 0) out vec4 color;
+			in vec3 v_Position;
+			in vec3 v_Normal;
+
+			uniform vec3 u_lightPos;
+			uniform vec3 u_viewPos;
+
+			uniform vec3 u_lightColor;
+			uniform vec3 u_objectColor;
+			
+			void main()
+			{
+				// --- 环境光 ---
+				float ambientStrength = 0.1;
+				vec3 ambient = ambientStrength * u_lightColor;
+
+				// --- 漫反射 ---
+				vec3 norm = normalize(v_Normal);
+				vec3 lightDir = normalize(u_lightPos - v_Position);
+
+				float diff = max(dot(norm, lightDir), 0.0);
+				vec3 diffuse = diff * u_lightColor;
+
+				// --- 镜面反射 ---
+				float specularStrength = 0.5;
+				vec3 viewDir = normalize(u_viewPos - v_Position);
+				vec3 reflectDir = reflect(-lightDir, norm);
+
+				float shininess = 32.0;
+				float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
+
+				vec3 specular = specularStrength * spec * u_lightColor;
+
+				// --- 合成 ---
+				vec3 result =  (ambient + diffuse + specular) * u_objectColor;
+				color = vec4(result, 1.0);
+			}
+		)";
+		//create shader
+		Load("DefaultPhong", vSource, fSource);
+	}
+#pragma endregion
+
 
 }

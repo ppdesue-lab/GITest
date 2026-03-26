@@ -5,33 +5,7 @@
 #include <Renderer/Material.h>
 #include <Renderer/VertexArray.h>
 
-
-struct VertexBase
-{
-	glm::vec3 Position;
-};
-
-struct VertexColor : public VertexBase
-{
-	glm::vec3 Color;
-};
-
-struct VertexTexture : public VertexBase
-{
-    glm::vec2 TexCoord;
-};
-
-struct VertexNormal : public VertexBase
-{
-    glm::vec3 Normal;
-};
-
-struct VertexNormalTexture : public VertexBase
-{
-    glm::vec3 Normal;
-    glm::vec2 TexCoord;
-};
-
+#include <Renderer/VertexDesc.h>
 
 class Mesh
 {
@@ -58,3 +32,4 @@ public:
 };
 
 extern template bool Object3D::Load<VertexColor>(const std::string& filepath);
+extern template bool Object3D::Load<VertexNormal>(const std::string& filepath);

@@ -25,3 +25,11 @@ public:
     glm::vec3 Color;
 
 };
+
+class MaterialPhong : public Material
+{
+public:
+    MaterialPhong(const glm::vec3& color = glm::vec3(1, 0, 1));
+
+    glm::vec3 Color;
+};
