@@ -9,7 +9,7 @@ protected:
 
 struct VertexColor : public VertexBase
 {
-	glm::vec3 Color;
+	glm::vec4 Color;
 };
 
 struct VertexTexture : public VertexBase

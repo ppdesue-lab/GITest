@@ -52,7 +52,7 @@ bool Object3D::Load(const std::string& filepath) {
 				vertex.Position = glm::vec3(position.x, position.y, position.z);
 				if constexpr (std::is_same_v<T, VertexColor>)
 				{
-					vertex.Color = glm::vec3(1, 0, 0);
+					vertex.Color = glm::vec4(1, 0, 0, 1);
 				}
 				else if constexpr (std::is_same_v<T, VertexNormal>)
 				{
@@ -141,7 +141,7 @@ bool Object3D::Load(const std::string& filepath) {
 	{
 		layout = {
 			BufferElement(ShaderDataType::Float3,"a_Position",false),
-			BufferElement(ShaderDataType::Float3,"a_Color",false),
+			BufferElement(ShaderDataType::Float4,"a_Color",false),
 		};
 
 		meshmat = CreateRef<MaterialColor>();

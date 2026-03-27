@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <base.h>
 #include "VertexArray.h"
+#include "Shader.h"
 
 class Renderer
 {
@@ -12,6 +13,7 @@ public:
     {
         None, OpenGL
     };
+
 
 public:
     virtual ~Renderer() = default;

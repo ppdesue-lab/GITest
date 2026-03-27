@@ -12,7 +12,6 @@ struct Transform {
     glm::quat rotation = glm::quat(0,0,0,1);    // Rotation
     glm::vec3 scale = glm::vec3(0,0,0);          // Scale
 
-    Transform() {}
 
     void Move(const glm::vec3& delta) {
         translation += delta;

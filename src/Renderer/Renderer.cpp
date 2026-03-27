@@ -1,6 +1,7 @@
 #include "Renderer.h"
 
 #include <Platform/OpenGL/OpenGLRenderer.h>
+#include <Renderer/RenderCommand.h>
 
 Renderer::API Renderer::s_API = Renderer::API::OpenGL;
 
