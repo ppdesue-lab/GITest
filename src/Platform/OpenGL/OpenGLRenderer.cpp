@@ -31,13 +31,19 @@ void OpenGLRenderer::DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t i
 {
 	vertexArray->Bind();
 	uint32_t count = indexCount ? indexCount : vertexArray->GetIndexBuffer()->GetCount();
-	glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, nullptr);
+	if (!vertexArray->GetIndexBuffer())
+		glDrawArrays(GL_TRIANGLES, 0, count);
+	else
+		glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, nullptr);
 }
 
 void OpenGLRenderer::DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount)
 {
 	vertexArray->Bind();
-	glDrawElements(GL_LINES, indexCount,GL_UNSIGNED_INT,nullptr);
+	if (!vertexArray->GetIndexBuffer())
+		glDrawArrays(GL_LINES, 0, indexCount);
+	else
+		glDrawElements(GL_LINES, indexCount,GL_UNSIGNED_INT,nullptr);
 }
 
 void OpenGLRenderer::SetLineWidth(float width)

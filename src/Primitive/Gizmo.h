@@ -97,7 +97,7 @@ extern "C" {
 	 * @param height The height of the viewport in pixels.
 	 * @note This function should be called whenever the viewport size changes to maintain consistent gizmo scaling.
 	 */
-	void SetViewportSize(int width, int height);
+	void SetGizmoViewportSize(int width, int height);
 
 	/**
 	 * Set the colors used by the gizmo.

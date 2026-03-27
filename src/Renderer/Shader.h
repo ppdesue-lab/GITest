@@ -30,6 +30,10 @@ public:
 class ShaderLibrary
 {
 public:
+    ShaderLibrary()
+    {
+        s_Instance = this;
+    }
     void Add(const std::string& name, const Ref<Shader>& shader);
     void Add(const Ref<Shader>& shader);
     Ref<Shader> Load(const std::string& name, const std::string& vSource,const std::string& fSource);
@@ -40,6 +44,8 @@ public:
     bool Exists(const std::string& name);
 
     void LoadDefault();
+    static ShaderLibrary* Instance() { return s_Instance; };
 private:
     static std::unordered_map<std::string, Ref<Shader>> m_Shaders;
+	static ShaderLibrary* s_Instance;
 };

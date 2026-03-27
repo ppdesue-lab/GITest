@@ -37,10 +37,10 @@ public:
 		shader->SetMat4("u_View", camera->GetViewMatrix());
 		shader->SetMat4("u_Projection", camera->GetProjectionMatrix());
         shader->SetMat4("u_Model", glm::mat4(1.0f));
-
+        //
         RenderCommand::DrawLines(axis->GetVertexArray(), axis->GetCount());
-
-		obj->Draw(camera->GetViewMatrix(), camera->GetProjectionMatrix());
+        //
+		//obj->Draw(camera->GetViewMatrix(), camera->GetProjectionMatrix());
     }
 
     void OnImGuiRender() override

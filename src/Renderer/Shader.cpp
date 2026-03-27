@@ -6,6 +6,7 @@
 
 
 std::unordered_map<std::string, Ref<Shader>> ShaderLibrary::m_Shaders;
+ShaderLibrary* ShaderLibrary::s_Instance;
 
 Ref<Shader> Shader::Create(const std::string& filepath)
 {

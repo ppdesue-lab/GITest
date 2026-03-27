@@ -2,12 +2,12 @@
 
 #include "Renderer.h"
 #include "VertexArray.h"
-
+#include <Renderer/Shader.h>
 
 struct LineVertex
 {
     glm::vec3 Position;
-    glm::vec3 Color;
+    glm::vec4 Color;
 };
 
 class RendererData
@@ -21,25 +21,17 @@ public:
     Ref<VertexBuffer> LineVertexBuffer;
     LineVertex* LineVertexBufferBase = nullptr;
     Ref<Shader> LineShader = nullptr;
-
     uint32_t MaxLineVertices = 10000;
 
-    RendererData()
-    {
-        LineVertexArray = VertexArray::Create();
-        LineVertexBuffer = VertexBuffer::Create(MaxLineVertices * sizeof(glm::vec3));
-        LineVertexBuffer->SetLayout({ {
-            BufferElement{ShaderDataType::Float3, "a_Position"},
-            BufferElement{ShaderDataType::Float3, "a_Color"}
-            } });
+    //quad
+    uint32_t QuadCount = 0;
+    Ref<VertexArray> QuadVertexArray;
+    Ref<VertexBuffer> QuadVertexBuffer;
+    LineVertex* QuadVertexBufferBase = nullptr;
+    Ref<Shader> QuadShader = nullptr;
+    uint32_t MaxQuadVertices = 10000;
 
-        LineVertexArray->AddVertexBuffer(LineVertexBuffer);
-        auto lineIndexBuffer = IndexBuffer::Create(MaxLineVertices);
-        LineVertexArray->SetIndexBuffer(lineIndexBuffer);
-
-        LineVertexBufferBase = new LineVertex[MaxLineVertices];
-
-    }
+    RendererData();
 
 };
 
@@ -83,7 +75,13 @@ public:
 
 
     //flush data
-    static void FlushLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& color);
+    static void FlushLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec4& color);
+    static void FlushQuad(const glm::vec3& p0, const glm::vec3& p1, 
+        const glm::vec3& p2, const glm::vec3& p3,
+        const glm::vec4& color);
+    static void FlushTriangle(const glm::vec3& p0, const glm::vec3& p1,
+        const glm::vec3& p2,
+        const glm::vec4& color);
 
     static void Flush();
 

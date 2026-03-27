@@ -100,16 +100,16 @@ struct GizmoData
 static GizmoGlobals GIZMO = {
 	0,0,
 	{
-		{{1, 0, 0}, {229, 72, 91, 255}},
-		{{0, 1, 0}, {131, 205, 56, 255}},
-		{{0, 0, 1}, {69, 138, 242, 255}}
+		{{1, 0, 0}, {229/255.f, 72 / 255.f, 91 / 255.f, 255 / 255.f}},
+		{{0, 1, 0}, {131 / 255.f, 205 / 255.f, 56 / 255.f, 255 / 255.f}},
+		{{0, 0, 1}, {69 / 255.f, 138 / 255.f, 242 / 255.f, 255 / 255.f}}
 	},
 
 	1.5f,
 	2.5f,
 
-	0.15f,
 	0.1f,
+	0.15f,
 	0.3f,
 	0.15f,
 	0.1f,
@@ -312,7 +312,7 @@ static void GizmoHandleInput(const GizmoData* data, bool leftdown, glm::vec2 mou
 
 
 
-void SetViewportSize(int width, int height)
+void SetGizmoViewportSize(int width, int height)
 {
 	GIZMO.width = width;
 	GIZMO.height = height;
@@ -624,31 +624,35 @@ static void DrawGizmoCube(const GizmoData* data, int axis)
 
 	//rlColor4ub(col.r, col.g, col.b, col.a);
 
+	RenderCommand::FlushQuad(a, b, c, d, col);
 	//rlVertex3f(a.x, a.y, a.z);
 	//rlVertex3f(b.x, b.y, b.z);
 	//rlVertex3f(c.x, c.y, c.z);
 	//rlVertex3f(d.x, d.y, d.z);
 
+	RenderCommand::FlushQuad(e, f, g, h, col);
 	//rlVertex3f(e.x, e.y, e.z);
 	//rlVertex3f(f.x, f.y, f.z);
 	//rlVertex3f(g.x, g.y, g.z);
 	//rlVertex3f(h.x, h.y, h.z);
-
+	RenderCommand::FlushQuad(a, e, f, d, col);
 	//rlVertex3f(a.x, a.y, a.z);
 	//rlVertex3f(e.x, e.y, e.z);
 	//rlVertex3f(f.x, f.y, f.z);
 	//rlVertex3f(d.x, d.y, d.z);
-
+	RenderCommand::FlushQuad(b, f, g, c, col);
 	//rlVertex3f(b.x, b.y, b.z);
 	//rlVertex3f(f.x, f.y, f.z);
 	//rlVertex3f(g.x, g.y, g.z);
 	//rlVertex3f(c.x, c.y, c.z);
 
+	RenderCommand::FlushQuad(a, b, f, e, col);
 	//rlVertex3f(a.x, a.y, a.z);
 	//rlVertex3f(b.x, b.y, b.z);
 	//rlVertex3f(f.x, f.y, f.z);
 	//rlVertex3f(e.x, e.y, e.z);
 
+	RenderCommand::FlushQuad(c, g, h, d, col);
 	//rlVertex3f(c.x, c.y, c.z);
 	//rlVertex3f(g.x, g.y, g.z);
 	//rlVertex3f(h.x, h.y, h.z);
@@ -679,34 +683,14 @@ static void DrawGizmoPlane(const GizmoData* data, int index)
 	const glm::vec3 c = (b +(dir2 * size));
 	const glm::vec3 d = (a +(dir2 * size));
 
-	/*rlBegin(RL_QUADS);
 
-	rlColor4ub(col.r, col.g, col.b, (unsigned char)((float)col.a * 0.5f));
+	glm::vec4 color = { col.r, col.g, col.b, ((float)col.a * 0.5f) };
+	RenderCommand::FlushQuad(a, b, c, d, color);
+	RenderCommand::FlushLine(a, b, col);
+	RenderCommand::FlushLine(b, c, col);
+	RenderCommand::FlushLine(c, d, col);
+	RenderCommand::FlushLine(d, a, col);
 
-	rlVertex3f(a.x, a.y, a.z);
-	rlVertex3f(b.x, b.y, b.z);
-	rlVertex3f(c.x, c.y, c.z);
-	rlVertex3f(d.x, d.y, d.z);
-
-	rlEnd();
-
-	rlBegin(RL_LINES);
-
-	rlColor4ub(col.r, col.g, col.b, col.a);
-
-	rlVertex3f(a.x, a.y, a.z);
-	rlVertex3f(b.x, b.y, b.z);
-
-	rlVertex3f(b.x, b.y, b.z);
-	rlVertex3f(c.x, c.y, c.z);
-
-	rlVertex3f(c.x, c.y, c.z);
-	rlVertex3f(d.x, d.y, d.z);
-
-	rlVertex3f(d.x, d.y, d.z);
-	rlVertex3f(a.x, a.y, a.z);
-
-	rlEnd();*/
 }
 
 static void DrawGizmoArrow(const GizmoData* data, int axis)
@@ -739,35 +723,12 @@ static void DrawGizmoArrow(const GizmoData* data, int axis)
 	const glm::vec3 c = (b + dim2);
 	const glm::vec3 d = (a + dim2);
 
-	//rlBegin(RL_TRIANGLES);
-
-	//rlColor4ub(col.r, col.g, col.b, col.a);
-
-	//rlVertex3f(a.x, a.y, a.z);
-	//rlVertex3f(b.x, b.y, b.z);
-	//rlVertex3f(c.x, c.y, c.z);
-
-	//rlVertex3f(a.x, a.y, a.z);
-	//rlVertex3f(c.x, c.y, c.z);
-	//rlVertex3f(d.x, d.y, d.z);
-
-	//rlVertex3f(a.x, a.y, a.z);
-	//rlVertex3f(v.x, v.y, v.z);
-	//rlVertex3f(b.x, b.y, b.z);
-
-	//rlVertex3f(b.x, b.y, b.z);
-	//rlVertex3f(v.x, v.y, v.z);
-	//rlVertex3f(c.x, c.y, c.z);
-
-	//rlVertex3f(c.x, c.y, c.z);
-	//rlVertex3f(v.x, v.y, v.z);
-	//rlVertex3f(d.x, d.y, d.z);
-
-	//rlVertex3f(d.x, d.y, d.z);
-	//rlVertex3f(v.x, v.y, v.z);
-	//rlVertex3f(a.x, a.y, a.z);
-
-	//rlEnd();
+	RenderCommand::FlushTriangle(a, b, c, col);
+	RenderCommand::FlushTriangle(a, c, d, col);
+	RenderCommand::FlushTriangle(a, v, b, col);
+	RenderCommand::FlushTriangle(b, v, c, col);
+	RenderCommand::FlushTriangle(c, v, d, col);
+	RenderCommand::FlushTriangle(d, v, a, col);
 }
 static void DrawGizmoCenter(const GizmoData* data)
 {

@@ -8,6 +8,8 @@
 
 #include "Camera/FPSCamera.h"
 
+#include <Primitive/Gizmo.h>
+
 
 Application* Application::s_Instance = nullptr;
 
@@ -29,18 +31,31 @@ Application::Application(int w,int h)
 
 	m_Camera = CreateRef<FPSCamera>(glm::vec3(0,0,2),glm::vec3(0,0,0),45.0f, w / (float)h);
     //((FPSCamera*)m_Camera.get())->lookAt(glm::vec3(0, 0, 0));
+
+
+    SetGizmoViewportSize(w,h);
 }
 
 void Application::Run()
 {
+
+    Transform g_Transform;
+	g_Transform.translation = glm::vec3(0.01,0.01,0.01);
     while (!m_WindowInterface->ShouldClose())
     {
+
+        //debug
+        //RenderCommand::FlushLine({ 0,0,0 }, { 1,1,1 },  { 1,0,0 });
+        
+        DrawGizmo3D(m_Camera->GetViewMatrix(),m_Camera->GetProjectionMatrix(), true, glm::vec2(0, 0), GIZMO_SCALE, &g_Transform);
         // Update all layers
         for (auto& layer : m_LayerStack)
         {
             layer->OnUpdate();
         }
-        
+
+		RenderCommand::Flush();
+
         // Render all layers
         m_ImGuiLayer->Begin();
         for (auto layer : m_LayerStack)

@@ -9,7 +9,7 @@
 
 struct Transform {
     glm::vec3 translation = glm::vec3(0,0,0);    // Translation
-    glm::quat rotation = glm::quat(0,0,0,1);    // Rotation
+    glm::quat rotation = glm::quat(1,0,0,0);    // Rotation
     glm::vec3 scale = glm::vec3(0,0,0);          // Scale
 
 
