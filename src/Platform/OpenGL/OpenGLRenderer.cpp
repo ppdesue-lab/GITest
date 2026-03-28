@@ -50,3 +50,16 @@ void OpenGLRenderer::SetLineWidth(float width)
 {
 	glLineWidth(width);
 }
+
+void OpenGLRenderer::EnableDepthTest(bool enable)
+{
+	if (enable)
+		glEnable(GL_DEPTH_TEST);
+	else
+		glDisable(GL_DEPTH_TEST);
+}
+
+void OpenGLRenderer::SetDepthRange(float min, float max)
+{
+	glDepthRange(min, max);
+}

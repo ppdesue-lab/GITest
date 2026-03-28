@@ -76,6 +76,8 @@ extern "C" {
 		bool leftdown, glm::vec2 mousepos
 		, int flags, Transform* transform);
 
+
+	bool IsGizmoActivate();
 	/**
 	 * Set the size of the gizmo.
 	 * @param size The new size of the gizmo.

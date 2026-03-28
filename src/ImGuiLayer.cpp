@@ -5,6 +5,8 @@
 #include <imgui_internal.h>
 
 #include "Application.h"
+#include <Primitive/Gizmo.h>
+#include <Renderer/RenderCommand.h>
 
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
@@ -48,6 +50,8 @@ void ImGuiLayer::OnAttach()
     Application& app = Application::Get();
     GLFWwindow* window = static_cast<GLFWwindow*>(app.GetWindow().GetNativeWindow());
 
+    m_Camera = app.GetCamera();
+
     // Setup Platform/Renderer bindings
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 410");
@@ -67,16 +71,132 @@ void ImGuiLayer::OnDetach()
 void ImGuiLayer::OnUpdate()
 {
     // Update ImGui state
+
 }
 
 void ImGuiLayer::OnImGuiRender()
 {
-    // Render ImGui
+    // Build flags from persisted UI state
+
+    static int s_GizmoMode = 0; // 0=Translate,1=Rotate,2=Scale,3=All
+    static bool s_Local = false;
+    static bool s_View = false;
+    static float s_GizmoSize = 1.5f;
+    static float s_GizmoLineWidth = 2.5f;
+    static bool s_ShowGizmoWindow = true;
+
+    int gizmoFlags = 0;
+    switch (s_GizmoMode)
+    {
+    case 0: gizmoFlags = GIZMO_TRANSLATE; break;
+    case 1: gizmoFlags = GIZMO_ROTATE;    break;
+    case 2: gizmoFlags = GIZMO_SCALE;     break;
+    case 3: gizmoFlags = GIZMO_ALL;       break;
+    default: gizmoFlags = GIZMO_TRANSLATE; break;
+    }
+
+    if (s_Local) gizmoFlags |= GIZMO_LOCAL;
+    if (s_View)  gizmoFlags |= GIZMO_VIEW;
+
+    // Apply gizmo settings to backend
+    SetGizmoSize(s_GizmoSize);
+    SetGizmoLineWidth(s_GizmoLineWidth);
+
+
+    Transform* targetTransform = Application::Get().GetGizmoTargetTransform();
+    if(!targetTransform)
+        targetTransform = &g_DefaultTransform;
+
+    if (DrawGizmo3D(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix(),
+        m_LeftDownGizmo, m_MousePos, gizmoFlags, targetTransform))
+    {
+        if (m_Camera->isInputEnabled()) m_Camera->setInputEnabled(false);
+    };
+
+    //add imgui window for gizmo control & info display
+
+    //add imgui window for gizmo control & info display
+    if (s_ShowGizmoWindow)
+    {
+        ImGui::Begin("Gizmo Controls", &s_ShowGizmoWindow, ImGuiWindowFlags_AlwaysAutoResize);
+
+        // Mode radio buttons
+        ImGui::Text("Mode:");
+        ImGui::SameLine();
+        ImGui::PushID("GizmoMode");
+        ImGui::RadioButton("Translate", &s_GizmoMode, 0); ImGui::SameLine();
+        ImGui::RadioButton("Rotate", &s_GizmoMode, 1); ImGui::SameLine();
+        ImGui::RadioButton("Scale", &s_GizmoMode, 2); ImGui::SameLine();
+        ImGui::RadioButton("All", &s_GizmoMode, 3);
+        ImGui::PopID();
+
+        // Orientation toggles
+        ImGui::Checkbox("Local", &s_Local); ImGui::SameLine();
+        ImGui::Checkbox("View", &s_View);
+
+        // Size and line width
+        ImGui::SliderFloat("Size", &s_GizmoSize, 0.1f, 5.0f);
+        ImGui::SliderFloat("Line Width", &s_GizmoLineWidth, 0.5f, 10.0f);
+
+        // Active indicator
+        bool active = IsGizmoActivate();
+        ImGui::Text("Active: %s", active ? "Yes" : "No");
+
+        // Target transform info
+        ImGui::Separator();
+        ImGui::Text("Target Transform:");
+        // Editable translation
+        float translation[3] = { targetTransform->translation.x, targetTransform->translation.y, targetTransform->translation.z };
+        if (ImGui::DragFloat3("Translation", translation, 0.1f))
+        {
+            targetTransform->translation = glm::vec3(translation[0], translation[1], translation[2]);
+        }
+        
+        // Editable rotation (Euler degrees)
+        glm::vec3 euler = glm::degrees(glm::eulerAngles(targetTransform->rotation));
+        float rotationDeg[3] = { euler.x, euler.y, euler.z };
+        if (ImGui::InputFloat3("Rotation (deg)", rotationDeg,"%.2f"))
+        {
+            glm::vec3 rad = glm::radians(glm::vec3(rotationDeg[0], rotationDeg[1], rotationDeg[2]));
+            // Create quaternion from Euler radians
+            targetTransform->rotation = glm::quat(rad);
+        }
+
+        // Editable scale
+        float scale[3] = { targetTransform->scale.x, targetTransform->scale.y, targetTransform->scale.z };
+        if (ImGui::DragFloat3("Scale", scale, 0.1f))
+        {
+            targetTransform->scale = glm::vec3(scale[0], scale[1], scale[2]);
+        }
+
+        // Simple actions
+        if (ImGui::Button("Reset Transform"))
+        {
+            targetTransform->translation = glm::vec3(0.0f);
+            targetTransform->rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+            targetTransform->scale = glm::vec3(0.1f);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Focus Camera"))
+        {
+            // If application exposes camera focus API, call it.
+            // Fallback: set camera input enabled to true momentarily.
+            if (m_Camera) m_Camera->setInputEnabled(true);
+        }
+
+        ImGui::End();
+    }
 }
 
 void ImGuiLayer::OnEvent(Event& event)
 {
     // Handle events for ImGui
+
+    EventDispatcher dispatcher(event);
+    dispatcher.Dispatch<MouseButtonPressedEvent>(BIND_EVENT_FN(OnMouseButtonDown));
+    dispatcher.Dispatch<MouseButtonReleasedEvent>(BIND_EVENT_FN(OnMouseButtonUp));
+    dispatcher.Dispatch<MouseMovedEvent>(BIND_EVENT_FN(OnMouseMove));
+
 }
 
 void ImGuiLayer::Begin()
@@ -140,3 +260,39 @@ void ImGuiLayer::SetDarkThemeColors()
     colors[ImGuiCol_TitleBgActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
     colors[ImGuiCol_TitleBgCollapsed] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
 }
+
+
+bool ImGuiLayer::OnMouseButtonDown(MouseButtonPressedEvent& e)
+{
+    // if mouse hover on imgui window then return false;
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse)
+        return false;
+
+    if (e.GetMouseButton() == 0)
+    {
+        m_Camera->setInputEnabled(true);
+        m_LeftDownCamera = true;
+        m_LeftDownGizmo = true;
+    }
+
+    return false;
+};
+bool ImGuiLayer::OnMouseButtonUp(MouseButtonReleasedEvent& e)
+{
+    if (e.GetMouseButton() == 0)
+    {
+        m_Camera->setInputEnabled(false);
+        m_LeftDownCamera = false;
+        m_LeftDownGizmo = false;
+    }
+    return false;
+};
+bool ImGuiLayer::OnMouseMove(MouseMovedEvent& e)
+{
+    if (m_Camera->isInputEnabled())
+        m_LeftDownGizmo = false;
+    m_MousePos = { e.GetX(),e.GetY() };
+    m_Camera->processMouseMovement(e.GetX(), e.GetY());
+    return false;
+};

@@ -53,6 +53,7 @@ struct GizmoGlobals
 	//viewport size
 	int width;
 	int height;
+	int showXYZText;				   // Whether to show axis labels (X, Y, Z) during transformations.
 
 	GizmoAxis axisCfg[GIZMO_AXIS_COUNT];  // Data related to the 3 axes, globally oriented.
 
@@ -99,6 +100,7 @@ struct GizmoData
 // Initialize GIZMO with default values
 static GizmoGlobals GIZMO = {
 	0,0,
+	1,
 	{
 		{{1, 0, 0}, {229/255.f, 72 / 255.f, 91 / 255.f, 255 / 255.f}},
 		{{0, 1, 0}, {131 / 255.f, 205 / 255.f, 56 / 255.f, 255 / 255.f}},
@@ -151,6 +153,7 @@ static bool CheckGizmoType(const GizmoData* data, int type);
  * @return true if a gizmo is active and transforming; false otherwise.
  */
 static bool IsGizmoTransforming(void);
+
 
 /**
  * Check if the current gizmo is the one actively transforming.
@@ -318,6 +321,10 @@ void SetGizmoViewportSize(int width, int height)
 	GIZMO.height = height;
 };
 
+bool IsGizmoActivate()
+{
+	return GIZMO.curAction != GZ_ACTION_NONE;
+}
 //---------------------------------------------------------------------------------------------------
 // Functions Definitions - GIZMO API
 //---------------------------------------------------------------------------------------------------
@@ -346,7 +353,7 @@ bool DrawGizmo3D(const glm::mat4& camView,const glm::mat4& camProj,
 	const float* invMatPtr = glm::value_ptr(invMat);
 	const float* matViewPtr = glm::value_ptr(matView);
 
-	data.invViewProj = glm::inverse(matView * matProj);
+	data.invViewProj = glm::inverse(matProj * matView);
 
 	data.camPos = { invMatPtr[12], invMatPtr[13], invMatPtr[14] };
 
@@ -543,7 +550,7 @@ glm::quat QuaternionTransform(const glm::quat& q, const glm::mat4& mat)
 
 static glm::vec3 Vec3ScreenToWorld(glm::vec3 source, const glm::mat4* matViewProjInv)
 {
-	glm::quat rot = { source.x, source.y, source.z, 1.0f };
+	glm::quat rot = { 1.0f , source.x, source.y, source.z};
 	
 	const glm::quat qt = QuaternionTransform(rot, *matViewProjInv);// glm::normalize(glm::quat_cast(*matViewProjInv) * rot); //rot *matViewProjInv);
 	return {
@@ -620,45 +627,12 @@ static void DrawGizmoCube(const GizmoData* data, int axis)
 	const glm::vec3 g = (c + depth);
 	const glm::vec3 h = (d + depth);
 
-	//rlBegin(RL_QUADS);
-
-	//rlColor4ub(col.r, col.g, col.b, col.a);
-
 	RenderCommand::FlushQuad(a, b, c, d, col);
-	//rlVertex3f(a.x, a.y, a.z);
-	//rlVertex3f(b.x, b.y, b.z);
-	//rlVertex3f(c.x, c.y, c.z);
-	//rlVertex3f(d.x, d.y, d.z);
-
 	RenderCommand::FlushQuad(e, f, g, h, col);
-	//rlVertex3f(e.x, e.y, e.z);
-	//rlVertex3f(f.x, f.y, f.z);
-	//rlVertex3f(g.x, g.y, g.z);
-	//rlVertex3f(h.x, h.y, h.z);
 	RenderCommand::FlushQuad(a, e, f, d, col);
-	//rlVertex3f(a.x, a.y, a.z);
-	//rlVertex3f(e.x, e.y, e.z);
-	//rlVertex3f(f.x, f.y, f.z);
-	//rlVertex3f(d.x, d.y, d.z);
 	RenderCommand::FlushQuad(b, f, g, c, col);
-	//rlVertex3f(b.x, b.y, b.z);
-	//rlVertex3f(f.x, f.y, f.z);
-	//rlVertex3f(g.x, g.y, g.z);
-	//rlVertex3f(c.x, c.y, c.z);
-
 	RenderCommand::FlushQuad(a, b, f, e, col);
-	//rlVertex3f(a.x, a.y, a.z);
-	//rlVertex3f(b.x, b.y, b.z);
-	//rlVertex3f(f.x, f.y, f.z);
-	//rlVertex3f(e.x, e.y, e.z);
-
 	RenderCommand::FlushQuad(c, g, h, d, col);
-	//rlVertex3f(c.x, c.y, c.z);
-	//rlVertex3f(g.x, g.y, g.z);
-	//rlVertex3f(h.x, h.y, h.z);
-	//rlVertex3f(d.x, d.y, d.z);
-
-	//rlEnd();
 }
 
 
@@ -752,6 +726,29 @@ static void DrawGizmoCenter(const GizmoData* data)
 		RenderCommand::FlushLine(p, p2, col);
 	}
 
+	if (GIZMO.showXYZText)
+	{
+		//x
+		glm::vec3 originX = (data->curTransform->translation +
+			(data->axis[0] * data->gizmoSize * (1.0f - GIZMO.trArrowLengthFactor + 0.25f)));
+		const float fontscale = 0.05f * data->gizmoSize * (1.0f - GIZMO.trArrowLengthFactor + 0.2f);
+		RenderCommand::FlushLine(originX - fontscale * data->right - fontscale * data->up, originX + fontscale * data->right + fontscale * data->up, glm::vec4(1, 0, 0, 1));
+		RenderCommand::FlushLine(originX + fontscale * data->right - fontscale * data->up, originX - fontscale * data->right + fontscale * data->up, glm::vec4(1, 0, 0, 1));
+		//y
+		glm::vec3 originY = (data->curTransform->translation +
+			(data->axis[1] * data->gizmoSize * (1.0f - GIZMO.trArrowLengthFactor + 0.25f)));
+		RenderCommand::FlushLine(originY - fontscale * data->right + fontscale * data->up, originY, glm::vec4(0, 1, 0, 1));
+		RenderCommand::FlushLine(originY, originY + fontscale * data->right + fontscale * data->up, glm::vec4(0, 1, 0, 1));
+		RenderCommand::FlushLine(originY, originY - fontscale * data->up, glm::vec4(0, 1, 0, 1));
+
+		//z
+		glm::vec3 originZ = (data->curTransform->translation +
+			(data->axis[2] * data->gizmoSize * (1.0f - GIZMO.trArrowLengthFactor + 0.25f)));
+		RenderCommand::FlushLine(originZ - fontscale * data->right - fontscale * data->up, originZ + fontscale * data->right - fontscale * data->up, glm::vec4(0, 0, 1, 1));
+		RenderCommand::FlushLine(originZ - fontscale * data->right + fontscale * data->up, originZ + fontscale * data->right + fontscale * data->up, glm::vec4(0, 0, 1, 1));
+		RenderCommand::FlushLine(originZ - fontscale * data->right - fontscale * data->up, originZ + fontscale * data->right + fontscale * data->up, glm::vec4(0, 0, 1, 1));
+	}
+
 }
 
 static void DrawGizmoCircle(const GizmoData* data, int axis)
@@ -783,6 +780,7 @@ static void DrawGizmoCircle(const GizmoData* data, int axis)
 
 		RenderCommand::FlushLine(p, p2, col);
 	}
+
 }
 
 
@@ -823,8 +821,7 @@ static bool CheckGizmoAxis(const GizmoData* data, int axis, Ray ray, int type)
 		halfDim[axis] *= 0.5f;
 	}
 
-	const glm::vec3 obbCenter = (data->curTransform->translation,
-	                                     + (data->axis[axis] * halfDim[axis]));
+	const glm::vec3 obbCenter = (data->curTransform->translation + (data->axis[axis] * halfDim[axis]));
 
 	return CheckOrientedBoundingBox(data, ray, obbCenter, glm::vec3{halfDim[0], halfDim[1], halfDim[2]});
 }
@@ -838,7 +835,7 @@ static bool CheckGizmoPlane(const GizmoData* data, int axis, Ray ray)
 	const float offset = GIZMO.trPlaneOffsetFactor * data->gizmoSize;
 	const float size = GIZMO.trPlaneSizeFactor * data->gizmoSize;
 
-	const glm::vec3 a = ((data->curTransform->translation+ (dir1* offset)),
+	const glm::vec3 a = ((data->curTransform->translation+ (dir1* offset))+
 	                             (dir2* offset));
 	const glm::vec3 b = (a +(dir1 *  size));
 	const glm::vec3 c = (b +(dir2 *  size));

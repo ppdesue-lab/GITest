@@ -16,6 +16,9 @@ public:
     virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount) override;
 
 
-    virtual void SetLineWidth(float width);
+    virtual void SetLineWidth(float width) override;
+
+	virtual void EnableDepthTest(bool enable) override;
+    virtual void SetDepthRange(float min = 0.0f, float max = 1.0f) override;
 
 };

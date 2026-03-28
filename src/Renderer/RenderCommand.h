@@ -73,6 +73,15 @@ public:
         s_RendererAPI->SetLineWidth(width);
     }
 
+    static void EnableDepthTest(bool enable)
+    {
+        s_RendererAPI->EnableDepthTest(enable);
+    };
+
+    static void SetDepthRange(float min = 0.0f, float max = 1.0f)
+    {
+        s_RendererAPI->SetDepthRange(min, max);
+	};
 
     //flush data
     static void FlushLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec4& color);

@@ -13,11 +13,12 @@
 #include <memory>
 #include <Renderer/Shader.h>
 #include <Camera/Camera.h>
+#include <Transform.h>
 
 class Application
 {
 public:
-    Application(int width=800,int height=600);
+    Application(int width=1200,int height=800);
     virtual ~Application() = default;
     virtual void Run();
 
@@ -34,9 +35,12 @@ public:
 
     bool OnWindowClose(WindowCloseEvent& e);
     bool OnWindowResize(WindowResizeEvent& e);
+
 public:
 	Ref<ShaderLibrary> GetShaderLibrary() { return m_ShaderLibrary; }
 	Ref<Camera> GetCamera() { return m_Camera; }
+	void BindGizmoTargetTransform(Transform* transform) { m_GizmoTargetTransform = transform; }
+	Transform* GetGizmoTargetTransform() { return m_GizmoTargetTransform; }
 
 private:
     WindowInterface* m_WindowInterface = nullptr;
@@ -46,6 +50,9 @@ private:
 	Ref<ImGuiLayer> m_ImGuiLayer;
 	Ref<ShaderLibrary> m_ShaderLibrary;
 	Ref<Camera> m_Camera;
+
+    glm::vec2 m_MousePos;
+	Transform* m_GizmoTargetTransform = nullptr;
 
     static Application* s_Instance;
 };

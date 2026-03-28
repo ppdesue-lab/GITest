@@ -30,6 +30,9 @@ public:
 
 	virtual void SetLineWidth(float width) = 0;
 
+	virtual void EnableDepthTest(bool enable) = 0;
+    virtual void SetDepthRange(float min = 0.0f, float max = 1.0f) = 0;
+
 
     static API GetAPI() { return s_API; }
     static Scope<Renderer> Create();

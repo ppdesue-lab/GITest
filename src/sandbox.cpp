@@ -14,6 +14,8 @@ public:
         obj = CreateScope<Object3D>();
 		obj->Load<VertexNormal>("D:/Untitled.obj");
         obj->Meshes[0]->Transfm.scale = glm::vec3(0.01, 0.01, 0.01);
+
+		Application::Get().BindGizmoTargetTransform(&obj->Meshes[0]->Transfm);
     }
 
     void OnAttach() override
@@ -40,7 +42,7 @@ public:
         //
         RenderCommand::DrawLines(axis->GetVertexArray(), axis->GetCount());
         //
-		//obj->Draw(camera->GetViewMatrix(), camera->GetProjectionMatrix());
+		obj->Draw(camera->GetViewMatrix(), camera->GetProjectionMatrix());
     }
 
     void OnImGuiRender() override
@@ -52,7 +54,7 @@ public:
 
     void OnEvent(Event& event) override
     {
-        INFO("{}", event.GetName());
+        INFO("{}", event.ToString());
     }
 
 
