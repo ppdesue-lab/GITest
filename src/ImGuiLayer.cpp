@@ -195,7 +195,7 @@ void ImGuiLayer::OnImGuiRender()
             // Create quaternion from Euler radians
             targetTransform->rotation = glm::yawPitchRoll(rad.y,rad.x,rad.z);// glm::quat(rad);
         }
-        if (m_UpdateGizmo || ImGui::Button("sync"))
+        if (m_UpdateGizmo )
         {
             rotationDeg[0] = euler[0];
             rotationDeg[1] = euler[1];

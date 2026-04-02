@@ -108,7 +108,7 @@ bool Application::OnWindowResize(WindowResizeEvent& e)
         return false;
     }
 
-    //Renderer::OnWindowResize(e.GetWidth(), e.GetHeight());
+    RenderCommand::SetViewport(0,0,e.GetWidth(), e.GetHeight());
 
     return false;
 }

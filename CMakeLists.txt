@@ -111,7 +111,6 @@ set(all_includes src
     D:/gitclones/CarveraCAM/thirdparty/glm
     ${Vulkan_INCLUDE_DIRS}
     ${imgui_SOURCE_DIR}
-    
 )
 set(all_compiler_definitions 
   APP_ROOT_PATH=\"${CMAKE_SOURCE_DIR}\"
