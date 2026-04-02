@@ -13,8 +13,19 @@ public:
 
         obj = CreateScope<Object3D>();
 		obj->Load<VertexNormal>("D:/Untitled.obj");
+        obj->Meshes[0]->Transfm.translation = glm::vec3(0.3,0,0);
         obj->Meshes[0]->Transfm.scale = glm::vec3(0.01, 0.01, 0.01);
+        obj->Meshes[0]->Transfm.rotation = glm::quat(glm::vec3(0, glm::radians(90.0f), 0));
 
+        Transform b = {
+            glm::vec3(0.6f, 0.0f, 0.0f),    // Translation
+			//quat for rotate y 90 degree
+			glm::quat(glm::vec3(0, glm::radians(-90.0f), 0)),    // Rotation
+			//glm::quat(1,0,0,0),    // Rotation
+            glm::vec3(2,2,2) // Scale
+        };
+        obj->Meshes[0]->Transfm = obj->Meshes[0]->Transfm * b;
+        obj->Meshes[0]->Transfm = obj->Meshes[0]->Transfm / b;
 		Application::Get().BindGizmoTargetTransform(&obj->Meshes[0]->Transfm);
     }
 

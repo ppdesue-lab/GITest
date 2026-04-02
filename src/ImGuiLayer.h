@@ -39,4 +39,5 @@ private:
 	Transform g_DefaultTransform;
 	Ref<Camera> m_Camera;
     float m_Time = 0.0f;
+    bool m_UpdateGizmo = false;
 };

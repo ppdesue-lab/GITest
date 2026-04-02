@@ -1,4 +1,4 @@
-#include "stdsfx.h"
+﻿#include "stdsfx.h"
 #include "Gizmo.h"
 #include <MathDef.h>
 #include <Renderer/RenderCommand.h>
@@ -325,6 +325,98 @@ bool IsGizmoActivate()
 {
 	return GIZMO.curAction != GZ_ACTION_NONE;
 }
+
+
+float calculateScaleForOrtho(
+	const glm::mat4& orthoProj,
+	float baseOrthoHeight = 1.0f  // 比如 ortho(-aspect, aspect, -1, 1) 的基准
+) {
+	// 步骤1: 提取当前正交投影范围
+	float left, right, bottom, top;
+
+	float m00 = orthoProj[0][0];
+	float m03 = orthoProj[0][3];
+	float m11 = orthoProj[1][1];
+	float m13 = orthoProj[1][3];
+	float m22 = orthoProj[2][2];
+	float m23 = orthoProj[2][3];
+
+	// 反推参数
+	// 对于以原点为中心的对称投影:
+	right = 1.0f / m00;
+	left = -right;
+	top = 1.0f / m11;
+	bottom = -top;
+
+	float currentHeight = top - bottom;
+	float currentWidth = right - left;
+	float aspect = currentWidth / currentHeight;
+
+	// 步骤2: 计算当前每世界单位对应的像素数
+	// 注意：这里假设视口与屏幕一致
+	float pixelsPerUnitY = static_cast<float>(GIZMO.height) / currentHeight;
+	float pixelsPerUnitX = static_cast<float>(GIZMO.width) / currentWidth;
+
+	// 步骤3: 计算物体在当前投影下应有的世界大小
+	// 目标像素大小 / 每单位像素数 = 目标世界大小
+	float targetWorldSizeY = 1.0f / pixelsPerUnitY;
+	float targetWorldSizeX = 1.0f / pixelsPerUnitX;
+
+	// 如果物体是基于 Y 轴定义的（常见做法），使用 Y 轴计算
+	float targetWorldSize = targetWorldSizeY;
+
+	// 如果需要保持宽高比
+	// targetWorldSize = min(targetWorldSizeY, targetWorldSizeX);
+
+	// 步骤4: 计算缩放因子
+	float scale = 200.0f * targetWorldSize;
+
+	// 步骤5: 构建模型矩阵（仅缩放）
+	return scale;
+};
+
+
+bool isMouseOverGizmo(const glm::mat4& camView, const glm::mat4& camProj,
+	bool leftdown, glm::vec2 mousepos
+	, int flags, Transform* transform, bool isperpective)
+{
+	if (GIZMO.width == 0) {
+		printf("set viewport size first: SetViewportSize");
+		return false;
+	}
+	GizmoData data;
+	glm::mat4 matProj = camProj;
+	glm::mat4 matView = camView;
+	glm::mat4 invMat = glm::inverse(matView);
+	float* invMatPtr = glm::value_ptr(invMat);
+	float* matViewPtr = glm::value_ptr(matView);
+	data.invViewProj = glm::inverse(matProj * matView);
+	data.camPos = { invMatPtr[12], invMatPtr[13], invMatPtr[14] };
+	data.right = { matViewPtr[0], matViewPtr[4], matViewPtr[8] };
+	data.up = { matViewPtr[1], matViewPtr[5], matViewPtr[9] };
+	data.forward = { matViewPtr[2], matViewPtr[6], matViewPtr[10] };
+	data.curTransform = transform; // We only need to check the gizmo handles, not the transformation itself
+	data.gizmoSize = GIZMO.gizmoSize * calculateScaleForOrtho(camProj);
+	data.flags = flags; // Check all types of gizmo handles
+	ComputeAxisOrientation(&data);
+	// Check if the mouse is over any of the gizmo handles
+	Ray ray = Vec3ScreenToWorldRay(mousepos, &data.invViewProj, GIZMO.width, GIZMO.height);
+	for (int i = 0; i < GIZMO_AXIS_COUNT; ++i)
+	{
+		if (CheckGizmoAxis(&data, i, ray, GIZMO_TRANSLATE) ||
+			CheckGizmoAxis(&data, i, ray, GIZMO_SCALE) ||
+			CheckGizmoPlane(&data, i, ray) ||
+			CheckGizmoCircle(&data, i, ray))
+		{
+			return true; // Mouse is over a gizmo handle
+		}
+	}
+	if (CheckGizmoCenter(&data, ray))
+	{
+		return true; // Mouse is over the gizmo center
+	}
+	return false; // Mouse is not over any gizmo handle
+}
 //---------------------------------------------------------------------------------------------------
 // Functions Definitions - GIZMO API
 //---------------------------------------------------------------------------------------------------
@@ -424,6 +516,45 @@ bool DrawGizmo3D(const glm::mat4& camView,const glm::mat4& camProj,
 
 	return IsThisGizmoTransforming(&data);
 }
+
+
+void SetAxisXFlip(bool flip)
+{
+	if (flip)
+	{
+		GIZMO.axisCfg[GZ_AXIS_X].normal = glm::abs(GIZMO.axisCfg[GZ_AXIS_X].normal);
+	}
+	else
+	{
+		GIZMO.axisCfg[GZ_AXIS_X].normal = -glm::abs(GIZMO.axisCfg[GZ_AXIS_X].normal);
+	}
+}
+
+void SetAxisYFlip(bool flip)
+{
+	if (flip)
+	{
+		GIZMO.axisCfg[GZ_AXIS_Y].normal = glm::abs(GIZMO.axisCfg[GZ_AXIS_Y].normal);
+	}
+	else
+	{
+		GIZMO.axisCfg[GZ_AXIS_Y].normal = -glm::abs(GIZMO.axisCfg[GZ_AXIS_Y].normal);
+	}
+}
+
+
+void SetAxisZFlip(bool flip)
+{
+	if (flip)
+	{
+		GIZMO.axisCfg[GZ_AXIS_Z].normal = glm::abs(GIZMO.axisCfg[GZ_AXIS_Z].normal);
+	}
+	else
+	{
+		GIZMO.axisCfg[GZ_AXIS_Z].normal = -glm::abs(GIZMO.axisCfg[GZ_AXIS_Z].normal);
+	}
+}
+
 
 void SetGizmoSize(float size)
 {

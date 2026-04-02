@@ -76,6 +76,9 @@ extern "C" {
 		bool leftdown, glm::vec2 mousepos
 		, int flags, Transform* transform);
 
+	bool isMouseOverGizmo(const glm::mat4& camView, const glm::mat4& camProj,
+		bool leftdown, glm::vec2 mousepos
+		, int flags,Transform* transform, bool isperpective = false);
 
 	bool IsGizmoActivate();
 	/**
@@ -85,6 +88,10 @@ extern "C" {
 	 * @default 1.5f
 	 */
 	void SetGizmoSize(float size);
+
+	void SetAxisXFlip(bool flip);
+	void SetAxisYFlip(bool flip);
+	void SetAxisZFlip(bool flip);
 
 	/**
 	 * Set the line width of the gizmo geometry.

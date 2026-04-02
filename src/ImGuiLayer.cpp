@@ -1,8 +1,10 @@
-#include "ImGuiLayer.h"
+﻿#include "ImGuiLayer.h"
 #include "Log.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
+
+#include <glm/gtx/euler_angles.hpp>
 
 #include "Application.h"
 #include <Primitive/Gizmo.h>
@@ -74,6 +76,26 @@ void ImGuiLayer::OnUpdate()
 
 }
 
+glm::vec3 quatToEulerSafe(glm::quat q, glm::vec3 order = glm::vec3(1, 0, 2)) {
+    // order: 0=Y轴(XYZ), 1=X轴(XZY), 2=Z轴(ZXY) 等
+
+    glm::mat4 rotMatrix = glm::mat4_cast(q);
+
+    float pitch = asinf(glm::clamp(rotMatrix[1][2], -1.0f, 1.0f));
+
+    if (abs(cos(pitch)) > 1e-6) {
+        float roll = atan2(-rotMatrix[1][0], rotMatrix[1][1]);
+        float yaw = atan2(-rotMatrix[0][2], rotMatrix[2][2]);
+        return glm::vec3(pitch, yaw, roll);
+    }
+    else {
+        // 万向锁情况：使用替代计算
+        float roll = atan2(rotMatrix[2][0], rotMatrix[0][0]);
+        float yaw = 0.0f;
+        return glm::vec3(pitch, yaw, roll);
+    }
+}
+
 void ImGuiLayer::OnImGuiRender()
 {
     // Build flags from persisted UI state
@@ -111,7 +133,11 @@ void ImGuiLayer::OnImGuiRender()
         m_LeftDownGizmo, m_MousePos, gizmoFlags, targetTransform))
     {
         if (m_Camera->isInputEnabled()) m_Camera->setInputEnabled(false);
-    };
+
+        m_UpdateGizmo = true;
+    }
+    else
+        m_UpdateGizmo = false;
 
     //add imgui window for gizmo control & info display
 
@@ -153,13 +179,27 @@ void ImGuiLayer::OnImGuiRender()
         }
         
         // Editable rotation (Euler degrees)
-        glm::vec3 euler = glm::degrees(glm::eulerAngles(targetTransform->rotation));
-        float rotationDeg[3] = { euler.x, euler.y, euler.z };
+        glm::vec3 euler = glm::degrees(quatToEulerSafe(targetTransform->rotation));//not unique, need constraint
+
+
+        //static glm::vec3 preEuler = euler;
+        //euler.x = closestAngle(preEuler.x, euler.x);
+        //euler.y = closestAngle(preEuler.y, euler.y);
+        //euler.z = closestAngle(preEuler.z, euler.z);
+        //preEuler = euler;
+
+        static float rotationDeg[3] = { euler.x, euler.y, euler.z };
         if (ImGui::InputFloat3("Rotation (deg)", rotationDeg,"%.2f"))
         {
             glm::vec3 rad = glm::radians(glm::vec3(rotationDeg[0], rotationDeg[1], rotationDeg[2]));
             // Create quaternion from Euler radians
-            targetTransform->rotation = glm::quat(rad);
+            targetTransform->rotation = glm::yawPitchRoll(rad.y,rad.x,rad.z);// glm::quat(rad);
+        }
+        if (m_UpdateGizmo || ImGui::Button("sync"))
+        {
+            rotationDeg[0] = euler[0];
+            rotationDeg[1] = euler[1];
+            rotationDeg[2] = euler[2];
         }
 
         // Editable scale

@@ -89,19 +89,8 @@ FetchContent_MakeAvailable(imgui)
 #make an imgui folder and put all of these files in the imgui folder
 add_subdirectory(src/thirdparty/imgui) #libimgui
 
-#shaderc_shared
-#FetchContent_Declare(
-#    shaderc
-#    GIT_REPOSITORY https://github.com/google/shaderc.git
-#    GIT_TAG v2025.5  # 指定版本标签
-#)
-#set(SHADERC_SKIP_TESTS ON)
-#set(SHADERC_SKIP_EXAMPLES ON)
-#set(SHADERC_SKIP_INSTALL ON)
-#FetchContent_MakeAvailable(shaderc)
-
 #---------------------------
-find_package(Vulkan REQUIRED)
+#find_package(Vulkan REQUIRED)
 
 #------------------third party end
 set(third_party_libs
@@ -110,7 +99,7 @@ set(third_party_libs
   glad
   spdlog
   libimgui
-  Vulkan::Vulkan
+#  Vulkan::Vulkan
 #C:/VulkanSDK/1.3.275.0/Lib/shaderc_shared.lib
 #C:/VulkanSDK/1.3.275.0/Lib/spirv-cross-core.lib
 #C:/VulkanSDK/1.3.275.0/Lib/spirv-cross-glsl.lib
