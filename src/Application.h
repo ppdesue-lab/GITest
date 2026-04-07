@@ -51,6 +51,10 @@ private:
 	Ref<ShaderLibrary> m_ShaderLibrary;
 	Ref<Camera> m_Camera;
 
+
+
+    Scope<Cube> m_backgroundCube;
+
     glm::vec2 m_MousePos;
 	Transform* m_GizmoTargetTransform = nullptr;
 

@@ -1,4 +1,4 @@
-#include "stdsfx.h"
+﻿#include "stdsfx.h"
 #include "Application.h"
 #include "ImGuiLayer.h"
 #include <ApplicationEvent.h>
@@ -34,6 +34,9 @@ Application::Application(int w,int h)
 	m_ShaderLibrary = CreateRef<ShaderLibrary>();
     m_ShaderLibrary->LoadDefault();
 
+
+    m_backgroundCube = CreateScope<Cube>(1.0f);
+
     SetGizmoViewportSize(w,h);
 }
 
@@ -43,6 +46,35 @@ void Application::Run()
 
     while (!m_WindowInterface->ShouldClose())
     {
+#pragma region background
+
+        RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
+        RenderCommand::Clear();
+        //draw background
+        {
+            RenderCommand::SetDepthRange(0.99f, 1.0f);
+            auto backshader = Application::Get().GetShaderLibrary()->Get("DefaultBackgroundSH");
+            backshader->Bind();
+            auto viewrotate = glm::mat4(glm::mat3(m_Camera->GetViewMatrix())); // 去除平移部分
+            auto invViewProj = glm::inverse(m_Camera->GetProjectionMatrix() * viewrotate);
+            backshader->SetMat4("u_invViewProj", invViewProj);
+            const glm::vec3 shCoeffs[9] = {
+                glm::vec3(0.79,  0.44,  0.54),   // L00
+                glm::vec3(0.39,  0.35,  0.60),   // L1-1
+                glm::vec3(-0.34, -0.18, -0.27),   // L10
+                glm::vec3(-0.29, -0.06,  0.01),   // L11
+                glm::vec3(-0.11, -0.05, -0.12),   // L2-2
+                glm::vec3(-0.26, -0.22, -0.47),   // L2-1
+                glm::vec3(-0.16, -0.09, -0.15),   // L20
+                glm::vec3(0.56,  0.21,  0.14),   // L21
+                glm::vec3(0.21, -0.05, -0.30)    // L22
+            };
+            backshader->SetVec3Array("shCoeffs", (float*) & shCoeffs[0].x, 9);
+            RenderCommand::DrawIndexed(m_backgroundCube->GetVertexArray(), m_backgroundCube->GetCount());
+            RenderCommand::SetDepthRange(0.f, 1.0f);
+        }
+#pragma endregion
+
         // Update all layers
         for (auto& layer : m_LayerStack)
         {
@@ -110,6 +142,7 @@ bool Application::OnWindowResize(WindowResizeEvent& e)
 
     RenderCommand::SetViewport(0,0,e.GetWidth(), e.GetHeight());
 
+    SetGizmoViewportSize(e.GetWidth(), e.GetHeight());
     return false;
 }
 

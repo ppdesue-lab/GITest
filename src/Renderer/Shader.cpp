@@ -300,7 +300,7 @@ void ShaderLibrary::LoadDefault()
 
 				vec3 color = evalSH(dir);
 
-				FragColor = vec4(color, 0.5);
+				FragColor = vec4(color, 1.0);
 			}
 		)";
 		//create shader

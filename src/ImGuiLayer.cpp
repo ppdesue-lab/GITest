@@ -241,6 +241,7 @@ void ImGuiLayer::OnEvent(Event& event)
 
 void ImGuiLayer::Begin()
 {
+    
     // Begin ImGui frame
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -249,11 +250,16 @@ void ImGuiLayer::Begin()
 
 void ImGuiLayer::End()
 {
+    
+
     // End ImGui frame and render
     ImGuiIO& io = ImGui::GetIO();
     Application& app = Application::Get();
     io.DisplaySize = ImVec2((float)app.GetWindow().GetWidth(), (float)app.GetWindow().GetHeight());
 
+
+    auto shader = Application::Get().GetShaderLibrary()->Get("DefaultColor");
+	shader->Bind();
     // Rendering
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -265,6 +271,8 @@ void ImGuiLayer::End()
     //    ImGui::RenderPlatformWindowsDefault();
     //    glfwMakeContextCurrent(backup_current_context);
     //}
+
+    
 }
 
 
