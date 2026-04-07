@@ -234,4 +234,79 @@ void ShaderLibrary::LoadDefault()
 #pragma endregion
 
 
+#pragma region background_sh_shader
+	{
+		auto vSource = R"(
+			#version 330 core
+
+			layout(location = 0) in vec3 a_Position;
+
+			out vec3 vDir;
+
+			
+			uniform mat4 u_invViewProj;
+
+
+			void main()
+			{
+				vec4 worldPos = u_invViewProj * vec4(a_Position, 1.0);
+				worldPos /= worldPos.w;
+
+				vDir = normalize(worldPos.xyz);
+
+				gl_Position = vec4(a_Position, 1.0);
+			}
+		)";
+
+		auto fSource = R"(
+			#version 330 core
+			
+			in vec3 vDir;
+			out vec4 FragColor;
+
+			// 9个 SH 系数（每个是 vec3 表示 RGB）
+			uniform vec3 shCoeffs[9];
+
+			// SH basis（3阶）
+			vec3 evalSH(vec3 dir)
+			{
+				float x = dir.x;
+				float y = dir.y;
+				float z = dir.z;
+
+				vec3 result = vec3(0.0);
+
+				// 常数项
+				result += shCoeffs[0] * 0.282095;
+
+				// 一阶
+				result += shCoeffs[1] * (0.488603 * y);
+				result += shCoeffs[2] * (0.488603 * z);
+				result += shCoeffs[3] * (0.488603 * x);
+
+				// 二阶
+				result += shCoeffs[4] * (1.092548 * x * y);
+				result += shCoeffs[5] * (1.092548 * y * z);
+				result += shCoeffs[6] * (0.315392 * (3.0 * z * z - 1.0));
+				result += shCoeffs[7] * (1.092548 * x * z);
+				result += shCoeffs[8] * (0.546274 * (x * x - y * y));
+
+				return result;
+			}
+
+			void main()
+			{
+				vec3 dir = normalize(vDir);
+
+				vec3 color = evalSH(dir);
+
+				FragColor = vec4(color, 0.5);
+			}
+		)";
+		//create shader
+		Load("DefaultBackgroundSH", vSource, fSource);
+	}
+#pragma endregion
+
+
 }

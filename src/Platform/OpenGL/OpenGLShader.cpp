@@ -459,6 +459,12 @@ namespace Utils {
 	{
 		UploadUniformIntArray(name, values, count);
 	}
+	
+	void OpenGLShader::SetVec3Array(const std::string& name, float* values, uint32_t count)
+	{
+		UploadUniformVec3Array(name, values, count);
+	}
+
 
 	void OpenGLShader::SetFloat(const std::string& name, float value)
 	{
@@ -485,6 +491,8 @@ namespace Utils {
 		UploadUniformMat4(name, value);
 	}
 
+	
+
 	void OpenGLShader::UploadUniformInt(const std::string& name, int value)
 	{
 		GLint location = glGetUniformLocation(m_RendererID, name.c_str());
@@ -501,6 +509,12 @@ namespace Utils {
 	{
 		GLint location = glGetUniformLocation(m_RendererID, name.c_str());
 		glUniform1f(location, value);
+	}
+
+	void OpenGLShader::UploadUniformVec3Array(const std::string& name, float* values, uint32_t count)
+	{
+		GLint location = glGetUniformLocation(m_RendererID, name.c_str());
+		glUniform3fv(location, count,values);
 	}
 
 	void OpenGLShader::UploadUniformFloat2(const std::string& name, const glm::vec2& value)
