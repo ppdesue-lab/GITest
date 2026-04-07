@@ -3,6 +3,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 
+#include <Renderer/VertexDesc.h>
+
 Axis::Axis(const glm::vec3& default_len )
 {
     Length = default_len;
@@ -94,6 +96,40 @@ void Sphere::Create(float radius, uint32_t sectorCount, uint32_t stackCount)
     m_Count = indices.size();
 	m_VertexArray->Unbind();
 }
+
+Plane::Plane(float size)
+{
+    Create(size);
+}
+
+void Plane::Create(float size)
+{
+    std::vector<VertexColor> vertices = {
+        VertexColor{{-size, 0.0f, -size}, {1.0f, 1.0f, 1.0f,0.5f}},
+        VertexColor{{size, 0.0f, -size},  {1.0f, 0.0f, 1.0f,0.5f}},
+        VertexColor{{size, 0.0f, size},   {1.0f, 1.0f, 0.0f,0.5f}},
+        VertexColor{{-size, 0.0f, size},  {0.0f, 1.0f, 1.0f,0.5f}}
+    };
+    std::vector<unsigned int> indices = {
+        0, 1, 2, 2, 3, 0
+    };
+    m_VertexArray = VertexArray::Create();
+    uint32_t sizeInBytes = vertices.size() * sizeof(VertexColor);
+    auto vertexBuffer = VertexBuffer::Create((float*)&vertices[0].Position.x,sizeInBytes);
+    BufferLayout layout = {
+        BufferElement(ShaderDataType::Float3,"a_Position",false),
+        BufferElement(ShaderDataType::Float4,"a_Color",false),
+    };
+    vertexBuffer->SetLayout(layout);
+    m_VertexArray->AddVertexBuffer(vertexBuffer);
+    auto m_IndexBuffer = IndexBuffer::Create(indices.data(), indices.size());
+    m_VertexArray->SetIndexBuffer(m_IndexBuffer);
+    m_Count = indices.size();
+    m_VertexArray->Unbind();
+}
+
+
+
 
 Cube::Cube(float size)
 {

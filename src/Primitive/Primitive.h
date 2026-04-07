@@ -45,6 +45,20 @@ private:
 	uint32_t m_Count = 0;
 };
 
+class Plane : public Primitive
+{
+public:
+	Plane(float size = 1.0f);
+	virtual ~Plane() = default;
+	Ref<VertexArray> GetVertexArray() const override { return m_VertexArray; }
+	uint32_t GetCount() { return m_Count; }
+private:
+	void Create(float size);
+private:
+	Ref<VertexArray> m_VertexArray;
+	uint32_t m_Count = 0;
+};
+
 class Cube : public Primitive
 {
 	public:

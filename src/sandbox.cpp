@@ -7,6 +7,8 @@ class ExampleLayer : public Layer
 public:
     Scope<Axis> axis;
 	Scope<Object3D> obj;
+    Scope<Plane> ground;
+
     ExampleLayer()
     {
         axis = CreateScope<Axis>();
@@ -17,7 +19,7 @@ public:
         obj->Meshes[0]->Transfm.scale = glm::vec3(0.01, 0.01, 0.01);
         obj->Meshes[0]->Transfm.rotation = glm::quat(glm::vec3(0, glm::radians(90.0f), 0));
 
-
+		ground = CreateScope<Plane>(1.0f);
 
         Transform b = {
             glm::vec3(0.6f, 0.0f, 0.0f),    // Translation
@@ -52,6 +54,7 @@ public:
         shader->SetMat4("u_Model", glm::mat4(1.0f));
         //
         RenderCommand::DrawLines(axis->GetVertexArray(), axis->GetCount());
+        RenderCommand::DrawIndexed(ground->GetVertexArray(), ground->GetCount());
         //
 		obj->Draw(camera->GetViewMatrix(), camera->GetProjectionMatrix());
 

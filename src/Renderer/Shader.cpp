@@ -280,16 +280,16 @@ void ShaderLibrary::LoadDefault()
 				result += shCoeffs[0] * 0.282095;
 
 				// 一阶
-				result += shCoeffs[1] * (0.488603 * y);
-				result += shCoeffs[2] * (0.488603 * z);
-				result += shCoeffs[3] * (0.488603 * x);
+				result += (shCoeffs[1] * (0.488603 * y));
+				result += (shCoeffs[2] * (0.488603 * z));
+				result += (shCoeffs[3] * (0.488603 * x));
 
 				// 二阶
-				result += shCoeffs[4] * (1.092548 * x * y);
-				result += shCoeffs[5] * (1.092548 * y * z);
-				result += shCoeffs[6] * (0.315392 * (3.0 * z * z - 1.0));
-				result += shCoeffs[7] * (1.092548 * x * z);
-				result += shCoeffs[8] * (0.546274 * (x * x - y * y));
+				result += (shCoeffs[4] * (1.092548 * x * y));
+				result += (shCoeffs[5] * (1.092548 * y * z));
+				result += (shCoeffs[6] * (0.315392 * (3.0 * z * z - 1.0)));
+				result +=(shCoeffs[7] * (1.092548 * x * z));
+				result += abs(shCoeffs[8] * (0.546274 * (x * x - y * y)));
 
 				return result;
 			}
