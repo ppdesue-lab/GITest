@@ -30,5 +30,13 @@ Ref<Image> Image::Load(const char* path,PixelType type)
 
 void Image::Save(const std::string& path) const
 {
-    stbi_write_png(path.c_str(), Width, Height, Channel, Data, Width * Channel);
+	stbi_flip_vertically_on_write(true);
+    int success = stbi_write_png(path.c_str(), Width, Height, Channel, Data, Width * Channel);
+    if (success) {
+        INFO("{} saved successfully!\n", path);
+    }
+    else {
+        ERROR("Failed to save image: {}\n", path);
+    }
+
 }

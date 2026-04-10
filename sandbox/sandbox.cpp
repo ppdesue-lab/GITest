@@ -36,7 +36,8 @@ public:
         Application& app = Application::Get();
         fbo = FrameBuffer::Create(FrameBufferSpecification{ app.GetWindow().GetWidth(),app.GetWindow().GetHeight(),
             { FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA8), FrameBufferTextureSpecification(FrameBufferTextureFormat::Depth) } });
-		fbo->Bind();
+		
+        fbo->Bind();
         {
             auto shader = Application::Get().GetShaderLibrary()->Get("DefaultColor");
             auto camera = Application::Get().GetCamera();

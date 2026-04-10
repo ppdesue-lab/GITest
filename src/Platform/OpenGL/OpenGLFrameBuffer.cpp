@@ -194,6 +194,7 @@ void OpenGLFrameBuffer::Bind()
 {
 	glBindFramebuffer(GL_FRAMEBUFFER, m_RendererID);
 	glViewport(0, 0, m_Specification.Width, m_Specification.Height);
+	glClear(GL_DEPTH_BUFFER_BIT);
 }
 
 void OpenGLFrameBuffer::Unbind()
@@ -238,6 +239,7 @@ void OpenGLFrameBuffer::Save2File(const std::string& filename, uint32_t attachme
 	glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
 	auto img = CreateRef<Image>(m_Specification.Width, m_Specification.Height, 4, data, PixelType::BYTE);
 	img->Save(filename);
+
 }
 
 void OpenGLFrameBuffer::ClearAttachment(uint32_t attachmentIndex, int value)
