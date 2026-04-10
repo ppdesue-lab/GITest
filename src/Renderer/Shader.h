@@ -5,6 +5,15 @@
 #include <glm/glm.hpp>
 #include <base.h>
 
+enum class ShaderType
+{
+    None = 0,
+    Vertex = 1,
+    Fragment = 2,
+    Geometry = 3,
+    Compute = 4
+};
+
 class Shader
 {
 public:
@@ -25,8 +34,11 @@ public:
     virtual const std::string& GetName() const = 0;
 
     static Ref<Shader> Create(const std::string& name, const std::string& vertexSrc, const std::string& fragmentSrc);
+    static Ref<Shader> Create(const std::string& name, const std::string& source,ShaderType type);
     static Ref<Shader> Create(const std::string& path);
 };
+
+
 
 class ShaderLibrary
 {
@@ -39,6 +51,7 @@ public:
     void Add(const Ref<Shader>& shader);
     Ref<Shader> Load(const std::string& name, const std::string& vSource,const std::string& fSource);
     Ref<Shader> Load(const std::string& name, const std::string& path);
+    Ref<Shader> Load(const std::string name,const std::string& source, ShaderType type);
     Ref<Shader> Load(const std::string& path);
     Ref<Shader> Get(const std::string& name="DefaultColor");
 

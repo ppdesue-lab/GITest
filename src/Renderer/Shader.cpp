@@ -32,6 +32,18 @@ Ref<Shader> Shader::Create(const std::string& name, const std::string& vertexSrc
     return nullptr;
 }
 
+Ref<Shader> Shader::Create(const std::string& name, const std::string& source, ShaderType type)
+{
+    switch(Renderer::GetAPI())
+    {
+        case Renderer::API::None:    ERROR("RendererAPI::None is currently not supported!"); return nullptr;
+        case Renderer::API::OpenGL:  return CreateRef<OpenGLShader>(name, source, type);
+    }
+
+    ERROR("Unknown RendererAPI!");
+    return nullptr;
+}
+
 void ShaderLibrary::Add(const std::string& name, const Ref<Shader>& shader)
 {
 	if(Exists(name))
@@ -65,6 +77,27 @@ Ref<Shader> ShaderLibrary::Load(const std::string& name, const std::string& vSou
 	assert(name.size());
 
 	auto shader = Shader::Create(name,vSource,fSource);
+	Add(name, shader);
+	return shader;
+}
+
+Ref<Shader> ShaderLibrary::Load(const std::string name,const std::string& source, ShaderType type)
+{
+	assert(name.size());
+	std::string vSource, fSource;
+	switch (type)
+	{
+	case ShaderType::Vertex:
+		vSource = source;
+		break;
+	case ShaderType::Fragment:
+		fSource = source;
+		break;
+	default:
+		ERROR("Unsupported shader type!");
+		return nullptr;
+	}
+	auto shader = Shader::Create(name, vSource, fSource);
 	Add(name, shader);
 	return shader;
 }
