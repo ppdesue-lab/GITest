@@ -1,13 +1,14 @@
 ﻿#include "stdsfx.h"
 #include "kengine.h"
-
 #include <imgui.h>
+
 class ExampleLayer : public Layer
 {
 public:
     Scope<Axis> axis;
 	Scope<Object3D> obj;
     Scope<Plane> ground;
+	Ref<FrameBuffer> fbo;
 
     ExampleLayer()
     {
@@ -31,6 +32,26 @@ public:
         obj->Meshes[0]->Transfm = obj->Meshes[0]->Transfm * b;
         obj->Meshes[0]->Transfm = obj->Meshes[0]->Transfm / b;
 		Application::Get().BindGizmoTargetTransform(&obj->Meshes[0]->Transfm);
+
+        Application& app = Application::Get();
+        fbo = FrameBuffer::Create(FrameBufferSpecification{ app.GetWindow().GetWidth(),app.GetWindow().GetHeight(),
+            { FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA8), FrameBufferTextureSpecification(FrameBufferTextureFormat::Depth) } });
+		fbo->Bind();
+        {
+            auto shader = Application::Get().GetShaderLibrary()->Get("DefaultColor");
+            auto camera = Application::Get().GetCamera();
+            shader->Bind();
+            shader->SetMat4("u_View", camera->GetViewMatrix());
+            shader->SetMat4("u_Projection", camera->GetProjectionMatrix());
+            shader->SetMat4("u_Model", glm::mat4(1.0f));
+            //
+            RenderCommand::DrawLines(axis->GetVertexArray(), axis->GetCount());
+            RenderCommand::DrawIndexed(ground->GetVertexArray(), ground->GetCount());
+            //
+            obj->Draw(camera->GetViewMatrix(), camera->GetProjectionMatrix());
+        }
+        fbo->Unbind();
+		fbo->Save2File("D:/fbo.png", 0);
     }
 
     void OnAttach() override
@@ -58,7 +79,6 @@ public:
         //
 		obj->Draw(camera->GetViewMatrix(), camera->GetProjectionMatrix());
 
-        
     }
 
     void OnImGuiRender() override

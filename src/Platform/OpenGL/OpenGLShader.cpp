@@ -23,11 +23,47 @@ namespace Utils {
 	{
 		if (type == "vertex")
 			return GL_VERTEX_SHADER;
-		if (type == "fragment" || type == "pixel")
+		else if (type == "fragment" || type == "pixel")
 			return GL_FRAGMENT_SHADER;
+		else if(type == "geometry")
+			return GL_GEOMETRY_SHADER;
+		else if(type == "compute")
+			return GL_COMPUTE_SHADER;
+
+		ERROR("Unknown shader type specified: {0}", type);
 
 		return 0;
 	}
+
+	static std::string ShaderTypeToString(ShaderType type)
+	{
+		switch (type)
+		{
+		case ShaderType::Vertex:   return "vertex";
+		case ShaderType::Fragment: return "fragment";
+		case ShaderType::Geometry: return "geometry";
+		case ShaderType::Compute:  return "compute";
+		default:
+			ERROR("Unknown shader type specified!");
+			return "";
+		}
+	}
+
+
+	static std::string ShaderTypeToString(uint32_t type)
+	{
+		switch (type)
+		{
+		case GL_VERTEX_SHADER:   return "vertex";
+		case GL_FRAGMENT_SHADER: return "fragment";
+		case GL_GEOMETRY_SHADER: return "geometry";
+		case GL_COMPUTE_SHADER:  return "compute";
+		default:
+			ERROR("Unknown shader type specified!");
+			return "";
+		}
+	}
+
 #ifdef USE_SHADER_CACHE
 	static shaderc_shader_kind GLShaderStageToShaderC(GLenum stage)
 	{
@@ -132,7 +168,7 @@ namespace Utils {
 		glShaderSource(shader, 1, &src, nullptr);
 		glCompileShader(shader);
 
-		checkCompileErrors(shader, type == GL_VERTEX_SHADER ? "VERTEX" : "FRAGMENT");
+		checkCompileErrors(shader, Utils::ShaderTypeToString(type));
 
 		return shader;
 	}
@@ -147,7 +183,7 @@ namespace Utils {
 		glShaderSource(shader, 1, &src, nullptr);
 		glCompileShader(shader);
 
-		checkCompileErrors(shader, type == GL_VERTEX_SHADER ? "VERTEX" : "FRAGMENT");
+		checkCompileErrors(shader, Utils::ShaderTypeToString(type));// == GL_VERTEX_SHADER ? "VERTEX" : "FRAGMENT");
 
 		return shader;
 	}
@@ -178,6 +214,17 @@ namespace Utils {
 		auto lastDot = filepath.rfind('.');
 		auto count = lastDot == std::string::npos ? filepath.size() - lastSlash : lastDot - lastSlash;
 		m_Name = filepath.substr(lastSlash, count);
+	}
+
+	OpenGLShader::OpenGLShader(const std::string& name, const std::string& source, ShaderType type)
+		: m_Name(name)
+	{
+		std::unordered_map<GLenum, std::string> sources;
+		sources[Utils::ShaderTypeFromString(Utils::ShaderTypeToString(type))] = source;
+
+		m_OpenGLSourceCode = sources;
+		CreateProgram();
+
 	}
 
 	OpenGLShader::OpenGLShader(const std::string& name, const std::string& vertexSrc, const std::string& fragmentSrc)

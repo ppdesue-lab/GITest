@@ -4,6 +4,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
 
 
 Ref<Image> Image::Load(const char* path,PixelType type)
@@ -23,4 +26,9 @@ Ref<Image> Image::Load(const char* path,PixelType type)
     img->Type = type;
     img->Data = data;
     return img;
+}
+
+void Image::Save(const std::string& path) const
+{
+    stbi_write_png(path.c_str(), Width, Height, Channel, Data, Width * Channel);
 }

@@ -37,7 +37,7 @@ namespace Utils
 		glCreateTextures(TextureTarget(multisampled), count, outID);
 	}
 
-	static void AttachDepthTexture(uint32_t id,int samples, GLenum internalFormat, uint32_t width, uint32_t height)
+	static void AttachDepthTexture(uint32_t id,int samples, GLenum internalFormat, GLenum attachmentType, uint32_t width, uint32_t height)
 	{
 		bool multisampled = samples > 1;
 		if (multisampled)
@@ -52,7 +52,7 @@ namespace Utils
 			glTextureParameteri(id, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 			glTextureParameteri(id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		}
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, TextureTarget(multisampled), id, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, attachmentType, TextureTarget(multisampled), id, 0);
 	}
 
 	static void AttachColorTexture(uint32_t id, int samples, GLenum internalFormat, GLenum format, uint32_t width, uint32_t height, int index)
@@ -64,7 +64,10 @@ namespace Utils
 		}
 		else
 		{
-			glTextureStorage2D(id, 1, internalFormat, width, height);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+			//glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_UNSIGNED_BYTE, nullptr);
+
+			//glTextureStorage2D(id, 1, internalFormat, width, height);
 			glTextureParameteri(id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 			glTextureParameteri(id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 			glTextureParameteri(id, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -132,7 +135,7 @@ void OpenGLFrameBuffer::Invalidate()
 	if (m_ColorAttachmentSpecfications.size())
 	{
 		m_ColorAttachments.resize(m_ColorAttachmentSpecfications.size());
-		Utils::CreateTextures(multisample ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D, m_ColorAttachments.data(), (GLsizei)m_ColorAttachments.size());
+		Utils::CreateTextures(multisample, m_ColorAttachments.data(), (GLsizei)m_ColorAttachments.size());
 		for (size_t i = 0; i < m_ColorAttachments.size(); i++)
 		{
 			Utils::BindTexture(multisample, m_ColorAttachments[i]);
@@ -155,22 +158,25 @@ void OpenGLFrameBuffer::Invalidate()
 		switch (m_DepthAttachmentSpecification.TextureFormat)
 		{
 		case FrameBufferTextureFormat::Depth24Stencil8:
-			Utils::AttachDepthTexture(m_DepthAttachment, m_Specification.Samples, GL_DEPTH24_STENCIL8, m_Specification.Width, m_Specification.Height);
+			Utils::AttachDepthTexture(m_DepthAttachment, m_Specification.Samples, GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL_ATTACHMENT,m_Specification.Width, m_Specification.Height);
 			break;
 		}
 	}
 
 	if (m_ColorAttachments.size() > 1)
 	{
-		GLenum* buffers = new GLenum[m_ColorAttachments.size()];
-		for (size_t i = 0; i < m_ColorAttachments.size(); i++)
-			buffers[i] = GL_COLOR_ATTACHMENT0 + (GLenum)i;
-		glDrawBuffers((GLsizei)m_ColorAttachments.size(), buffers);
-		delete[] buffers;
+		GLenum buffers[4] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3 };
+		glDrawBuffers(m_ColorAttachments.size(), buffers);
 	}
 	else if (m_ColorAttachments.empty())
 	{
 		glDrawBuffer(GL_NONE);
+	}
+	else
+	{
+		std::vector<GLenum> mrt;
+		mrt.emplace_back(GL_COLOR_ATTACHMENT0);
+		glDrawBuffers(1, mrt.data());
 	}
 
 	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
@@ -179,6 +185,8 @@ void OpenGLFrameBuffer::Invalidate()
 	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	
 }
 
 
@@ -216,6 +224,20 @@ int OpenGLFrameBuffer::ReadPixel(uint32_t attachmentIndex, int x, int y)
 	int pixelData;
 	glReadPixels(x, y, 1, 1, GL_RED_INTEGER, GL_INT, &pixelData);
 	return pixelData;
+}
+
+void OpenGLFrameBuffer::Save2File(const std::string& filename, uint32_t attachmentIndex)
+{
+	if (attachmentIndex >= m_ColorAttachments.size())
+	{
+		ERROR("Attachment index out of bounds!");
+		return;
+	}
+	glBindTexture(GL_TEXTURE_2D, m_ColorAttachments[attachmentIndex]);
+	unsigned char* data = new unsigned char[m_Specification.Width * m_Specification.Height * 4];
+	glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+	auto img = CreateRef<Image>(m_Specification.Width, m_Specification.Height, 4, data, PixelType::BYTE);
+	img->Save(filename);
 }
 
 void OpenGLFrameBuffer::ClearAttachment(uint32_t attachmentIndex, int value)

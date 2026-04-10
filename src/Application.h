@@ -12,6 +12,7 @@
 #include <Primitive/Primitive.h>
 #include <memory>
 #include <Renderer/Shader.h>
+#include <Renderer/FrameBuffer.h>
 #include <Camera/Camera.h>
 #include <Transform.h>
 
