@@ -194,6 +194,8 @@ void OpenGLFrameBuffer::Bind()
 {
 	glBindFramebuffer(GL_FRAMEBUFFER, m_RendererID);
 	glViewport(0, 0, m_Specification.Width, m_Specification.Height);
+
+	//default depth is 0,which is the near plane in OpenGL, so we clear it to 1.0f (the near plane) to avoid depth testing issues
 	glClear(GL_DEPTH_BUFFER_BIT);
 }
 

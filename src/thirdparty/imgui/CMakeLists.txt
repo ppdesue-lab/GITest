@@ -8,6 +8,8 @@ set(IMGUI_SRC
         ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.h
         ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3_loader.h
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.h
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.h
         ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
         ${imgui_SOURCE_DIR}/imgui.h

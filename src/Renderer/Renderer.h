@@ -11,7 +11,7 @@ public:
 
     enum class API
     {
-        None, OpenGL
+        None, OpenGL, DX11
     };
 
 

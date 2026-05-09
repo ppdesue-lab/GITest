@@ -23,7 +23,6 @@ Application::Application(int w,int h)
     m_WindowInterface->SetEventCallback(BIND_EVENT_FN(Application::OnEvent));
     RenderCommand::Init();
 
-
     m_Camera = CreateRef<FPSCamera>(glm::vec3(0, 0, 2), glm::vec3(0, 0, 0), 45.0f, w / (float)h);
     //((FPSCamera*)m_Camera.get())->lookAt(glm::vec3(0, 0, 0));
     

@@ -38,7 +38,7 @@ public:
 class MaterialMatcap : public Material
 {
 public:
-    MaterialMatcap(const std::string& texpath="../data/images/matcap.png",const glm::vec3& color = glm::vec3(1, 0, 1));
+    MaterialMatcap(const std::string& texpath=GetFilePath("../data/images/matcap.png"),const glm::vec3& color = glm::vec3(1, 0, 1));
 
     void Bind() {
         assert(MatShader);

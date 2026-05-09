@@ -29,9 +29,13 @@ void WindowsWindow::Create(int width, int height, const std::string& title)
     m_Data.Height = height;
     m_Data.Title = title;
 
+#ifdef G_DX11
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+#else
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#endif
 
     m_Data.glfwWindow = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
     if (!m_Data.glfwWindow)

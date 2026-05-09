@@ -3,6 +3,9 @@
 
 #include <Renderer/Renderer.h>
 #include <Platform/OpenGL/OpenGLTexture.h>
+#ifdef G_DX11
+#include <Platform/DX11/DX11Texture.h>
+#endif
 
 std::unordered_map<std::string, Ref<Texture>> TextureLibrary::s_Textures;
 
@@ -28,6 +31,12 @@ Ref<Texture> TextureLibrary::GetTexture(const std::string& filepath)
 		throw std::string("not implement!");
 	case Renderer::API::OpenGL:
 		tex = CreateRef<OpenGLTexture>(img);
+		break;
+#ifdef G_DX11
+	case Renderer::API::DX11:
+		tex = CreateRef<DX11Texture>(img);
+		break;
+#endif
 
 	}
 

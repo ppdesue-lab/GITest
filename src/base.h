@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 template<typename T>
 using Ref = std::shared_ptr<T>;
@@ -21,3 +22,5 @@ constexpr Scope<T> CreateScope(Args&& ... args)
 
 #define BIND_EVENT_FN(fn) [this](auto&&... args) -> decltype(auto) { return this->fn(std::forward<decltype(args)>(args)...); }
 #include <Log.h>
+
+extern std::string GetFilePath(const std::string& filename);

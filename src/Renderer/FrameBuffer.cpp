@@ -3,6 +3,9 @@
 
 #include "Renderer.h"
 #include <Platform/OpenGL/OpenGLFrameBuffer.h>
+#ifdef G_DX11
+#include <Platform/DX11/DX11FrameBuffer.h>
+#endif
 
 Ref<FrameBuffer> FrameBuffer::Create(const FrameBufferSpecification& spec)
 {
@@ -13,6 +16,10 @@ Ref<FrameBuffer> FrameBuffer::Create(const FrameBufferSpecification& spec)
 		return nullptr;
 	case Renderer::API::OpenGL:
 		return CreateRef<OpenGLFrameBuffer>(spec);
+#ifdef G_DX11
+	case Renderer::API::DX11:
+		return CreateRef<DX11FrameBuffer>(spec);
+#endif
 	default:
 		ERROR("Unknown RendererAPI!");
 		return nullptr;

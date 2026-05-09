@@ -5,9 +5,10 @@ project(${project_name} VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(KENGINE_RENDERER_API "DX11" CACHE STRING "Renderer backend: OpenGL or DX11")
+#set_property(CACHE KENGINE_RENDERER_API PROPERTY STRINGS OpenGL DX11)
 
 file(GLOB_RECURSE SRC_FILES *.cpp *.h)
-
 
 #------------------third party
 include(FetchContent)
@@ -105,6 +106,7 @@ set(third_party_libs
 #C:/VulkanSDK/1.3.275.0/Lib/spirv-cross-glsl.lib
 )
 
+
 #definitions and includes
 set(all_includes
     ${CMAKE_SOURCE_DIR}/src
@@ -121,7 +123,13 @@ set(all_compiler_definitions
 
 #---------------------------------------------
 #add definitions and executable
-add_definitions(-DG_OPENGL -DPLATFORM_WINDOWS)
+add_definitions(-DPLATFORM_WINDOWS)
+if(KENGINE_RENDERER_API STREQUAL "DX11")
+  list(APPEND all_compiler_definitions G_DX11)
+  list(APPEND third_party_libs d3d11 dxgi d3dcompiler)
+else()
+  list(APPEND all_compiler_definitions G_OPENGL)
+endif()
 #add_executable(${project_name} ${SRC_FILES})
 
 add_library(${project_name} STATIC ${SRC_FILES})
@@ -132,7 +140,7 @@ target_precompile_headers(${project_name} PRIVATE stdsfx.h stdsfx.cpp)
 #compiler definitions
 target_compile_definitions(${project_name} PUBLIC ${all_compiler_definitions})
 #link third party libs
-target_link_libraries(${project_name} PRIVATE ${third_party_libs})
+target_link_libraries(${project_name} PUBLIC ${third_party_libs})
 #include dirs
 target_include_directories(${project_name} PRIVATE ${all_includes})
 

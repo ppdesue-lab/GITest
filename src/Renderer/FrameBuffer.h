@@ -42,7 +42,7 @@ struct FrameBufferSpecification
 class FrameBuffer
 {
 public:
-	~FrameBuffer() = default;
+	virtual ~FrameBuffer() = default;
 
 	virtual void Bind() = 0;
 	virtual void Unbind() = 0;

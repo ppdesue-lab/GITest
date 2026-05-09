@@ -11,7 +11,12 @@
 #include <Renderer/RenderCommand.h>
 
 #include <backends/imgui_impl_glfw.h>
+#ifdef G_DX11
+#include <backends/imgui_impl_dx11.h>
+#include <Platform/DX11/DX11Context.h>
+#else
 #include <backends/imgui_impl_opengl3.h>
+#endif
 
 ImGuiLayer::ImGuiLayer()
     : Layer("ImGuiLayer")
@@ -32,8 +37,8 @@ void ImGuiLayer::OnAttach()
     //io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoMerge;
 
     float fontSize = 18.0f;// *2.0f;
-    io.Fonts->AddFontFromFileTTF("../data/fonts/CangErYuYangTiW03-2.ttf", fontSize,nullptr,io.Fonts->GetGlyphRangesChineseFull());
-    //io.FontDefault = io.Fonts->AddFontFromFileTTF("assets/fonts/opensans/OpenSans-Regular.ttf", fontSize);
+    io.Fonts->AddFontFromFileTTF(GetFilePath("../data/fonts/CangErYuYangTiW03-2.ttf").c_str(), fontSize,nullptr,io.Fonts->GetGlyphRangesChineseFull());
+    //io.FontDefault = io.Fonts->AddFontFromFileTTF(GetFilePath("assets/fonts/opensans/OpenSans-Regular.ttf").c_str(), fontSize);
     io.Fonts->Build();
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
@@ -55,8 +60,13 @@ void ImGuiLayer::OnAttach()
     m_Camera = app.GetCamera();
 
     // Setup Platform/Renderer bindings
+#ifdef G_DX11
+    ImGui_ImplGlfw_InitForOther(window, true);
+    ImGui_ImplDX11_Init(DX11Context::GetDevice(), DX11Context::GetDeviceContext());
+#else
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 410");
+#endif
 }
 
 void ImGuiLayer::OnDetach()
@@ -65,7 +75,11 @@ void ImGuiLayer::OnDetach()
     // Cleanup ImGui here
     // ImGui::DestroyContext();
     
+#ifdef G_DX11
+    ImGui_ImplDX11_Shutdown();
+#else
     ImGui_ImplOpenGL3_Shutdown();
+#endif
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 }
@@ -243,7 +257,11 @@ void ImGuiLayer::Begin()
 {
     
     // Begin ImGui frame
+#ifdef G_DX11
+    ImGui_ImplDX11_NewFrame();
+#else
     ImGui_ImplOpenGL3_NewFrame();
+#endif
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 }
@@ -262,7 +280,11 @@ void ImGuiLayer::End()
 	shader->Bind();
     // Rendering
     ImGui::Render();
+#ifdef G_DX11
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+#else
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#endif
 
     //if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
     //{
