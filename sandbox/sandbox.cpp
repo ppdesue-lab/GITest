@@ -1,22 +1,21 @@
 ﻿#include "stdsfx.h"
 #include "kengine.h"
 #include <imgui.h>
+#include <Primitive/AxisHelper.h>
 
 class ExampleLayer : public Layer
 {
 public:
-    Scope<Axis> axis;
-    Scope<Plane> ground;
-    Scope<Plane> screenQuad;
-	Ref<FrameBuffer> fbo;
+    AxisHelper axis;
+    Ref<FrameBuffer> fbo;
 
     ExampleLayer()
+        : axis(glm::vec3(100, 100, 100))
     {
-        axis = CreateScope<Axis>(glm::vec3(100, 100, 100));
-		ground = CreateScope<Plane>(100.0f);
-		screenQuad = CreateScope<Plane>(1.0f);
+        // Ground managed by Scene
+        Application::Get().GetScene().CreatePlane("Ground");
 
-        // Load first object at natural scale (no 0.01 hack)
+        // Load first object at natural scale
         auto obj = Application::Get().LoadObject3D("D:/Untitled.obj");
         if (obj && !obj->Meshes.empty())
         {
@@ -24,7 +23,7 @@ public:
             t.translation = glm::vec3(30.0f, 0.0f, 0.0f);
         }
 
-        // Load second object at origin at natural scale
+        // Load second object at origin
         auto monkey = Application::Get().LoadObject3D("D:/Untitled.obj");
         if (monkey && !monkey->Meshes.empty())
         {
@@ -49,8 +48,8 @@ public:
 		shader->SetMat4("u_Projection", camera->GetProjectionMatrix());
         shader->SetMat4("u_Model", glm::mat4(1.0f));
 
-        RenderCommand::DrawLines(axis->GetVertexArray(), axis->GetCount());
-        RenderCommand::DrawIndexed(ground->GetVertexArray(), ground->GetCount());
+        // Axis helper
+        RenderCommand::DrawLines(axis.GetVertexArray(), axis.GetCount());
     }
 
     void OnImGuiRender() override
@@ -62,7 +61,7 @@ public:
 
     void OnEvent(Event& event) override
     {
-		if (!(event.GetCategoryFlags() & EventCategory::EventCategoryInput))
+		if (!(event.GetCategoryFlags() & EventCategoryInput))
             INFO("{}", event.ToString());
     }
 };

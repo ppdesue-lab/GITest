@@ -12,6 +12,7 @@
 
 #include "Renderer/Renderer.h"
 #include "Renderer/RenderCommand.h"
+#include "Renderer/Buffer.h"
 
 #include "Camera/FPSCamera.h"
 
@@ -40,7 +41,26 @@ Application::Application(int w,int h)
     m_ShaderLibrary->LoadDefault();
 
 
-    m_backgroundCube = CreateScope<Cube>(1.0f);
+    // Background skybox cube (simple position-only vertex data)
+    {
+        std::vector<glm::vec3> bgVerts = {
+            {-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
+            {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1}
+        };
+        std::vector<uint32_t> bgIdx = {
+            0,1,2, 2,3,0, 4,5,6, 6,7,4,
+            0,1,5, 5,4,0, 2,3,7, 7,6,2,
+            0,3,7, 7,4,0, 1,2,6, 6,5,1
+        };
+        m_backgroundCubeVA = VertexArray::Create();
+        auto vb = VertexBuffer::Create((float*)&bgVerts[0].x, bgVerts.size() * sizeof(glm::vec3));
+        vb->SetLayout({ {ShaderDataType::Float3, "a_Position", false} });
+        m_backgroundCubeVA->AddVertexBuffer(vb);
+        auto ib = IndexBuffer::Create(bgIdx.data(), bgIdx.size());
+        m_backgroundCubeVA->SetIndexBuffer(ib);
+        m_backgroundCubeVA->Unbind();
+        m_backgroundCubeCount = bgIdx.size();
+    }
 
     SetGizmoViewportSize(w,h);
 
@@ -48,6 +68,9 @@ Application::Application(int w,int h)
         { FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA8),
           FrameBufferTextureSpecification(FrameBufferTextureFormat::Depth) } });
     SetGizmoViewportSize((int)m_ViewportSize.x, (int)m_ViewportSize.y);
+
+    // CSM must be created after OpenGL context is initialized
+    m_CSM = CreateRef<CSM>();
 }
 
 void Application::Run()
@@ -68,6 +91,31 @@ void Application::Run()
                               m_ViewportFBO->GetSpecification().Height != (uint32_t)m_ViewportSize.y))
         {
             m_ViewportFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+        }
+
+        // --- CSM SHADOW MAP UPDATE ---
+        {
+            m_CSM->Update(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix(), m_Camera->getNearPlane(), m_Camera->getFarPlane());
+
+            auto depthShader = GetShaderLibrary()->Get("ShadowDepth");
+            auto& lightViewProj = m_CSM->GetLightViewProjMatrices();
+
+            for (uint32_t i = 0; i < m_CSM->GetCascadeCount(); i++)
+            {
+                m_CSM->BeginShadowPass(i);
+                depthShader->Bind();
+                for (const auto& entry : m_Scene.GetObjects())
+                {
+                    if (!entry.Visible) continue;
+                    depthShader->SetMat4("u_LightViewProj", lightViewProj[i]);
+                    for (auto& mesh : entry.Object->Meshes)
+                    {
+                        depthShader->SetMat4("u_Model", mesh->Transfm.GetMatrix());
+                        RenderCommand::DrawIndexed(mesh->VertexObject);
+                    }
+                }
+                m_CSM->EndShadowPass();
+            }
         }
 
         // --- SCENE RENDERING (common to both modes) ---
@@ -107,7 +155,7 @@ void Application::Run()
                 glm::vec3(0.21, -0.05, -0.30)
             };
             backshader->SetVec3Array("shCoeffs", (float*)&shCoeffs[0].x, 9);
-            RenderCommand::DrawIndexed(m_backgroundCube->GetVertexArray(), m_backgroundCube->GetCount());
+                RenderCommand::DrawIndexed(m_backgroundCubeVA, m_backgroundCubeCount);
             RenderCommand::SetDepthRange(0.f, 1.0f);
 #ifdef G_OPENGL
             glDepthMask(GL_TRUE);
@@ -123,18 +171,53 @@ void Application::Run()
             if (entry.Visible)
                 entry.Object->Draw(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix());
 
-        if (m_AppMode == AppMode::Editor)
-        {
-            // Reset model matrix to identity so gizmo lines render in world space
+            if (m_AppMode == AppMode::Editor)
             {
-                auto resetShader = GetShaderLibrary()->Get("DefaultColor");
-                resetShader->Bind();
-                resetShader->SetMat4("u_View", m_Camera->GetViewMatrix());
-                resetShader->SetMat4("u_Projection", m_Camera->GetProjectionMatrix());
-                resetShader->SetMat4("u_Model", glm::mat4(1.0f));
-            }
+                // Reset model matrix to identity so gizmo lines render in world space
+                {
+                    auto resetShader = GetShaderLibrary()->Get("DefaultColor");
+                    resetShader->Bind();
+                    resetShader->SetMat4("u_View", m_Camera->GetViewMatrix());
+                    resetShader->SetMat4("u_Projection", m_Camera->GetProjectionMatrix());
+                    resetShader->SetMat4("u_Model", glm::mat4(1.0f));
+                }
 
-            // Draw gizmo
+                // Directional light indicator
+                {
+                    glm::vec3 lightPos(0.0f, 100.0f, 0.0f);
+                    glm::vec3 lightDir = glm::normalize(m_CSM->GetLight().Direction);
+                    glm::vec3 dirEnd = lightPos + lightDir * 10.0f;
+
+                    // Draw direction line (yellow)
+                    RenderCommand::FlushLine(lightPos, dirEnd, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f));
+
+                    // Draw a small sphere indicator (3 axis-aligned circles)
+                    float radius = 1.5f;
+                    int segments = 16;
+                    glm::vec4 sphereColor(1.0f, 0.8f, 0.0f, 1.0f);
+                    for (int axis = 0; axis < 3; axis++)
+                    {
+                        for (int i = 0; i < segments; i++)
+                        {
+                            float a1 = (float)i / (float)segments * 6.28318f;
+                            float a2 = (float)(i + 1) / (float)segments * 6.28318f;
+                            glm::vec3 p1, p2;
+                            if (axis == 0) { // XZ circle
+                                p1 = lightPos + glm::vec3(cosf(a1) * radius, 0, sinf(a1) * radius);
+                                p2 = lightPos + glm::vec3(cosf(a2) * radius, 0, sinf(a2) * radius);
+                            } else if (axis == 1) { // XY circle
+                                p1 = lightPos + glm::vec3(cosf(a1) * radius, sinf(a1) * radius, 0);
+                                p2 = lightPos + glm::vec3(cosf(a2) * radius, sinf(a2) * radius, 0);
+                            } else { // YZ circle
+                                p1 = lightPos + glm::vec3(0, cosf(a1) * radius, sinf(a1) * radius);
+                                p2 = lightPos + glm::vec3(0, cosf(a2) * radius, sinf(a2) * radius);
+                            }
+                            RenderCommand::FlushLine(p1, p2, sphereColor);
+                        }
+                    }
+                }
+
+                // Draw gizmo
             Transform* targetTransform = m_GizmoTargetTransform;
             if (targetTransform)
             {
@@ -325,34 +408,6 @@ void Application::ClearObject3Ds()
 {
     m_Scene.Clear();
     m_GizmoTargetTransform = nullptr;
-}
-
-Ref<Object3D> Application::CreatePrimitive(const std::string& name, const std::vector<VertexNormal>& vertices, const std::vector<uint32_t>& indices)
-{
-    auto obj = CreateRef<Object3D>();
-    auto mesh = CreateRef<Mesh>();
-
-    auto va = VertexArray::Create();
-    auto vb = VertexBuffer::Create((float*)&vertices[0].Position.x, vertices.size() * sizeof(VertexNormal));
-    BufferLayout layout = {
-        BufferElement(ShaderDataType::Float3, "a_Position", false),
-        BufferElement(ShaderDataType::Float3, "a_Normal", false),
-    };
-    vb->SetLayout(layout);
-    va->AddVertexBuffer(vb);
-
-    auto ib = IndexBuffer::Create((uint32_t*)indices.data(), (uint32_t)indices.size());
-    va->SetIndexBuffer(ib);
-    va->Unbind();
-
-    mesh->VertexObject = va;
-    mesh->Mat = CreateRef<MaterialMatcap>();
-    obj->Meshes.push_back(mesh);
-
-    m_Scene.AddObject(obj, name, "");
-    
-    m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
-    return obj;
 }
 
 void Application::SetViewportSize(const glm::vec2& size)

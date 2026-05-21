@@ -6,22 +6,44 @@
 #include <fstream>
 #include <cctype>
 
+#include "Application.h"
+
 
 void Mesh::Draw(const glm::mat4& view,const glm::mat4 proj)
 {
 	Mat->Bind();
 	Mat->MatShader->SetMat4("u_View", view);
 	Mat->MatShader->SetMat4("u_Projection", proj);
-	//set model
 	Mat->MatShader->SetMat4("u_Model", Transfm.GetMatrix());
 	{
 		//phong stuff
-		glm::vec3 viewpos = glm::vec3(view[3]);
+		glm::vec3 viewpos = glm::vec3(glm::inverse(view)[3]);
 		Mat->MatShader->SetFloat3("u_lightPos", glm::vec3(0,10,0));
 		Mat->MatShader->SetFloat3("u_viewPos", viewpos);
 		Mat->MatShader->SetFloat3("u_lightColor", glm::vec3(0, 1, 0));
 		Mat->MatShader->SetFloat3("u_objectColor", glm::vec3(1, 1, 1));
 
+		// CSM shadow uniforms (set when shader supports them)
+		Application& app = Application::Get();
+		CSM& csm = app.GetCSM();
+		auto& lightViewProj = csm.GetLightViewProjMatrices();
+		auto& cascadeDists = csm.GetCascadeDistances();
+		uint32_t cascadeCount = csm.GetCascadeCount();
+		auto lightDir = csm.GetLight().Direction;
+
+		Mat->MatShader->SetInt("u_cascadeCount", (int)cascadeCount);
+		Mat->MatShader->SetFloat("u_shadowMapSize", (float)csm.GetShadowMapSize());
+		Mat->MatShader->SetFloat3("u_lightDir", lightDir);
+		Mat->MatShader->SetInt("u_debugCascadeView", Application::Get().GetDebugCascadeView() ? 1 : 0);
+		for (uint32_t i = 0; i <= cascadeCount && i < 4; i++)
+		{
+			Mat->MatShader->SetFloat("u_cascadeDistances[" + std::to_string(i) + "]", cascadeDists[i]);
+			if (i < cascadeCount)
+				Mat->MatShader->SetMat4("u_lightViewProj[" + std::to_string(i) + "]", lightViewProj[i]);
+		}
+
+		csm.BindShadowTexture(2);
+		Mat->MatShader->SetInt("u_shadowMap", 2);
 	}
     RenderCommand::DrawIndexed(VertexObject);
 };

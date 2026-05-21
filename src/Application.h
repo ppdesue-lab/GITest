@@ -11,7 +11,8 @@
 #include "ImGuiLayer.h"
 #include "Scene.h"
 #include <filesystem>
-#include <Primitive/Primitive.h>
+#include <Primitive/AxisHelper.h>
+#include <Renderer/CSM.h>
 #include <memory>
 #include <Renderer/Shader.h>
 #include <Renderer/FrameBuffer.h>
@@ -49,7 +50,6 @@ public:
 	Scene& GetScene() { return m_Scene; }
 	Ref<Object3D> LoadObject3D(const std::filesystem::path& filepath);
 	void ClearObject3Ds();
-	Ref<Object3D> CreatePrimitive(const std::string& name, const std::vector<VertexNormal>& vertices, const std::vector<uint32_t>& indices);
 
 	// Viewport
 	Ref<FrameBuffer> GetViewportFBO() { return m_ViewportFBO; }
@@ -65,6 +65,7 @@ public:
 	int GetSelectedObjectIndex() const { return m_Scene.GetSelectedIndex(); }
 	void SetSelectedObjectIndex(int index);
 	Transform* GetGizmoTargetTransform() { return m_GizmoTargetTransform; }
+	void BindGizmoTargetTransform(Transform* transform) { m_GizmoTargetTransform = transform; }
 
 	// Gizmo state
 	int& GetGizmoMode() { return m_GizmoMode; }
@@ -74,6 +75,10 @@ public:
 	float& GetGizmoLineWidth() { return m_GizmoLineWidth; }
 	bool& GetLeftDownGizmo() { return m_LeftDownGizmo; }
 	bool& GetLeftDownCamera() { return m_LeftDownCamera; }
+
+	CSM& GetCSM() { return *m_CSM; }
+	bool GetDebugCascadeView() const { return m_DebugCascadeView; }
+	void SetDebugCascadeView(bool enabled) { m_DebugCascadeView = enabled; }
 
 	void ProcessKeyboardInput(float deltaTime);
 
@@ -92,7 +97,8 @@ private:
 	Ref<Camera> m_Camera;
 	Scene m_Scene;
 
-    Scope<Cube> m_backgroundCube;
+	Ref<VertexArray> m_backgroundCubeVA;
+	uint32_t m_backgroundCubeCount = 0;
 
     glm::vec2 m_MousePos;
 	Transform* m_GizmoTargetTransform = nullptr;
@@ -112,6 +118,9 @@ private:
 	float m_GizmoLineWidth = 2.5f;
 	bool m_LeftDownGizmo = false;
 	bool m_LeftDownCamera = false;
+
+	Ref<CSM> m_CSM;
+	bool m_DebugCascadeView = false;
 
 	// Keyboard state for continuous velocity-based movement
 	bool m_KeyW = false, m_KeyS = false;

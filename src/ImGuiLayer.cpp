@@ -154,6 +154,9 @@ void ImGuiLayer::OnImGuiRender()
     if (menuBarHeight < 1.0f) menuBarHeight = 20.0f;
 
     DrawEditorLayout(pos, size, menuBarHeight);
+
+    // Debug shadow map window
+    DrawShadowDebugWindow();
 }
 
 void ImGuiLayer::DrawEditorLayout(ImVec2 pos, ImVec2 size, float menuBarHeight)
@@ -202,6 +205,58 @@ void ImGuiLayer::DrawEditorLayout(ImVec2 pos, ImVec2 size, float menuBarHeight)
     ImGui::End();
 }
 
+void ImGuiLayer::DrawShadowDebugWindow()
+{
+    Application& app = Application::Get();
+    CSM& csm = app.GetCSM();
+    static bool showDebug = false;
+    static int debugCascade = 0;
+
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x - 320, 30), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(300, 350), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Shadow Debug", &showDebug, ImGuiWindowFlags_NoCollapse))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::SliderInt("Cascade", &debugCascade, 0, (int)csm.GetCascadeCount() - 1);
+    float maxShadowDistance = csm.GetMaxShadowDistance();
+    if (ImGui::SliderFloat("Max Shadow Distance", &maxShadowDistance, 50.0f, 2000.0f, "%.0f"))
+        csm.SetMaxShadowDistance(maxShadowDistance);
+    float splitLambda = csm.GetSplitLambda();
+    if (ImGui::SliderFloat("Split Lambda", &splitLambda, 0.0f, 1.0f, "%.2f"))
+        csm.SetSplitLambda(splitLambda);
+    const auto& cascadeDistances = csm.GetCascadeDistances();
+    for (uint32_t i = 0; i < csm.GetCascadeCount(); i++)
+        ImGui::Text("Cascade %u: %.2f - %.2f", i, cascadeDistances[i], cascadeDistances[i + 1]);
+    bool debugCascadeView = app.GetDebugCascadeView();
+    if (ImGui::Checkbox("Show Cascade View", &debugCascadeView))
+        app.SetDebugCascadeView(debugCascadeView);
+    if (ImGui::Button("Refresh"))
+    {
+        csm.UpdateDebugTexture(debugCascade);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Save"))
+    {
+        csm.SaveShadowMap("D:/shadow_cascade_" + std::to_string(debugCascade) + ".png", debugCascade);
+    }
+
+    uint32_t texID = csm.GetDebugTextureID(debugCascade);
+    if (texID)
+    {
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        float aspect = 1.0f;
+        float w = avail.x;
+        float h = w / aspect;
+        if (h > avail.y) h = avail.y;
+        ImGui::Image((ImTextureID)(uint64_t)texID, ImVec2(w, h), ImVec2(0, 1), ImVec2(1, 0));
+    }
+
+    ImGui::End();
+}
+
 void ImGuiLayer::DrawMenuBar()
 {
     if (ImGui::BeginMainMenuBar())
@@ -237,60 +292,26 @@ void ImGuiLayer::DrawMenuBar()
         {
             if (ImGui::MenuItem("Cube"))
             {
-                const float h = 0.5f;
-                glm::vec3 cubeVerts[8] = {
-                    {-h, -h, -h}, { h, -h, -h}, { h,  h, -h}, {-h,  h, -h},
-                    {-h, -h,  h}, { h, -h,  h}, { h,  h,  h}, {-h,  h,  h}
-                };
-                std::vector<VertexNormal> verts;
-                for (auto& p : cubeVerts)
-                    verts.push_back(VertexNormal(p, glm::normalize(p)));
-                std::vector<uint32_t> idxs = {
-                    0,1,2, 2,3,0, 4,5,6, 6,7,4,
-                    0,1,5, 5,4,0, 2,3,7, 7,6,2,
-                    0,3,7, 7,4,0, 1,2,6, 6,5,1
-                };
-                Application::Get().CreatePrimitive("Cube", verts, idxs);
+                auto cube = Application::Get().GetScene().CreateCube();
+                Application::Get().GetScene().SetSelectedIndex(Application::Get().GetScene().GetCount() - 1);
+                Application::Get().BindGizmoTargetTransform(Application::Get().GetScene().GetSelectedTransform());
+                TRACE("Created Cube: {}", cube ? "success" : "failed");
             }
 
             if (ImGui::MenuItem("Sphere"))
             {
-                std::vector<VertexNormal> verts;
-                std::vector<uint32_t> idxs;
-                uint32_t sc = 24, st = 16;
-                for (uint32_t i = 0; i <= st; ++i) {
-                    float stackAngle = 3.14159f / 2.0f - i * 3.14159f / (float)st;
-                    float xy = cosf(stackAngle);
-                    float z = sinf(stackAngle);
-                    for (uint32_t j = 0; j <= sc; ++j) {
-                        float sectorAngle = j * 2.0f * 3.14159f / (float)sc;
-                        float x = xy * cosf(sectorAngle);
-                        float y = xy * sinf(sectorAngle);
-                        glm::vec3 pos(x, y, z);
-                        verts.push_back(VertexNormal(pos, glm::normalize(pos)));
-                    }
-                }
-                for (uint32_t i = 0; i < st; ++i) {
-                    uint32_t k1 = i * (sc + 1);
-                    uint32_t k2 = k1 + sc + 1;
-                    for (uint32_t j = 0; j < sc; ++j, ++k1, ++k2) {
-                        if (i != 0) { idxs.push_back(k1); idxs.push_back(k2); idxs.push_back(k1 + 1); }
-                        if (i != st - 1) { idxs.push_back(k1 + 1); idxs.push_back(k2); idxs.push_back(k2 + 1); }
-                    }
-                }
-                Application::Get().CreatePrimitive("Sphere", verts, idxs);
+                auto sphere = Application::Get().GetScene().CreateSphere();
+                Application::Get().GetScene().SetSelectedIndex(Application::Get().GetScene().GetCount() - 1);
+                Application::Get().BindGizmoTargetTransform(Application::Get().GetScene().GetSelectedTransform());
+                TRACE("Created Sphere: {}", sphere ? "success" : "failed");
             }
 
             if (ImGui::MenuItem("Plane"))
             {
-                std::vector<VertexNormal> verts = {
-                    {{-1.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f}},
-                    {{ 1.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f}},
-                    {{ 1.0f, 0.0f,  1.0f}, {0.0f, 1.0f, 0.0f}},
-                    {{-1.0f, 0.0f,  1.0f}, {0.0f, 1.0f, 0.0f}},
-                };
-                std::vector<uint32_t> idxs = {0, 1, 2, 2, 3, 0};
-                Application::Get().CreatePrimitive("Plane", verts, idxs);
+                auto plane = Application::Get().GetScene().CreatePlane();
+                Application::Get().GetScene().SetSelectedIndex(Application::Get().GetScene().GetCount() - 1);
+                Application::Get().BindGizmoTargetTransform(Application::Get().GetScene().GetSelectedTransform());
+                TRACE("Created Plane: {}", plane ? "success" : "failed");
             }
 
             ImGui::EndMenu();
@@ -417,6 +438,15 @@ void ImGuiLayer::DrawPropertiesPanel()
     if (ImGui::Button("Focus"))
     {
         if (m_Camera) m_Camera->setInputEnabled(true);
+    }
+
+    // Debug: save CSM shadow map
+    ImGui::SeparatorText("Debug");
+    static int s_saveCascade = 0;
+    ImGui::SliderInt("Cascade", &s_saveCascade, 0, (int)app.GetCSM().GetCascadeCount() - 1);
+    if (ImGui::Button("Save Shadow Map"))
+    {
+        app.GetCSM().SaveShadowMap("D:/shadow_cascade_" + std::to_string(s_saveCascade) + ".png", s_saveCascade);
     }
 }
 

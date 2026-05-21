@@ -45,6 +45,7 @@ private:
     void DrawContentBrowser();
     void DrawConsolePanel();
     void DrawViewportPanel();
+    void DrawShadowDebugWindow();
     void OpenModelFile();
     bool IsSupportedModelFile(const std::filesystem::path& filepath) const;
 

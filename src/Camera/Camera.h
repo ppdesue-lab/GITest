@@ -13,4 +13,7 @@ public:
 
 	virtual void processMouseMovement(float offsetX, float offsetY) = 0;
 	virtual void processKeyboard(int forward, int right, int up, float deltaTime) = 0;
+
+	virtual float getNearPlane() const = 0;
+	virtual float getFarPlane() const = 0;
 };
