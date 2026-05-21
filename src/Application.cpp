@@ -327,16 +327,16 @@ void Application::ClearObject3Ds()
     m_GizmoTargetTransform = nullptr;
 }
 
-Ref<Object3D> Application::CreatePrimitive(const std::string& name, const std::vector<VertexColor>& vertices, const std::vector<uint32_t>& indices)
+Ref<Object3D> Application::CreatePrimitive(const std::string& name, const std::vector<VertexNormal>& vertices, const std::vector<uint32_t>& indices)
 {
     auto obj = CreateRef<Object3D>();
     auto mesh = CreateRef<Mesh>();
 
     auto va = VertexArray::Create();
-    auto vb = VertexBuffer::Create((float*)&vertices[0].Position.x, vertices.size() * sizeof(VertexColor));
+    auto vb = VertexBuffer::Create((float*)&vertices[0].Position.x, vertices.size() * sizeof(VertexNormal));
     BufferLayout layout = {
         BufferElement(ShaderDataType::Float3, "a_Position", false),
-        BufferElement(ShaderDataType::Float4, "a_Color", false),
+        BufferElement(ShaderDataType::Float3, "a_Normal", false),
     };
     vb->SetLayout(layout);
     va->AddVertexBuffer(vb);
@@ -346,7 +346,7 @@ Ref<Object3D> Application::CreatePrimitive(const std::string& name, const std::v
     va->Unbind();
 
     mesh->VertexObject = va;
-    mesh->Mat = CreateRef<MaterialColor>(glm::vec3(0.7f, 0.7f, 0.7f));
+    mesh->Mat = CreateRef<MaterialMatcap>();
     obj->Meshes.push_back(mesh);
 
     m_Scene.AddObject(obj, name, "");

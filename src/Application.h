@@ -49,7 +49,7 @@ public:
 	Scene& GetScene() { return m_Scene; }
 	Ref<Object3D> LoadObject3D(const std::filesystem::path& filepath);
 	void ClearObject3Ds();
-	Ref<Object3D> CreatePrimitive(const std::string& name, const std::vector<VertexColor>& vertices, const std::vector<uint32_t>& indices);
+	Ref<Object3D> CreatePrimitive(const std::string& name, const std::vector<VertexNormal>& vertices, const std::vector<uint32_t>& indices);
 
 	// Viewport
 	Ref<FrameBuffer> GetViewportFBO() { return m_ViewportFBO; }

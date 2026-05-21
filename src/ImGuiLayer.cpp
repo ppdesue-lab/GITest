@@ -237,16 +237,14 @@ void ImGuiLayer::DrawMenuBar()
         {
             if (ImGui::MenuItem("Cube"))
             {
-                std::vector<VertexColor> verts = {
-                    {{-1.0f, -1.0f, -1.0f}, {0.8f, 0.2f, 0.2f, 1.0f}},
-                    {{ 1.0f, -1.0f, -1.0f}, {0.8f, 0.2f, 0.2f, 1.0f}},
-                    {{ 1.0f,  1.0f, -1.0f}, {0.8f, 0.2f, 0.2f, 1.0f}},
-                    {{-1.0f,  1.0f, -1.0f}, {0.8f, 0.2f, 0.2f, 1.0f}},
-                    {{-1.0f, -1.0f,  1.0f}, {0.2f, 0.8f, 0.2f, 1.0f}},
-                    {{ 1.0f, -1.0f,  1.0f}, {0.2f, 0.8f, 0.2f, 1.0f}},
-                    {{ 1.0f,  1.0f,  1.0f}, {0.2f, 0.8f, 0.2f, 1.0f}},
-                    {{-1.0f,  1.0f,  1.0f}, {0.2f, 0.8f, 0.2f, 1.0f}},
+                const float h = 0.5f;
+                glm::vec3 cubeVerts[8] = {
+                    {-h, -h, -h}, { h, -h, -h}, { h,  h, -h}, {-h,  h, -h},
+                    {-h, -h,  h}, { h, -h,  h}, { h,  h,  h}, {-h,  h,  h}
                 };
+                std::vector<VertexNormal> verts;
+                for (auto& p : cubeVerts)
+                    verts.push_back(VertexNormal(p, glm::normalize(p)));
                 std::vector<uint32_t> idxs = {
                     0,1,2, 2,3,0, 4,5,6, 6,7,4,
                     0,1,5, 5,4,0, 2,3,7, 7,6,2,
@@ -257,7 +255,7 @@ void ImGuiLayer::DrawMenuBar()
 
             if (ImGui::MenuItem("Sphere"))
             {
-                std::vector<VertexColor> verts;
+                std::vector<VertexNormal> verts;
                 std::vector<uint32_t> idxs;
                 uint32_t sc = 24, st = 16;
                 for (uint32_t i = 0; i <= st; ++i) {
@@ -268,7 +266,8 @@ void ImGuiLayer::DrawMenuBar()
                         float sectorAngle = j * 2.0f * 3.14159f / (float)sc;
                         float x = xy * cosf(sectorAngle);
                         float y = xy * sinf(sectorAngle);
-                        verts.push_back({{x, y, z}, {0.3f, 0.5f, 0.9f, 1.0f}});
+                        glm::vec3 pos(x, y, z);
+                        verts.push_back(VertexNormal(pos, glm::normalize(pos)));
                     }
                 }
                 for (uint32_t i = 0; i < st; ++i) {
@@ -284,11 +283,11 @@ void ImGuiLayer::DrawMenuBar()
 
             if (ImGui::MenuItem("Plane"))
             {
-                std::vector<VertexColor> verts = {
-                    {{-1.0f, 0.0f, -1.0f}, {0.7f, 0.7f, 0.7f, 0.8f}},
-                    {{ 1.0f, 0.0f, -1.0f}, {0.7f, 0.7f, 0.7f, 0.8f}},
-                    {{ 1.0f, 0.0f,  1.0f}, {0.7f, 0.7f, 0.7f, 0.8f}},
-                    {{-1.0f, 0.0f,  1.0f}, {0.7f, 0.7f, 0.7f, 0.8f}},
+                std::vector<VertexNormal> verts = {
+                    {{-1.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f}},
+                    {{ 1.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f}},
+                    {{ 1.0f, 0.0f,  1.0f}, {0.0f, 1.0f, 0.0f}},
+                    {{-1.0f, 0.0f,  1.0f}, {0.0f, 1.0f, 0.0f}},
                 };
                 std::vector<uint32_t> idxs = {0, 1, 2, 2, 3, 0};
                 Application::Get().CreatePrimitive("Plane", verts, idxs);

@@ -12,3 +12,19 @@ add_subdirectory(src) #libimgui
 add_executable(sandbox sandbox/sandbox.cpp)
 target_link_libraries(sandbox PRIVATE ${kengine_lib})
 target_include_directories(sandbox PRIVATE ${kengine_include})
+
+# Copy dependency DLLs to sandbox output directory at build time
+add_custom_command(TARGET sandbox POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_BINARY_DIR}/_deps/assimp-build/bin/$<CONFIG>"
+        "$<TARGET_FILE_DIR:sandbox>"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_BINARY_DIR}/_deps/glad-build/$<CONFIG>"
+        "$<TARGET_FILE_DIR:sandbox>"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_BINARY_DIR}/_deps/glfw-build/src/$<CONFIG>"
+        "$<TARGET_FILE_DIR:sandbox>"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_BINARY_DIR}/_deps/spdlog-build/$<CONFIG>"
+        "$<TARGET_FILE_DIR:sandbox>"
+)
