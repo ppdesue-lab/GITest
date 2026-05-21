@@ -16,7 +16,7 @@ public:
 	int ReadPixel(uint32_t attachmentIndex, int x, int y) override;
 	void Save2File(const std::string& filename, uint32_t attachmentIndex) override;
 	void ClearAttachment(uint32_t attachmentIndex, int value) override;
-	uint32_t GetColorAttachmentRendererID(uint32_t index = 0) const override;
+	uint64_t GetColorAttachmentRendererID(uint32_t index = 0) const override;
 	const FrameBufferSpecification& GetSpecification() const override { return m_Specification; }
 
 private:

@@ -52,7 +52,7 @@ public:
 	virtual void Save2File(const std::string& filename,uint32_t attachmentIndex) = 0;
 
 	virtual void ClearAttachment(uint32_t attachmentIndex, int value) = 0;
-	virtual uint32_t GetColorAttachmentRendererID(uint32_t index = 0) const = 0;
+	virtual uint64_t GetColorAttachmentRendererID(uint32_t index = 0) const = 0;
 	
 	//get information about this framebuffer
 	virtual const FrameBufferSpecification& GetSpecification() const = 0;

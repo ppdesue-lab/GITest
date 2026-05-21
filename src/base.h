@@ -24,3 +24,5 @@ constexpr Scope<T> CreateScope(Args&& ... args)
 #include <Log.h>
 
 extern std::string GetFilePath(const std::string& filename);
+extern std::string LocalToUtf8(const std::string& localStr);
+extern std::wstring Utf8ToWide(const std::string& utf8Str);

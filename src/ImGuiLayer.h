@@ -6,6 +6,16 @@
 #include "KeyEvent.h"
 #include <Camera/Camera.h>
 #include <Transform.h>
+#include <imgui.h>
+#include <deque>
+#include <string>
+#include <filesystem>
+
+struct ConsoleMessage
+{
+    ImVec4 Color;
+    std::string Message;
+};
 
 class ImGuiLayer : public Layer
 {
@@ -21,11 +31,22 @@ public:
 
     void SetDarkThemeColors();
 
-
     void Begin();
     void End();
 
+    static void AddConsoleMessage(const ImVec4& color, const std::string& message);
+
 private:
+    void DrawMenuBar();
+    void DrawEditorLayout(ImVec2 pos, ImVec2 size, float menuBarHeight);
+
+    void DrawProjectPanel();
+    void DrawPropertiesPanel();
+    void DrawContentBrowser();
+    void DrawConsolePanel();
+    void DrawViewportPanel();
+    void OpenModelFile();
+    bool IsSupportedModelFile(const std::filesystem::path& filepath) const;
 
     bool OnMouseButtonDown(MouseButtonPressedEvent& e);
     bool OnMouseButtonUp(MouseButtonReleasedEvent& e);
@@ -41,4 +62,13 @@ private:
     float m_Time = 0.0f;
     bool m_UpdateGizmo = false;
 
+    // Panel state
+    std::string m_ContentBrowserPath;
+    std::string m_SelectedFile;
+    std::string m_CurrentDir;
+
+    // Console
+    static std::deque<ConsoleMessage> s_ConsoleMessages;
+    static const size_t MAX_CONSOLE_MESSAGES = 500;
+    char m_ConsoleFilter[128] = {};
 };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <filesystem>
 #include <Transform.h>
 #include <Renderer/Material.h>
 #include <Renderer/VertexArray.h>
@@ -26,6 +27,8 @@ public:
     ~Object3D() = default;
     template<typename T>
     bool Load(const std::string& filepath);
+    template<typename T>
+    bool LoadFromPath(const std::filesystem::path& filepath);
     virtual void Draw(const glm::mat4& view,const glm::mat4 proj);
     
 	std::vector<Ref<Mesh>> Meshes;

@@ -5,5 +5,6 @@
 //renderer stuff
 #include "Renderer/RenderCommand.h"
 #include "Object3D.h"
+#include "Scene.h"
 
 #include "EntryPoint.h"

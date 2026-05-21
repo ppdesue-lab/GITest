@@ -17,7 +17,7 @@ public:
     virtual void Save2File(const std::string& filename, uint32_t attachmentIndex) override;
 
 	virtual void ClearAttachment(uint32_t attachmentIndex, int value) override;
-	virtual uint32_t GetColorAttachmentRendererID(uint32_t index =0) const override;
+	virtual uint64_t GetColorAttachmentRendererID(uint32_t index =0) const override;
 	
 	//get information about this framebuffer
 	virtual const FrameBufferSpecification& GetSpecification() const override;

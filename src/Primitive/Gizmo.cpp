@@ -72,6 +72,7 @@ struct GizmoGlobals
 	Transform startTransform;             // Backup Transform saved before the transformation begins.
 	Transform* activeTransform;           // Pointer to the active Transform to update during transformation.
 	glm::vec3 startWorldMouse;              // Position of the mouse in world space at the start of the transformation.
+	float startDistance;                  // Distance from camera to gizmo at drag start (fixed to avoid feedback).
 };
 
 /**
@@ -81,6 +82,7 @@ struct GizmoGlobals
 struct GizmoData
 {
 	glm::mat4 invViewProj;                   // Inverted View-Projection glm::mat4.
+	glm::mat4 viewProj;                      // Forward View-Projection glm::mat4.
 	Transform* curTransform;              // Pointer to the current Transform. Only one can be the "activeTransform" at a time.
 	glm::vec3 axis[GIZMO_AXIS_COUNT];       // Current axes used for transformations (may differ from global axes).
 										  // Axes can be in global, view, or local mode depending on configuration.
@@ -445,13 +447,17 @@ bool DrawGizmo3D(const glm::mat4& camView,const glm::mat4& camProj,
 	const float* invMatPtr = glm::value_ptr(invMat);
 	const float* matViewPtr = glm::value_ptr(matView);
 
-	data.invViewProj = glm::inverse(matProj * matView);
+	data.viewProj = matProj * matView;
+	data.invViewProj = glm::inverse(data.viewProj);
 
 	data.camPos = { invMatPtr[12], invMatPtr[13], invMatPtr[14] };
 
 	data.right = { matViewPtr[0], matViewPtr[4], matViewPtr[8]};
 	data.up = { matViewPtr[1], matViewPtr[5], matViewPtr[9]};
-	data.forward = glm::normalize(transform->translation-data.camPos);
+	{
+		glm::vec3 fwd = transform->translation - data.camPos;
+		data.forward = (glm::length(fwd) > 0.001f) ? glm::normalize(fwd) : glm::vec3(0.0f, 0.0f, -1.0f);
+	}
 
 	data.curTransform = transform;
 
@@ -1013,11 +1019,71 @@ static bool CheckGizmoCenter(const GizmoData* data, Ray ray)
 // Functions Definitions - Input Handling
 //---------------------------------------------------------------------------------------------------
 
+// Project a 3D world point to 2D screen coordinates using the gizmo's view-projection
+static glm::vec2 Vec3WorldToScreen(const GizmoData* data, glm::vec3 worldPos)
+{
+    glm::vec4 clip = data->viewProj * glm::vec4(worldPos, 1.0f);
+    if (clip.w != 0.0f) clip /= clip.w;
+    return glm::vec2(
+        (clip.x * 0.5f + 0.5f) * GIZMO.width,
+        (1.0f - clip.y * 0.5f - 0.5f) * GIZMO.height
+    );
+}
+
 static glm::vec3 GetWorldMouse(const GizmoData* data,glm::vec2 mousepos)
 {
-	const float dist = glm::distance(data->camPos, data->curTransform->translation);
+	// Use the fixed start distance during active drag to avoid feedback instability
+	const float dist = IsGizmoTransforming() ? GIZMO.startDistance : glm::distance(data->camPos, data->curTransform->translation);
 	const Ray mouseRay = Vec3ScreenToWorldRay(mousepos, &data->invViewProj,GIZMO.width, GIZMO.height);
 	return (mouseRay.position + (mouseRay.direction * dist));
+}
+
+// Screen-space hit detection: projects gizmo components to 2D and checks pixel distance
+// Returns true if a hit was found, and sets hitAxis/hitType accordingly
+static bool CheckGizmoScreen(const GizmoData* data, glm::vec2 mousepos, int& outAxis, int& outType)
+{
+    const float pixelThreshold = 18.0f;
+
+    // Check gizmo center
+    {
+        glm::vec2 center = Vec3WorldToScreen(data, data->curTransform->translation);
+        if (glm::distance(mousepos, center) < pixelThreshold)
+        {
+            outAxis = 6; // GZ_ACTIVE_XYZ
+            outType = (data->flags & GIZMO_TRANSLATE) ? GZ_ACTION_TRANSLATE : GZ_ACTION_SCALE;
+            return true;
+        }
+    }
+
+    // Check each axis endpoint (arrows / cubes)
+    for (int i = 0; i < GIZMO_AXIS_COUNT; ++i)
+    {
+        float gizmoSize = data->gizmoSize;
+        if (data->flags & (GIZMO_TRANSLATE | GIZMO_SCALE))
+            gizmoSize *= (1.0f - GIZMO.trArrowLengthFactor);
+
+        glm::vec3 endPos = data->curTransform->translation + data->axis[i] * gizmoSize;
+        glm::vec2 screenEnd = Vec3WorldToScreen(data, endPos);
+        glm::vec2 screenOrigin = Vec3WorldToScreen(data, data->curTransform->translation);
+
+        // Check distance to the projected axis line
+        glm::vec2 axis2D = screenEnd - screenOrigin;
+        float len2 = glm::dot(axis2D, axis2D);
+        if (len2 > 0.0f)
+        {
+            float t = glm::clamp(glm::dot(mousepos - screenOrigin, axis2D) / len2, 0.0f, 1.0f);
+            glm::vec2 closest = screenOrigin + axis2D * t;
+            float dist = glm::distance(mousepos, closest);
+            if (dist < pixelThreshold)
+            {
+                outAxis = i;
+                outType = (data->flags & GIZMO_TRANSLATE) ? GZ_ACTION_TRANSLATE : GZ_ACTION_SCALE;
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 static void GizmoHandleInput(const GizmoData* data,bool leftdown,glm::vec2 mousepos)
@@ -1131,10 +1197,21 @@ static void GizmoHandleInput(const GizmoData* data,bool leftdown,glm::vec2 mouse
 	{
 		if (leftdown)
 		{
-			const Ray mouseRay = Vec3ScreenToWorldRay(mousepos, &data->invViewProj,GIZMO.width,GIZMO.height);
-
 			int hit = -1;
 			action = GZ_ACTION_NONE;
+
+			// Screen-space proximity check first (more reliable for small viewports)
+			{
+				int screenAxis = 0, screenType = 0;
+				if (CheckGizmoScreen(data, mousepos, screenAxis, screenType))
+				{
+					hit = screenAxis;
+					action = screenType;
+					goto hit_found;
+				}
+			}
+
+			const Ray mouseRay = Vec3ScreenToWorldRay(mousepos, &data->invViewProj,GIZMO.width,GIZMO.height);
 
 			for (int k = 0; hit == -1 && k < 2; ++k)
 			{
@@ -1182,6 +1259,7 @@ static void GizmoHandleInput(const GizmoData* data,bool leftdown,glm::vec2 mouse
 				}
 			}
 
+		hit_found:
 			GIZMO.activeAxis = 0;
 			if (hit >= 0)
 			{
@@ -1211,6 +1289,7 @@ static void GizmoHandleInput(const GizmoData* data,bool leftdown,glm::vec2 mouse
 				}
 				GIZMO.activeTransform = data->curTransform;
 				GIZMO.startTransform = *data->curTransform;
+				GIZMO.startDistance = glm::distance(data->camPos, data->curTransform->translation);
 				GIZMO.startWorldMouse = GetWorldMouse(data,mousepos);
 			}
 		}

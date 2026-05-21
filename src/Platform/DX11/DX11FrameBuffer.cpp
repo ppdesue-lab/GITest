@@ -86,9 +86,10 @@ void DX11FrameBuffer::ClearAttachment(uint32_t attachmentIndex, int value)
 	DX11Context::GetDeviceContext()->ClearRenderTargetView(m_ColorRTVs[attachmentIndex].Get(), color);
 }
 
-uint32_t DX11FrameBuffer::GetColorAttachmentRendererID(uint32_t index) const
+uint64_t DX11FrameBuffer::GetColorAttachmentRendererID(uint32_t index) const
 {
-	(void)index;
+	if (index < m_ColorSRVs.size())
+		return (uint64_t)m_ColorSRVs[index].Get();
 	return 0;
 }
 

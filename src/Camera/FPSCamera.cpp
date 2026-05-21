@@ -10,12 +10,12 @@ FPSCamera::FPSCamera()
     , m_pitch(0.0f)
     , m_minPitch(-89.0f)
     , m_maxPitch(89.0f)
-    , m_movementSpeed(5.0f)
+    , m_movementSpeed(50.0f)
     , m_mouseSensitivity(0.1f)
     , m_fov(45.0f)
     , m_aspectRatio(16.0f / 9.0f)
     , m_nearPlane(0.1f)
-    , m_farPlane(1000.0f)
+    , m_farPlane(10000.0f)
     , m_inputEnabled(false)
 {
     updateVectors();
@@ -24,21 +24,20 @@ FPSCamera::FPSCamera()
 FPSCamera::FPSCamera(glm::vec3 position, glm::vec3 target, float fov, float aspectRatio)
     : m_position(position)
     , m_target(target)
-    , m_forward(0.0f, 0.0f, -1.0f)
-    , m_right(1.0f, 0.0f, 0.0f)
-    , m_up(0.0f, 1.0f, 0.0f)
-    , m_yaw(-90.0f)
-    , m_pitch(0.0f)
+    , m_forward(glm::normalize(target - position))
     , m_minPitch(-89.0f)
     , m_maxPitch(89.0f)
-    , m_movementSpeed(5.0f)
+    , m_movementSpeed(50.0f)
     , m_mouseSensitivity(0.1f)
     , m_fov(fov)
     , m_aspectRatio(aspectRatio)
     , m_nearPlane(0.1f)
-    , m_farPlane(1000.0f)
+    , m_farPlane(10000.0f)
     , m_inputEnabled(false)
 {
+    m_forward = glm::normalize(m_target - m_position);
+    m_yaw = glm::degrees(glm::atan(m_forward.z, m_forward.x));
+    m_pitch = glm::degrees(glm::asin(m_forward.y));
     updateVectors();
 }
 

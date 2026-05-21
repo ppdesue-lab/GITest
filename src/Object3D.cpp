@@ -3,6 +3,8 @@
 #include <Renderer/RenderCommand.h>
 
 #include <functional>
+#include <fstream>
+#include <cctype>
 
 
 void Mesh::Draw(const glm::mat4& view,const glm::mat4 proj)
@@ -36,8 +38,23 @@ void Object3D::Draw(const glm::mat4& view,const glm::mat4 proj)
 #include "assimp/postprocess.h"
 
 template<typename T>
-bool Object3D::Load(const std::string& filepath) { 
-	
+bool Object3D::Load(const std::string& filepath) {
+	return LoadFromPath<T>(std::filesystem::u8path(filepath));
+}
+
+template<typename T>
+bool Object3D::LoadFromPath(const std::filesystem::path& filepath) { 
+
+	// Read file into memory using std::filesystem::path (handles encoding on Windows)
+	std::ifstream file(filepath, std::ios::binary);
+	if (!file)
+	{
+		std::cerr << "Failed to open file: " << filepath << std::endl;
+		return false;
+	}
+	std::vector<char> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+	file.close();
+
 	std::vector<T> vertices;
 	std::vector<uint32_t> indices;
 	auto processMesh = [&](aiMesh* mesh, const aiScene* scene) {
@@ -122,9 +139,48 @@ bool Object3D::Load(const std::string& filepath) {
 	};
 	
 	Assimp::Importer importer;
-	const aiScene* scene = importer.ReadFile(filepath, aiProcess_Triangulate | aiProcess_GenNormals | aiProcess_FlipUVs);
+	std::string hint = filepath.extension().string();
+	if (!hint.empty() && hint[0] == '.') hint = hint.substr(1);
+	std::transform(hint.begin(), hint.end(), hint.begin(),
+		[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+	unsigned int flags = aiProcess_Triangulate | aiProcess_GenNormals | aiProcess_FlipUVs;
+	const aiScene* scene = nullptr;
+
+	// Try ReadFile with the ANSI path first.
+	// Then try ReadFileFromMemory from the pre-loaded buffer.
+	// For paths with non-ASCII chars, copy to a temp ASCII path first.
+
+	// Check if the path is pure ASCII (no encoding issues with fopen)
+	bool isPureAscii = true;
+	auto u8str = filepath.u8string();
+	for (char c : u8str) {
+		if (static_cast<unsigned char>(c) > 127) { isPureAscii = false; break; }
+	}
+
+	if (isPureAscii) {
+		scene = importer.ReadFile(filepath.string().c_str(), flags);
+	} else {
+		// Create a temp file with pure ASCII name
+		auto tmpDir = std::filesystem::temp_directory_path();
+		auto tmpPath = tmpDir / ("kengine_" + hint + ".tmp");
+		bool copied = false;
+		try {
+			std::filesystem::copy_file(filepath, tmpPath, std::filesystem::copy_options::overwrite_existing);
+			copied = true;
+		} catch (...) {}
+		if (copied) {
+			scene = importer.ReadFile(tmpPath.string().c_str(), flags);
+			std::error_code ec;
+			std::filesystem::remove(tmpPath, ec);
+		}
+	}
+	if (!scene) {
+		scene = importer.ReadFileFromMemory(buffer.data(), buffer.size(), flags, hint.c_str());
+	}
 	if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-		std::cerr << "Failed to load mesh: " << filepath << std::endl;
+		std::cerr << "assimp error: " << importer.GetErrorString() << std::endl;
+		std::cerr << "assimp Failed to load mesh: " << filepath.u8string() << std::endl;
 		return false;
 	}
 	processNode(scene->mRootNode, scene);
@@ -169,10 +225,11 @@ bool Object3D::Load(const std::string& filepath) {
 	return true;
 
 }
-
 //template bool Object3D::Load<VertexBase>(const std::string& filepath);
 template bool Object3D::Load<VertexColor>(const std::string& filepath);
 template bool Object3D::Load<VertexNormal>(const std::string& filepath);
+template bool Object3D::LoadFromPath<VertexColor>(const std::filesystem::path& filepath);
+template bool Object3D::LoadFromPath<VertexNormal>(const std::filesystem::path& filepath);
 
 
 //

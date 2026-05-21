@@ -256,7 +256,7 @@ void OpenGLFrameBuffer::ClearAttachment(uint32_t attachmentIndex, int value)
 	glClearTexImage(m_ColorAttachments[attachmentIndex], 0, format, GL_INT, &value);
 }
 
-uint32_t OpenGLFrameBuffer::GetColorAttachmentRendererID(uint32_t index) const
+uint64_t OpenGLFrameBuffer::GetColorAttachmentRendererID(uint32_t index) const
 {
 	if (index >= m_ColorAttachments.size())
 	{
