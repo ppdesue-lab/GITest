@@ -34,7 +34,7 @@ SceneCube::SceneCube(float size)
     va->Unbind();
 
     mesh->VertexObject = va;
-    mesh->Mat = CreateRef<MaterialMatcap>();
+    mesh->Mat = CreateRef<MaterialPBR>();
     Meshes.push_back(mesh);
 }
 
@@ -42,7 +42,7 @@ SceneCube::SceneCube(float size)
 SceneSphere::SceneSphere(float radius, uint32_t sc, uint32_t st)
 {
     auto mesh = CreateRef<Mesh>();
-    std::vector<VertexNormal> verts;
+    std::vector<VertexNormalTexture> verts;
     std::vector<uint32_t> idxs;
 
     for (uint32_t i = 0; i <= st; ++i) {
@@ -54,7 +54,8 @@ SceneSphere::SceneSphere(float radius, uint32_t sc, uint32_t st)
             float x = xy * cosf(sectorAngle);
             float y = xy * sinf(sectorAngle);
             glm::vec3 pos(x, y, z);
-            verts.push_back(VertexNormal(pos, glm::normalize(pos)));
+            glm::vec2 uv((float)j / (float)sc, (float)i / (float)st);
+            verts.push_back(VertexNormalTexture(pos, glm::normalize(pos), uv));
         }
     }
     for (uint32_t i = 0; i < st; ++i) {
@@ -67,15 +68,16 @@ SceneSphere::SceneSphere(float radius, uint32_t sc, uint32_t st)
     }
 
     auto va = VertexArray::Create();
-    auto vb = VertexBuffer::Create((float*)&verts[0].Position.x, verts.size() * sizeof(VertexNormal));
-    vb->SetLayout({ {ShaderDataType::Float3, "a_Position", false}, {ShaderDataType::Float3, "a_Normal", false} });
+    auto vb = VertexBuffer::Create((float*)&verts[0].Position.x, verts.size() * sizeof(VertexNormalTexture));
+    vb->SetLayout({ {ShaderDataType::Float3, "a_Position", false}, {ShaderDataType::Float3, "a_Normal", false},
+        {ShaderDataType::Float2, "a_TexCoord", false} });
     va->AddVertexBuffer(vb);
     auto ib = IndexBuffer::Create((uint32_t*)idxs.data(), (uint32_t)idxs.size());
     va->SetIndexBuffer(ib);
     va->Unbind();
 
     mesh->VertexObject = va;
-    mesh->Mat = CreateRef<MaterialMatcap>();
+    mesh->Mat = CreateRef<MaterialPBR>();
     Meshes.push_back(mesh);
 }
 
@@ -101,7 +103,7 @@ ScenePlane::ScenePlane(float size)
     va->Unbind();
 
     mesh->VertexObject = va;
-    mesh->Mat = CreateRef<MaterialMatcap>();
+    mesh->Mat = CreateRef<MaterialPBR>();
     Meshes.push_back(mesh);
 }
 

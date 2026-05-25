@@ -66,11 +66,17 @@ Application::Application(int w,int h)
 
     m_ViewportFBO = FrameBuffer::Create(FrameBufferSpecification{ (uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y,
         { FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA8),
+          FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA16F),
+          FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA16F),
           FrameBufferTextureSpecification(FrameBufferTextureFormat::Depth) } });
+    m_SSAO = CreateRef<SSAO>((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
     SetGizmoViewportSize((int)m_ViewportSize.x, (int)m_ViewportSize.y);
 
     // CSM must be created after OpenGL context is initialized
     m_CSM = CreateRef<CSM>();
+    m_ProbeGI = CreateRef<ProbeGI>();
+    m_PBRIBL = CreateRef<PBRIBL>(
+        "E:/githubs/MapleEngine-main/Assets/textures/HDR_110_Tunnel_Ref.hdr");
 }
 
 void Application::Run()
@@ -91,6 +97,7 @@ void Application::Run()
                               m_ViewportFBO->GetSpecification().Height != (uint32_t)m_ViewportSize.y))
         {
             m_ViewportFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+            m_SSAO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
         }
 
         // --- CSM SHADOW MAP UPDATE ---
@@ -118,6 +125,11 @@ void Application::Run()
             }
         }
 
+        // --- PROBE GI UPDATE ---
+        // The initial implementation maintains an irradiance volume on the CPU.
+        // Its interface is ready for a future capture/projection update pass.
+        m_ProbeGI->Update(m_CSM->GetLight());
+
         // --- SCENE RENDERING (common to both modes) ---
         // Determine target: Editor → FBO, Game → default framebuffer
         if (m_AppMode == AppMode::Editor)
@@ -132,7 +144,15 @@ void Application::Run()
 
         RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
         RenderCommand::Clear();
-        // Draw background (SH skybox) — disable depth write so it doesn't occlude models
+#ifdef G_OPENGL
+        if (m_AppMode == AppMode::Editor)
+        {
+            const float emptyGeometry[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            glClearBufferfv(GL_COLOR, 1, emptyGeometry);
+            glClearBufferfv(GL_COLOR, 2, emptyGeometry);
+        }
+#endif
+        // Draw selected environment background without writing depth.
         {
             RenderCommand::SetDepthRange(0.99f, 1.0f);
 #ifdef G_OPENGL
@@ -143,6 +163,9 @@ void Application::Run()
             auto viewrotate = glm::mat4(glm::mat3(m_Camera->GetViewMatrix()));
             auto invViewProj = glm::inverse(m_Camera->GetProjectionMatrix() * viewrotate);
             backshader->SetMat4("u_invViewProj", invViewProj);
+            backshader->SetInt("u_BackgroundMode", m_BackgroundMode);
+            if (m_BackgroundMode == 1)
+                m_PBRIBL->BindEnvironment(backshader);
             const glm::vec3 shCoeffs[9] = {
                 glm::vec3(0.79,  0.44,  0.54),
                 glm::vec3(0.39,  0.35,  0.60),
@@ -218,6 +241,7 @@ void Application::Run()
                 }
 
                 // Draw gizmo
+            m_ProbeGI->DrawDebug();
             Transform* targetTransform = m_GizmoTargetTransform;
             if (targetTransform)
             {
@@ -250,6 +274,15 @@ void Application::Run()
             RenderCommand::SetDepthRange(0, 1);
 
             if (m_ViewportFBO) m_ViewportFBO->Unbind();
+            if (m_SSAO->Enabled())
+            {
+                m_SSAO->Render(
+                    m_ViewportFBO->GetColorAttachmentRendererID(0),
+                    m_ViewportFBO->GetColorAttachmentRendererID(1),
+                    m_ViewportFBO->GetColorAttachmentRendererID(2),
+                    m_Camera->GetViewMatrix(),
+                    m_Camera->GetProjectionMatrix());
+            }
         }
         else
         {
@@ -420,4 +453,13 @@ void Application::SetSelectedObjectIndex(int index)
 {
     m_Scene.SetSelectedIndex(index);
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+}
+
+uint64_t Application::GetViewportColorTextureID() const
+{
+    if (!m_ViewportFBO)
+        return 0;
+    if (m_SSAO && m_SSAO->Enabled() && m_SSAO->GetOutputTexture())
+        return m_SSAO->GetOutputTexture();
+    return m_ViewportFBO->GetColorAttachmentRendererID(0);
 }

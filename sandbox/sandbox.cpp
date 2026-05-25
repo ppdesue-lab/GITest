@@ -15,6 +15,15 @@ public:
         // Ground managed by Scene
         Application::Get().GetScene().CreatePlane("Ground");
 
+        auto rustedIron = Application::Get().GetScene().CreateSphere("Rusted Iron PBR");
+        if (rustedIron && !rustedIron->Meshes.empty())
+        {
+            rustedIron->Meshes[0]->Mat = CreateRef<MaterialPBR>(
+                "E:/githubs/MapleEngine-main/Assets/textures/rusted_iron");
+            rustedIron->Meshes[0]->Transfm.translation = glm::vec3(0.0f, 0.0f, 2.0f);
+            rustedIron->Meshes[0]->Transfm.scale = glm::vec3(2.0f);
+        }
+
         // Load first object at natural scale
         auto obj = Application::Get().LoadObject3D("D:/Untitled.obj");
         if (obj && !obj->Meshes.empty())

@@ -7,6 +7,7 @@ static DXGI_FORMAT ToDXGIFormat(FrameBufferTextureFormat format)
 	switch (format)
 	{
 	case FrameBufferTextureFormat::RGBA8: return DXGI_FORMAT_R8G8B8A8_UNORM;
+	case FrameBufferTextureFormat::RGBA16F: return DXGI_FORMAT_R16G16B16A16_FLOAT;
 	case FrameBufferTextureFormat::RED_INTEGER: return DXGI_FORMAT_R32_SINT;
 	case FrameBufferTextureFormat::Depth24Stencil8: return DXGI_FORMAT_D24_UNORM_S8_UINT;
 	default: return DXGI_FORMAT_UNKNOWN;

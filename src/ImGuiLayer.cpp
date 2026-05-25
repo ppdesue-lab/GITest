@@ -157,6 +157,8 @@ void ImGuiLayer::OnImGuiRender()
 
     // Debug shadow map window
     DrawShadowDebugWindow();
+    DrawProbeGIDebugWindow();
+    DrawSSAODebugWindow();
 }
 
 void ImGuiLayer::DrawEditorLayout(ImVec2 pos, ImVec2 size, float menuBarHeight)
@@ -257,6 +259,83 @@ void ImGuiLayer::DrawShadowDebugWindow()
     ImGui::End();
 }
 
+void ImGuiLayer::DrawProbeGIDebugWindow()
+{
+    Application& app = Application::Get();
+    ProbeGI& gi = app.GetProbeGI();
+    static bool showDebug = true;
+
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x - 640, 30), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Probe GI Debug", &showDebug, ImGuiWindowFlags_NoCollapse))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Checkbox("Enable GI", &gi.Enabled());
+    ImGui::Checkbox("Show Probes", &gi.ShowProbes());
+    ImGui::SliderFloat("GI Intensity", &gi.Intensity(), 0.0f, 4.0f, "%.2f");
+    const char* modes[] = { "Combined", "Indirect Only" };
+    ImGui::Combo("View Mode", &gi.DebugMode(), modes, IM_ARRAYSIZE(modes));
+
+    glm::vec3 origin = gi.Origin();
+    if (ImGui::DragFloat3("Origin", &origin.x, 0.5f))
+        gi.Origin() = origin;
+    float spacing = gi.Spacing();
+    if (ImGui::SliderFloat("Spacing", &spacing, 1.0f, 100.0f, "%.1f"))
+        gi.Spacing() = spacing;
+    glm::ivec3 counts = gi.GetCounts();
+    int countValues[3] = { counts.x, counts.y, counts.z };
+    if (ImGui::SliderInt3("Counts", countValues, 1, 4))
+        gi.SetCounts(glm::ivec3(countValues[0], countValues[1], countValues[2]));
+    ImGui::Text("Active probes: %d / %d", gi.GetProbeCount(), ProbeGI::MaxProbeCount);
+    ImGui::TextDisabled("CPU irradiance seed; capture pass pending");
+
+    ImGui::End();
+}
+
+void ImGuiLayer::DrawSSAODebugWindow()
+{
+    SSAO& ssao = Application::Get().GetSSAO();
+    static bool showDebug = true;
+
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x - 640, 345), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(340, 430), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("SSAO Debug", &showDebug, ImGuiWindowFlags_NoCollapse))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Checkbox("Enable SSAO", &ssao.Enabled());
+    ImGui::SliderFloat("Radius (view units)", &ssao.Radius(), 0.05f, 50.0f, "%.2f");
+    ImGui::SliderFloat("Bias", &ssao.Bias(), 0.0f, 0.3f, "%.3f");
+    ImGui::SliderFloat("Strength", &ssao.Strength(), 0.0f, 3.0f, "%.2f");
+    const char* modes[] = { "Combined", "AO Only" };
+    ImGui::Combo("View Mode", &ssao.DebugMode(), modes, IM_ARRAYSIZE(modes));
+    ImGui::TextDisabled("OpenGL editor viewport pass");
+
+    uint64_t aoTexture = ssao.GetAOTexture();
+    if (aoTexture)
+    {
+        ImGui::SeparatorText("AO Preview");
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        const glm::vec2& viewportSize = Application::Get().GetViewportSize();
+        float aspect = viewportSize.y > 0.0f ? viewportSize.x / viewportSize.y : 1.0f;
+        float width = avail.x;
+        float height = width / aspect;
+        if (height > avail.y && avail.y > 0.0f)
+        {
+            height = avail.y;
+            width = height * aspect;
+        }
+        ImGui::Image((ImTextureID)aoTexture, ImVec2(width, height), ImVec2(0, 1), ImVec2(1, 0));
+    }
+
+    ImGui::End();
+}
+
 void ImGuiLayer::DrawMenuBar()
 {
     if (ImGui::BeginMainMenuBar())
@@ -285,6 +364,16 @@ void ImGuiLayer::DrawMenuBar()
                 app.SetAppMode(Application::AppMode::Editor);
             if (ImGui::MenuItem("Game", "F11", isGame))
                 app.SetAppMode(Application::AppMode::Game);
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Environment"))
+        {
+            int& backgroundMode = Application::Get().GetBackgroundMode();
+            if (ImGui::MenuItem("CubeMap", nullptr, backgroundMode == 1))
+                backgroundMode = 1;
+            if (ImGui::MenuItem("SH Map", nullptr, backgroundMode == 0))
+                backgroundMode = 0;
             ImGui::EndMenu();
         }
 
@@ -398,6 +487,20 @@ void ImGuiLayer::DrawPropertiesPanel()
     if (ImGui::DragFloat3("Scale", scale, 0.1f))
     {
         targetTransform->scale = glm::vec3(scale[0], scale[1], scale[2]);
+    }
+
+    Scene::Entry* selectedEntry = app.GetScene().GetSelectedEntry();
+    if (selectedEntry && selectedEntry->Object && !selectedEntry->Object->Meshes.empty())
+    {
+        Ref<MaterialPBR> pbr = std::dynamic_pointer_cast<MaterialPBR>(selectedEntry->Object->Meshes[0]->Mat);
+        if (pbr)
+        {
+            ImGui::SeparatorText("PBR Material");
+            ImGui::ColorEdit3("Albedo", &pbr->Albedo.x);
+            ImGui::SliderFloat("Metallic", &pbr->Metallic, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Roughness", &pbr->Roughness, 0.04f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Material AO", &pbr->AmbientOcclusion, 0.0f, 1.0f, "%.2f");
+        }
     }
 
     ImGui::SeparatorText("Gizmo");
@@ -571,7 +674,7 @@ void ImGuiLayer::DrawViewportPanel()
     auto fbo = app.GetViewportFBO();
     if (fbo && viewportSize.x > 0 && viewportSize.y > 0)
     {
-        uint64_t textureID = fbo->GetColorAttachmentRendererID(0);
+        uint64_t textureID = app.GetViewportColorTextureID();
         
         // Debug: Check if textureID is valid
         if (textureID == 0)

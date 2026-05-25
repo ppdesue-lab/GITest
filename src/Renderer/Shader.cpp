@@ -323,6 +323,141 @@ void ShaderLibrary::LoadDefault()
 	}
 #pragma endregion
 
+#pragma region pbr_ibl_shader
+	{
+		auto vSource = R"(
+			#version 330 core
+			layout(location = 0) in vec3 a_Position;
+			layout(location = 1) in vec3 a_Normal;
+			layout(location = 2) in vec2 a_TexCoord;
+			uniform mat4 u_Model;
+			uniform mat4 u_View;
+			uniform mat4 u_Projection;
+			out vec3 v_Position;
+			out vec3 v_Normal;
+			out vec2 v_TexCoord;
+			void main()
+			{
+				vec4 worldPos = u_Model * vec4(a_Position, 1.0);
+				v_Position = worldPos.xyz;
+				v_Normal = mat3(transpose(inverse(u_Model))) * a_Normal;
+				v_TexCoord = a_TexCoord;
+				gl_Position = u_Projection * u_View * worldPos;
+			}
+		)";
+		auto fSource = R"(
+			#version 330 core
+			layout(location = 0) out vec4 color;
+			layout(location = 1) out vec4 gPosition;
+			layout(location = 2) out vec4 gNormal;
+			in vec3 v_Position;
+			in vec3 v_Normal;
+			in vec2 v_TexCoord;
+			uniform vec3 u_viewPos;
+			uniform vec3 u_lightDir;
+			uniform vec3 u_lightColor;
+			uniform vec3 u_Albedo;
+			uniform float u_Metallic;
+			uniform float u_Roughness;
+			uniform float u_AO;
+			uniform sampler2D u_AlbedoMap;
+			uniform sampler2D u_NormalMap;
+			uniform sampler2D u_MetallicMap;
+			uniform sampler2D u_RoughnessMap;
+			uniform sampler2D u_AOMap;
+			uniform int u_HasAlbedoMap;
+			uniform int u_HasNormalMap;
+			uniform int u_HasMetallicMap;
+			uniform int u_HasRoughnessMap;
+			uniform int u_HasAOMap;
+			uniform samplerCube u_IrradianceMap;
+			uniform samplerCube u_PrefilterMap;
+			uniform sampler2D u_BRDFLUT;
+			const float PI = 3.14159265359;
+			float DistributionGGX(vec3 n, vec3 h, float roughness)
+			{
+				float a = roughness * roughness;
+				float a2 = a * a;
+				float ndoth = max(dot(n, h), 0.0);
+				float denominator = ndoth * ndoth * (a2 - 1.0) + 1.0;
+				return a2 / max(PI * denominator * denominator, 0.0001);
+			}
+			float GeometrySchlickGGX(float ndotv, float roughness)
+			{
+				float r = roughness + 1.0;
+				float k = (r * r) / 8.0;
+				return ndotv / (ndotv * (1.0 - k) + k);
+			}
+			float GeometrySmith(vec3 n, vec3 v, vec3 l, float roughness)
+			{
+				return GeometrySchlickGGX(max(dot(n, v), 0.0), roughness) *
+					GeometrySchlickGGX(max(dot(n, l), 0.0), roughness);
+			}
+			vec3 FresnelSchlick(float cosTheta, vec3 f0)
+			{
+				return f0 + (1.0 - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+			}
+			vec3 FresnelSchlickRoughness(float cosTheta, vec3 f0, float roughness)
+			{
+				return f0 + (max(vec3(1.0 - roughness), f0) - f0) *
+					pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+			}
+			vec3 GetNormal()
+			{
+				vec3 n = normalize(v_Normal);
+				if (u_HasNormalMap == 0)
+					return n;
+				vec3 tangentNormal = texture(u_NormalMap, v_TexCoord).xyz * 2.0 - 1.0;
+				vec3 dp1 = dFdx(v_Position);
+				vec3 dp2 = dFdy(v_Position);
+				vec2 duv1 = dFdx(v_TexCoord);
+				vec2 duv2 = dFdy(v_TexCoord);
+				vec3 t = normalize(dp1 * duv2.y - dp2 * duv1.y);
+				vec3 b = normalize(-cross(n, t));
+				return normalize(mat3(t, b, n) * tangentNormal);
+			}
+			void main()
+			{
+				vec3 albedo = u_HasAlbedoMap != 0
+					? pow(texture(u_AlbedoMap, v_TexCoord).rgb, vec3(2.2)) : u_Albedo;
+				float roughness = clamp(u_HasRoughnessMap != 0
+					? texture(u_RoughnessMap, v_TexCoord).r : u_Roughness, 0.04, 1.0);
+				float metallic = clamp(u_HasMetallicMap != 0
+					? texture(u_MetallicMap, v_TexCoord).r : u_Metallic, 0.0, 1.0);
+				float ao = clamp(u_HasAOMap != 0
+					? texture(u_AOMap, v_TexCoord).r : u_AO, 0.0, 1.0);
+				vec3 n = GetNormal();
+				vec3 v = normalize(u_viewPos - v_Position);
+				vec3 r = reflect(-v, n);
+				vec3 f0 = mix(vec3(0.04), albedo, metallic);
+				vec3 l = normalize(-u_lightDir);
+				vec3 h = normalize(v + l);
+				float ndotl = max(dot(n, l), 0.0);
+				float ndotv = max(dot(n, v), 0.0);
+				float ndf = DistributionGGX(n, h, roughness);
+				float geometry = GeometrySmith(n, v, l, roughness);
+				vec3 fresnel = FresnelSchlick(max(dot(h, v), 0.0), f0);
+				vec3 specular = (ndf * geometry * fresnel) / max(4.0 * ndotv * ndotl, 0.001);
+				vec3 kd = (vec3(1.0) - fresnel) * (1.0 - metallic);
+				vec3 direct = (kd * albedo / PI + specular) * u_lightColor * ndotl;
+				vec3 iblF = FresnelSchlickRoughness(ndotv, f0, roughness);
+				vec3 iblKD = (vec3(1.0) - iblF) * (1.0 - metallic);
+				vec3 diffuse = texture(u_IrradianceMap, n).rgb * albedo;
+				vec3 prefiltered = textureLod(u_PrefilterMap, r, roughness * 4.0).rgb;
+				vec2 brdf = texture(u_BRDFLUT, vec2(ndotv, roughness)).rg;
+				vec3 ambient = (iblKD * diffuse + prefiltered * (iblF * brdf.x + brdf.y)) * ao;
+				vec3 result = ambient + direct;
+				result = result / (result + vec3(1.0));
+				result = pow(result, vec3(1.0 / 2.2));
+				color = vec4(result, 1.0);
+				gPosition = vec4(v_Position, 1.0);
+				gNormal = vec4(n, 1.0);
+			}
+		)";
+		Load("DefaultPBR", vSource, fSource);
+	}
+#pragma endregion
+
 #pragma region matcap with CSM shadow
 	{
 		auto vSource = R"(
@@ -455,6 +590,8 @@ void ShaderLibrary::LoadDefault()
 			layout(location = 1) out vec4 gPosition;
 			layout(location = 2) out vec4 gNormal;
 			uniform vec3 shCoeffs[9];
+			uniform samplerCube u_EnvironmentMap;
+			uniform int u_BackgroundMode;
 
 			vec3 evalSH(vec3 dir)
 			{
@@ -474,7 +611,14 @@ void ShaderLibrary::LoadDefault()
 			void main()
 			{
 				vec3 dir = normalize(vDir);
-				FragColor = vec4(evalSH(dir), 1.0);
+				vec3 background = evalSH(dir);
+				if (u_BackgroundMode == 1)
+				{
+					background = texture(u_EnvironmentMap, dir).rgb;
+					background = background / (background + vec3(1.0));
+					background = pow(background, vec3(1.0 / 2.2));
+				}
+				FragColor = vec4(background, 1.0);
 				gPosition = vec4(0.0);
 				gNormal = vec4(0.0);
 			}

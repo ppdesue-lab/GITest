@@ -46,8 +46,7 @@ SSAO::SSAO(uint32_t width, uint32_t height)
             }
             vec3 center = (u_View * vec4(centerData.xyz, 1.0)).xyz;
             vec3 normal = normalize(mat3(u_View) * texture(u_Normal, v_UV).xyz);
-            vec2 noiseScale = u_Resolution / 4.0;
-            vec3 randomVector = normalize(texture(u_Noise, v_UV * noiseScale).xyz);
+            vec3 randomVector = normalize(texture(u_Noise, v_UV * u_Resolution / 4.0).xyz);
             vec3 tangent = normalize(randomVector - normal * dot(randomVector, normal));
             vec3 bitangent = cross(normal, tangent);
             mat3 tbn = mat3(tangent, bitangent, normal);
@@ -58,13 +57,12 @@ SSAO::SSAO(uint32_t width, uint32_t height)
                 vec4 offset = u_Projection * vec4(samplePosition, 1.0);
                 offset.xyz /= offset.w;
                 offset.xyz = offset.xyz * 0.5 + 0.5;
-
                 vec4 sampleData = texture(u_Position, clamp(offset.xy, vec2(0.0), vec2(1.0)));
                 if (sampleData.a < 0.5)
                     continue;
                 float sampleDepth = (u_View * vec4(sampleData.xyz, 1.0)).z;
-                float rangeCheck = smoothstep(0.0, 1.0, u_Radius / abs(center.z - sampleDepth));
-                occlusion += (sampleDepth >= samplePosition.z + u_Bias ? 1.0 : 0.0) * rangeCheck;
+                float rangeWeight = smoothstep(0.0, 1.0, u_Radius / max(abs(center.z - sampleDepth), 0.0001));
+                occlusion += (sampleDepth >= samplePosition.z + u_Bias ? 1.0 : 0.0) * rangeWeight;
             }
             float ao = pow(clamp(1.0 - occlusion / 64.0, 0.0, 1.0), max(u_Strength, 0.001));
             o_AO = vec4(vec3(clamp(ao, 0.0, 1.0)), 1.0);
@@ -99,16 +97,33 @@ SSAO::SSAO(uint32_t width, uint32_t height)
 
         void main()
         {
-            vec2 texel = 1.0 / u_Resolution;
-            float result = 0.0;
-            for (int y = -2; y < 2; ++y)
+            vec4 centerData = texture(u_Position, v_UV);
+            if (centerData.a < 0.5)
             {
-                for (int x = -2; x < 2; ++x)
+                o_AO = 1.0;
+                return;
+            }
+
+            vec2 texel = 1.0 / u_Resolution;
+            float sum = 0.0;
+            float weightSum = 0.0;
+            for (int y = -2; y <= 2; ++y)
+            {
+                for (int x = -2; x <= 2; ++x)
                 {
-                    result += texture(u_AO, v_UV + vec2(x, y) * texel).r;
+                    vec2 uv = clamp(v_UV + vec2(x, y) * texel, vec2(0.0), vec2(1.0));
+                    vec4 sampleData = texture(u_Position, uv);
+                    if (sampleData.a < 0.5)
+                        continue;
+
+                    float spatialWeight = exp(-dot(vec2(x, y), vec2(x, y)) / 4.0);
+                    float geometryWeight = exp(-length(sampleData.xyz - centerData.xyz) * 0.4);
+                    float weight = spatialWeight * geometryWeight;
+                    sum += texture(u_AO, uv).r * weight;
+                    weightSum += weight;
                 }
             }
-            o_AO = result / 16.0;
+            o_AO = sum / max(weightSum, 0.0001);
         }
     )";
     m_AOShader = Shader::Create("SSAO", fullscreenVertex, aoFragment);

@@ -13,6 +13,9 @@
 #include <filesystem>
 #include <Primitive/AxisHelper.h>
 #include <Renderer/CSM.h>
+#include <Renderer/ProbeGI.h>
+#include <Renderer/PBRIBL.h>
+#include <Renderer/SSAO.h>
 #include <memory>
 #include <Renderer/Shader.h>
 #include <Renderer/FrameBuffer.h>
@@ -53,6 +56,7 @@ public:
 
 	// Viewport
 	Ref<FrameBuffer> GetViewportFBO() { return m_ViewportFBO; }
+	uint64_t GetViewportColorTextureID() const;
 	const glm::vec2& GetViewportSize() const { return m_ViewportSize; }
 	void SetViewportSize(const glm::vec2& size);
 	glm::vec2& GetViewportMousePos() { return m_ViewportMousePos; }
@@ -77,6 +81,10 @@ public:
 	bool& GetLeftDownCamera() { return m_LeftDownCamera; }
 
 	CSM& GetCSM() { return *m_CSM; }
+	ProbeGI& GetProbeGI() { return *m_ProbeGI; }
+	PBRIBL& GetPBRIBL() { return *m_PBRIBL; }
+	SSAO& GetSSAO() { return *m_SSAO; }
+	int& GetBackgroundMode() { return m_BackgroundMode; }
 	bool GetDebugCascadeView() const { return m_DebugCascadeView; }
 	void SetDebugCascadeView(bool enabled) { m_DebugCascadeView = enabled; }
 
@@ -105,6 +113,7 @@ private:
 
 	// Viewport
 	Ref<FrameBuffer> m_ViewportFBO;
+	Ref<SSAO> m_SSAO;
 	glm::vec2 m_ViewportSize = { 1280.0f, 720.0f };
 	glm::vec2 m_ViewportMousePos = { 0.0f, 0.0f };
 	glm::vec2 m_ViewportOrigin = { 0.0f, 0.0f };
@@ -120,6 +129,9 @@ private:
 	bool m_LeftDownCamera = false;
 
 	Ref<CSM> m_CSM;
+	Ref<ProbeGI> m_ProbeGI;
+	Ref<PBRIBL> m_PBRIBL;
+	int m_BackgroundMode = 1; // 0: SH map, 1: environment cube map
 	bool m_DebugCascadeView = false;
 
 	// Keyboard state for continuous velocity-based movement

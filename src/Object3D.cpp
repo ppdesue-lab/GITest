@@ -31,6 +31,8 @@ void Mesh::Draw(const glm::mat4& view,const glm::mat4 proj)
 		uint32_t cascadeCount = csm.GetCascadeCount();
 		auto lightDir = csm.GetLight().Direction;
 
+		Mat->MatShader->SetFloat3("u_lightPos", -glm::normalize(lightDir) * 1000.0f);
+		Mat->MatShader->SetFloat3("u_lightColor", csm.GetLight().Color * csm.GetLight().Intensity);
 		Mat->MatShader->SetInt("u_cascadeCount", (int)cascadeCount);
 		Mat->MatShader->SetFloat("u_shadowMapSize", (float)csm.GetShadowMapSize());
 		Mat->MatShader->SetFloat3("u_lightDir", lightDir);
@@ -44,6 +46,8 @@ void Mesh::Draw(const glm::mat4& view,const glm::mat4 proj)
 
 		csm.BindShadowTexture(2);
 		Mat->MatShader->SetInt("u_shadowMap", 2);
+		app.GetProbeGI().Bind(Mat->MatShader);
+		app.GetPBRIBL().Bind(Mat->MatShader);
 	}
     RenderCommand::DrawIndexed(VertexObject);
 };
@@ -230,7 +234,7 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 			BufferElement(ShaderDataType::Float3,"a_Position",false),
 			BufferElement(ShaderDataType::Float3,"a_Normal",false),
 		};
-		meshmat = CreateRef<MaterialMatcap>();
+		meshmat = CreateRef<MaterialPBR>();
 	}
 
 	vbuffer->SetLayout(layout);

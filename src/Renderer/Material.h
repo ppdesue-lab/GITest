@@ -35,6 +35,26 @@ public:
     glm::vec3 Color;
 };
 
+class MaterialPBR : public Material
+{
+public:
+    MaterialPBR(const glm::vec3& albedo = glm::vec3(0.8f, 0.1f, 0.05f),
+        float metallic = 0.0f, float roughness = 0.35f);
+    explicit MaterialPBR(const std::string& textureDirectory);
+
+    void Bind() override;
+
+    glm::vec3 Albedo;
+    float Metallic = 0.0f;
+    float Roughness = 0.35f;
+    float AmbientOcclusion = 1.0f;
+    Ref<Texture> AlbedoMap;
+    Ref<Texture> NormalMap;
+    Ref<Texture> MetallicMap;
+    Ref<Texture> RoughnessMap;
+    Ref<Texture> AOMap;
+};
+
 class MaterialMatcap : public Material
 {
 public:
