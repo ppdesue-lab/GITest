@@ -182,6 +182,8 @@ void ShaderLibrary::LoadDefault()
 		auto fSource = R"(
 			#version 330 core
 			layout(location = 0) out vec4 color;
+			layout(location = 1) out vec4 gPosition;
+			layout(location = 2) out vec4 gNormal;
 			in vec3 v_Position;
 			in vec3 v_Normal;
 			uniform mat4 u_View;
@@ -196,6 +198,13 @@ void ShaderLibrary::LoadDefault()
 			uniform sampler2DArray u_shadowMap;
 			uniform float u_shadowMapSize;
 			uniform int u_debugCascadeView;
+			uniform int u_giEnabled;
+			uniform int u_giDebugMode;
+			uniform float u_giIntensity;
+			uniform vec3 u_giOrigin;
+			uniform float u_giSpacing;
+			uniform vec3 u_giCounts;
+			uniform vec3 u_probeIrradiance[64];
 
 			vec3 CascadeColor(int cascade)
 			{
@@ -243,8 +252,42 @@ void ShaderLibrary::LoadDefault()
 				return ShadowVisibility(uvz, cascade, bias);
 			}
 
+			int ProbeIndex(ivec3 c, ivec3 counts)
+			{
+				return c.x + counts.x * (c.y + counts.y * c.z);
+			}
+
+			vec3 SampleProbeGI(vec3 worldPos, vec3 normal)
+			{
+				if (u_giEnabled == 0)
+					return vec3(0.0);
+
+				ivec3 counts = max(ivec3(u_giCounts + vec3(0.5)), ivec3(1));
+				vec3 maxCoord = vec3(counts - ivec3(1));
+				vec3 grid = clamp((worldPos - u_giOrigin) / max(u_giSpacing, 0.001), vec3(0.0), maxCoord);
+				ivec3 c0 = ivec3(floor(grid));
+				ivec3 c1 = min(c0 + ivec3(1), counts - ivec3(1));
+				vec3 f = fract(grid);
+
+				vec3 c000 = u_probeIrradiance[ProbeIndex(ivec3(c0.x, c0.y, c0.z), counts)];
+				vec3 c100 = u_probeIrradiance[ProbeIndex(ivec3(c1.x, c0.y, c0.z), counts)];
+				vec3 c010 = u_probeIrradiance[ProbeIndex(ivec3(c0.x, c1.y, c0.z), counts)];
+				vec3 c110 = u_probeIrradiance[ProbeIndex(ivec3(c1.x, c1.y, c0.z), counts)];
+				vec3 c001 = u_probeIrradiance[ProbeIndex(ivec3(c0.x, c0.y, c1.z), counts)];
+				vec3 c101 = u_probeIrradiance[ProbeIndex(ivec3(c1.x, c0.y, c1.z), counts)];
+				vec3 c011 = u_probeIrradiance[ProbeIndex(ivec3(c0.x, c1.y, c1.z), counts)];
+				vec3 c111 = u_probeIrradiance[ProbeIndex(ivec3(c1.x, c1.y, c1.z), counts)];
+				vec3 low = mix(mix(c000, c100, f.x), mix(c010, c110, f.x), f.y);
+				vec3 high = mix(mix(c001, c101, f.x), mix(c011, c111, f.x), f.y);
+				float diffuseResponse = 0.3 + 0.7 * max(normalize(normal).y, 0.0);
+				return mix(low, high, f.z) * diffuseResponse * u_giIntensity;
+			}
+
 			void main()
 			{
+				vec3 norm = normalize(v_Normal);
+				gPosition = vec4(v_Position, 1.0);
+				gNormal = vec4(norm, 1.0);
 				if (u_debugCascadeView != 0)
 				{
 					vec4 viewPos = u_View * vec4(v_Position, 1.0);
@@ -254,7 +297,6 @@ void ShaderLibrary::LoadDefault()
 				}
 
 				vec3 ambient = 0.1 * u_lightColor;
-				vec3 norm = normalize(v_Normal);
 				vec3 lightDir = normalize(u_lightPos - v_Position);
 				float diff = max(dot(norm, lightDir), 0.0);
 				vec3 diffuse = diff * u_lightColor;
@@ -268,7 +310,13 @@ void ShaderLibrary::LoadDefault()
 				if (u_cascadeCount > 0)
 					shadow = ShadowFactor(v_Position, norm);
 
-				color = vec4((ambient + (diffuse + specular) * shadow) * u_objectColor, 1.0);
+				vec3 indirect = SampleProbeGI(v_Position, norm) * u_objectColor;
+				if (u_giDebugMode == 1)
+				{
+					color = vec4(indirect, 1.0);
+					return;
+				}
+				color = vec4((ambient + (diffuse + specular) * shadow) * u_objectColor + indirect, 1.0);
 			}
 		)";
 		Load("DefaultPhong", vSource, fSource);
@@ -300,7 +348,9 @@ void ShaderLibrary::LoadDefault()
 			#version 330 core
 			in vec3 v_Normal;
 			in vec3 v_Position;
-			out vec4 color;
+			layout(location = 0) out vec4 color;
+			layout(location = 1) out vec4 gPosition;
+			layout(location = 2) out vec4 gNormal;
 			uniform sampler2D u_matcapTex;
 			uniform mat4 u_View;
 			uniform vec3 u_viewPos;
@@ -359,6 +409,8 @@ void ShaderLibrary::LoadDefault()
 
 			void main()
 			{
+				gPosition = vec4(v_Position, 1.0);
+				gNormal = vec4(normalize(v_Normal), 1.0);
 				if (u_debugCascadeView != 0)
 				{
 					vec4 viewPos = u_View * vec4(v_Position, 1.0);
@@ -399,7 +451,9 @@ void ShaderLibrary::LoadDefault()
 		auto fSource = R"(
 			#version 330 core
 			in vec3 vDir;
-			out vec4 FragColor;
+			layout(location = 0) out vec4 FragColor;
+			layout(location = 1) out vec4 gPosition;
+			layout(location = 2) out vec4 gNormal;
 			uniform vec3 shCoeffs[9];
 
 			vec3 evalSH(vec3 dir)
@@ -421,6 +475,8 @@ void ShaderLibrary::LoadDefault()
 			{
 				vec3 dir = normalize(vDir);
 				FragColor = vec4(evalSH(dir), 1.0);
+				gPosition = vec4(0.0);
+				gNormal = vec4(0.0);
 			}
 		)";
 		Load("DefaultBackgroundSH", vSource, fSource);

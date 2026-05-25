@@ -7,6 +7,7 @@ enum class FrameBufferTextureFormat
 {
 	None = 0,
 	RGBA8,
+	RGBA16F,
 	RED_INTEGER,
 	Depth24Stencil8,
 
