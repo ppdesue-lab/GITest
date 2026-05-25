@@ -28,7 +28,7 @@ void Mesh::Draw(const glm::mat4& view,const glm::mat4 proj)
 		CSM& csm = app.GetCSM();
 		auto& lightViewProj = csm.GetLightViewProjMatrices();
 		auto& cascadeDists = csm.GetCascadeDistances();
-		uint32_t cascadeCount = csm.GetCascadeCount();
+		uint32_t cascadeCount = csm.Enabled() ? csm.GetCascadeCount() : 0;
 		auto lightDir = csm.GetLight().Direction;
 
 		Mat->MatShader->SetFloat3("u_lightPos", -glm::normalize(lightDir) * 1000.0f);
@@ -112,10 +112,10 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 				{
 					vertex.TexCoord = glm::vec2(0, 0);
 
-					if (mesh->mTextureCoords)
+					if (mesh->HasTextureCoords(0))
 					{
-						vertex.TexCoord.x = mesh->mTextureCoords[i].x;
-						vertex.NorTexCoordmal.y = mesh->mTextureCoords[i].y;
+						vertex.TexCoord.x = mesh->mTextureCoords[0][i].x;
+						vertex.TexCoord.y = mesh->mTextureCoords[0][i].y;
 					}
 				}
 				else if constexpr (std::is_same_v<T, VertexNormalTexture>)
@@ -131,10 +131,10 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 
 					vertex.TexCoord = glm::vec2(0, 0);
 
-					if (mesh->mTextureCoords)
+					if (mesh->HasTextureCoords(0))
 					{
-						vertex.TexCoord.x = mesh->mTextureCoords[i].x;
-						vertex.NorTexCoordmal.y = mesh->mTextureCoords[i].y;
+						vertex.TexCoord.x = mesh->mTextureCoords[0][i].x;
+						vertex.TexCoord.y = mesh->mTextureCoords[0][i].y;
 					}
 				}
 				vertices.push_back(vertex);
@@ -236,6 +236,16 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 		};
 		meshmat = CreateRef<MaterialPBR>();
 	}
+	else if constexpr (std::is_same_v<T, VertexNormalTexture>)
+	{
+		layout = {
+			BufferElement(ShaderDataType::Float3,"a_Position",false),
+			BufferElement(ShaderDataType::Float3,"a_Normal",false),
+			BufferElement(ShaderDataType::Float2,"a_TexCoord",false),
+		};
+		meshmat = CreateRef<MaterialPBR>(
+			"E:/githubs/MapleEngine-main/Assets/textures/rusted_iron");
+	}
 
 	vbuffer->SetLayout(layout);
 	auto ibuffer = IndexBuffer::Create(indices.data(), indices.size());
@@ -256,6 +266,7 @@ template bool Object3D::Load<VertexColor>(const std::string& filepath);
 template bool Object3D::Load<VertexNormal>(const std::string& filepath);
 template bool Object3D::LoadFromPath<VertexColor>(const std::filesystem::path& filepath);
 template bool Object3D::LoadFromPath<VertexNormal>(const std::filesystem::path& filepath);
+template bool Object3D::LoadFromPath<VertexNormalTexture>(const std::filesystem::path& filepath);
 
 
 //

@@ -155,10 +155,6 @@ void ImGuiLayer::OnImGuiRender()
 
     DrawEditorLayout(pos, size, menuBarHeight);
 
-    // Debug shadow map window
-    DrawShadowDebugWindow();
-    DrawProbeGIDebugWindow();
-    DrawSSAODebugWindow();
 }
 
 void ImGuiLayer::DrawEditorLayout(ImVec2 pos, ImVec2 size, float menuBarHeight)
@@ -211,14 +207,13 @@ void ImGuiLayer::DrawShadowDebugWindow()
 {
     Application& app = Application::Get();
     CSM& csm = app.GetCSM();
-    static bool showDebug = false;
     static int debugCascade = 0;
 
-    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x - 320, 30), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(300, 350), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Shadow Debug", &showDebug, ImGuiWindowFlags_NoCollapse))
+    ImGui::PushID("CSMDebug");
+    ImGui::Checkbox("Enable", &csm.Enabled());
+    if (!csm.Enabled())
     {
-        ImGui::End();
+        ImGui::PopID();
         return;
     }
 
@@ -229,6 +224,13 @@ void ImGuiLayer::DrawShadowDebugWindow()
     float splitLambda = csm.GetSplitLambda();
     if (ImGui::SliderFloat("Split Lambda", &splitLambda, 0.0f, 1.0f, "%.2f"))
         csm.SetSplitLambda(splitLambda);
+    DirectionalLight& light = csm.GetLight();
+    glm::vec3 lightDirection = light.Direction;
+    if (ImGui::DragFloat3("Light Direction", &lightDirection.x, 0.01f))
+        if (glm::length(lightDirection) > 0.0001f)
+            light.Direction = glm::normalize(lightDirection);
+    ImGui::ColorEdit3("Light Color", &light.Color.x);
+    ImGui::SliderFloat("Light Intensity", &light.Intensity, 0.0f, 10.0f, "%.2f");
     const auto& cascadeDistances = csm.GetCascadeDistances();
     for (uint32_t i = 0; i < csm.GetCascadeCount(); i++)
         ImGui::Text("Cascade %u: %.2f - %.2f", i, cascadeDistances[i], cascadeDistances[i + 1]);
@@ -256,24 +258,22 @@ void ImGuiLayer::DrawShadowDebugWindow()
         ImGui::Image((ImTextureID)(uint64_t)texID, ImVec2(w, h), ImVec2(0, 1), ImVec2(1, 0));
     }
 
-    ImGui::End();
+    ImGui::PopID();
 }
 
 void ImGuiLayer::DrawProbeGIDebugWindow()
 {
     Application& app = Application::Get();
     ProbeGI& gi = app.GetProbeGI();
-    static bool showDebug = true;
 
-    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x - 640, 30), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Probe GI Debug", &showDebug, ImGuiWindowFlags_NoCollapse))
+    ImGui::PushID("ProbeGIDebug");
+    ImGui::Checkbox("Enable", &gi.Enabled());
+    if (!gi.Enabled())
     {
-        ImGui::End();
+        ImGui::PopID();
         return;
     }
 
-    ImGui::Checkbox("Enable GI", &gi.Enabled());
     ImGui::Checkbox("Show Probes", &gi.ShowProbes());
     ImGui::SliderFloat("GI Intensity", &gi.Intensity(), 0.0f, 4.0f, "%.2f");
     const char* modes[] = { "Combined", "Indirect Only" };
@@ -292,23 +292,21 @@ void ImGuiLayer::DrawProbeGIDebugWindow()
     ImGui::Text("Active probes: %d / %d", gi.GetProbeCount(), ProbeGI::MaxProbeCount);
     ImGui::TextDisabled("CPU irradiance seed; capture pass pending");
 
-    ImGui::End();
+    ImGui::PopID();
 }
 
 void ImGuiLayer::DrawSSAODebugWindow()
 {
     SSAO& ssao = Application::Get().GetSSAO();
-    static bool showDebug = true;
 
-    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x - 640, 345), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(340, 430), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("SSAO Debug", &showDebug, ImGuiWindowFlags_NoCollapse))
+    ImGui::PushID("SSAODebug");
+    ImGui::Checkbox("Enable", &ssao.Enabled());
+    if (!ssao.Enabled())
     {
-        ImGui::End();
+        ImGui::PopID();
         return;
     }
 
-    ImGui::Checkbox("Enable SSAO", &ssao.Enabled());
     ImGui::SliderFloat("Radius (view units)", &ssao.Radius(), 0.05f, 50.0f, "%.2f");
     ImGui::SliderFloat("Bias", &ssao.Bias(), 0.0f, 0.3f, "%.3f");
     ImGui::SliderFloat("Strength", &ssao.Strength(), 0.0f, 3.0f, "%.2f");
@@ -333,7 +331,7 @@ void ImGuiLayer::DrawSSAODebugWindow()
         ImGui::Image((ImTextureID)aoTexture, ImVec2(width, height), ImVec2(0, 1), ImVec2(1, 0));
     }
 
-    ImGui::End();
+    ImGui::PopID();
 }
 
 void ImGuiLayer::DrawMenuBar()
@@ -464,10 +462,10 @@ void ImGuiLayer::DrawPropertiesPanel()
     if (!targetTransform)
     {
         ImGui::TextDisabled("No object selected");
-        return;
     }
-
-    ImGui::SeparatorText("Transform");
+    else
+    {
+        ImGui::SeparatorText("Transform");
 
     float translation[3] = { targetTransform->translation.x, targetTransform->translation.y, targetTransform->translation.z };
     if (ImGui::DragFloat3("Translation", translation, 0.1f))
@@ -538,18 +536,29 @@ void ImGuiLayer::DrawPropertiesPanel()
         targetTransform->scale = glm::vec3(0.1f);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Focus"))
-    {
-        if (m_Camera) m_Camera->setInputEnabled(true);
+        if (ImGui::Button("Focus"))
+        {
+            if (m_Camera) m_Camera->setInputEnabled(true);
+        }
     }
 
-    // Debug: save CSM shadow map
-    ImGui::SeparatorText("Debug");
-    static int s_saveCascade = 0;
-    ImGui::SliderInt("Cascade", &s_saveCascade, 0, (int)app.GetCSM().GetCascadeCount() - 1);
-    if (ImGui::Button("Save Shadow Map"))
+    if (ImGui::CollapsingHeader("Debug", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        app.GetCSM().SaveShadowMap("D:/shadow_cascade_" + std::to_string(s_saveCascade) + ".png", s_saveCascade);
+        if (ImGui::TreeNodeEx("CSM", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            DrawShadowDebugWindow();
+            ImGui::TreePop();
+        }
+        if (ImGui::TreeNodeEx("Probe GI", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            DrawProbeGIDebugWindow();
+            ImGui::TreePop();
+        }
+        if (ImGui::TreeNodeEx("SSAO", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            DrawSSAODebugWindow();
+            ImGui::TreePop();
+        }
     }
 }
 

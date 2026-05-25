@@ -353,6 +353,7 @@ void ShaderLibrary::LoadDefault()
 			in vec3 v_Position;
 			in vec3 v_Normal;
 			in vec2 v_TexCoord;
+			uniform mat4 u_View;
 			uniform vec3 u_viewPos;
 			uniform vec3 u_lightDir;
 			uniform vec3 u_lightColor;
@@ -373,7 +374,83 @@ void ShaderLibrary::LoadDefault()
 			uniform samplerCube u_IrradianceMap;
 			uniform samplerCube u_PrefilterMap;
 			uniform sampler2D u_BRDFLUT;
+			uniform int u_cascadeCount;
+			uniform float u_cascadeDistances[4];
+			uniform mat4 u_lightViewProj[4];
+			uniform sampler2DArray u_shadowMap;
+			uniform float u_shadowMapSize;
+			uniform int u_debugCascadeView;
+			uniform int u_giEnabled;
+			uniform int u_giDebugMode;
+			uniform float u_giIntensity;
+			uniform vec3 u_giOrigin;
+			uniform float u_giSpacing;
+			uniform vec3 u_giCounts;
+			uniform vec3 u_probeIrradiance[64];
 			const float PI = 3.14159265359;
+			vec3 CascadeColor(int cascade)
+			{
+				if (cascade == 0) return vec3(1.0, 0.2, 0.2);
+				if (cascade == 1) return vec3(0.2, 1.0, 0.2);
+				if (cascade == 2) return vec3(0.2, 0.4, 1.0);
+				return vec3(1.0, 1.0, 0.2);
+			}
+			int SelectCascade(float viewDepth)
+			{
+				for (int i = 0; i < u_cascadeCount - 1; ++i)
+					if (viewDepth <= u_cascadeDistances[i + 1]) return i;
+				return max(u_cascadeCount - 1, 0);
+			}
+			float ShadowFactor(vec3 worldPos, vec3 normal)
+			{
+				if (u_cascadeCount <= 0)
+					return 1.0;
+				float viewDepth = max(-(u_View * vec4(worldPos, 1.0)).z, 0.0);
+				int cascade = SelectCascade(viewDepth);
+				vec4 lightClip = u_lightViewProj[cascade] * vec4(worldPos, 1.0);
+				vec3 ndc = lightClip.xyz / lightClip.w;
+				if (any(greaterThan(abs(ndc), vec3(1.0))))
+					return 1.0;
+				vec3 uvz = ndc * 0.5 + 0.5;
+				float bias = max(0.005 * (1.0 - dot(normal, normalize(-u_lightDir))), 0.001);
+				float visibility = 0.0;
+				vec2 texel = vec2(1.0 / u_shadowMapSize);
+				for (int y = -1; y <= 1; ++y)
+					for (int x = -1; x <= 1; ++x)
+					{
+						float depth = texture(u_shadowMap, vec3(uvz.xy + vec2(x, y) * texel, cascade)).r;
+						visibility += uvz.z - bias > depth ? 0.3 : 1.0;
+					}
+				return visibility / 9.0;
+			}
+			int ProbeIndex(ivec3 c, ivec3 counts)
+			{
+				return c.x + counts.x * (c.y + counts.y * c.z);
+			}
+			vec3 SampleProbeGI(vec3 worldPos, vec3 normal, vec3 albedo, float metallic)
+			{
+				if (u_giEnabled == 0)
+					return vec3(0.0);
+				ivec3 counts = max(ivec3(u_giCounts + vec3(0.5)), ivec3(1));
+				vec3 maxCoord = vec3(counts - ivec3(1));
+				vec3 grid = clamp((worldPos - u_giOrigin) / max(u_giSpacing, 0.001), vec3(0.0), maxCoord);
+				ivec3 c0 = ivec3(floor(grid));
+				ivec3 c1 = min(c0 + ivec3(1), counts - ivec3(1));
+				vec3 f = fract(grid);
+				vec3 c000 = u_probeIrradiance[ProbeIndex(ivec3(c0.x, c0.y, c0.z), counts)];
+				vec3 c100 = u_probeIrradiance[ProbeIndex(ivec3(c1.x, c0.y, c0.z), counts)];
+				vec3 c010 = u_probeIrradiance[ProbeIndex(ivec3(c0.x, c1.y, c0.z), counts)];
+				vec3 c110 = u_probeIrradiance[ProbeIndex(ivec3(c1.x, c1.y, c0.z), counts)];
+				vec3 c001 = u_probeIrradiance[ProbeIndex(ivec3(c0.x, c0.y, c1.z), counts)];
+				vec3 c101 = u_probeIrradiance[ProbeIndex(ivec3(c1.x, c0.y, c1.z), counts)];
+				vec3 c011 = u_probeIrradiance[ProbeIndex(ivec3(c0.x, c1.y, c1.z), counts)];
+				vec3 c111 = u_probeIrradiance[ProbeIndex(ivec3(c1.x, c1.y, c1.z), counts)];
+				vec3 low = mix(mix(c000, c100, f.x), mix(c010, c110, f.x), f.y);
+				vec3 high = mix(mix(c001, c101, f.x), mix(c011, c111, f.x), f.y);
+				float diffuseResponse = 0.3 + 0.7 * max(normalize(normal).y, 0.0);
+				vec3 irradiance = mix(low, high, f.z) * diffuseResponse * u_giIntensity;
+				return irradiance * albedo * (1.0 - metallic);
+			}
 			float DistributionGGX(vec3 n, vec3 h, float roughness)
 			{
 				float a = roughness * roughness;
@@ -427,6 +504,14 @@ void ShaderLibrary::LoadDefault()
 				float ao = clamp(u_HasAOMap != 0
 					? texture(u_AOMap, v_TexCoord).r : u_AO, 0.0, 1.0);
 				vec3 n = GetNormal();
+				gPosition = vec4(v_Position, 1.0);
+				gNormal = vec4(n, 1.0);
+				if (u_debugCascadeView != 0)
+				{
+					int cascade = SelectCascade(max(-(u_View * vec4(v_Position, 1.0)).z, 0.0));
+					color = vec4(CascadeColor(cascade) * 0.85 + vec3(0.05), 1.0);
+					return;
+				}
 				vec3 v = normalize(u_viewPos - v_Position);
 				vec3 r = reflect(-v, n);
 				vec3 f0 = mix(vec3(0.04), albedo, metallic);
@@ -446,12 +531,17 @@ void ShaderLibrary::LoadDefault()
 				vec3 prefiltered = textureLod(u_PrefilterMap, r, roughness * 4.0).rgb;
 				vec2 brdf = texture(u_BRDFLUT, vec2(ndotv, roughness)).rg;
 				vec3 ambient = (iblKD * diffuse + prefiltered * (iblF * brdf.x + brdf.y)) * ao;
-				vec3 result = ambient + direct;
+				vec3 indirect = SampleProbeGI(v_Position, n, albedo, metallic);
+				if (u_giDebugMode == 1)
+				{
+					vec3 debugIndirect = indirect / (indirect + vec3(1.0));
+					color = vec4(pow(debugIndirect, vec3(1.0 / 2.2)), 1.0);
+					return;
+				}
+				vec3 result = ambient + indirect + direct * ShadowFactor(v_Position, n);
 				result = result / (result + vec3(1.0));
 				result = pow(result, vec3(1.0 / 2.2));
 				color = vec4(result, 1.0);
-				gPosition = vec4(v_Position, 1.0);
-				gNormal = vec4(n, 1.0);
 			}
 		)";
 		Load("DefaultPBR", vSource, fSource);

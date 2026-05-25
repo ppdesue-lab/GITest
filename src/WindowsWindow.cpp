@@ -157,6 +157,13 @@ void WindowsWindow::PollEvents()
     glfwPollEvents();
 }
 
+void WindowsWindow::SetTitle(const std::string& title)
+{
+    m_Data.Title = title;
+    if (m_Data.glfwWindow)
+        glfwSetWindowTitle(static_cast<GLFWwindow*>(m_Data.glfwWindow), title.c_str());
+}
+
 bool WindowsWindow::ShouldClose() const
 {
     return glfwWindowShouldClose(static_cast<GLFWwindow*>(m_Data.glfwWindow));

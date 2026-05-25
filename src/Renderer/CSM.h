@@ -36,6 +36,7 @@ public:
     void SetSplitLambda(float splitLambda) { m_SplitLambda = glm::clamp(splitLambda, 0.0f, 1.0f); }
     float GetMaxShadowDistance() const { return m_MaxShadowDistance; }
     void SetMaxShadowDistance(float distance) { m_MaxShadowDistance = glm::max(distance, 1.0f); }
+    bool& Enabled() { return m_Enabled; }
     const DirectionalLight& GetLight() const { return m_Light; }
     DirectionalLight& GetLight() { return m_Light; }
 
@@ -46,6 +47,7 @@ private:
     uint32_t m_ShadowMapSize;
     float m_SplitLambda;
     float m_MaxShadowDistance = 500.0f;
+    bool m_Enabled = true;
     DirectionalLight m_Light;
 
     std::vector<float> m_CascadeDistances;

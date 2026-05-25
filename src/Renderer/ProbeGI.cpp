@@ -78,7 +78,7 @@ void ProbeGI::Bind(const Ref<Shader>& shader) const
 
 void ProbeGI::DrawDebug() const
 {
-    if (!m_ShowProbes)
+    if (!m_Enabled || !m_ShowProbes)
         return;
 
     float radius = glm::clamp(m_Spacing * 0.07f, 0.3f, 1.2f);

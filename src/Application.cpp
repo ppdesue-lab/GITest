@@ -83,12 +83,26 @@ void Application::Run()
 {
     using clock = std::chrono::steady_clock;
     auto lastTime = clock::now();
+    float titleElapsed = 0.0f;
+    uint32_t titleFrames = 0;
 
     while (m_Running && !m_WindowInterface->ShouldClose())
     {
         auto currentTime = clock::now();
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
+        titleElapsed += deltaTime;
+        ++titleFrames;
+        if (titleElapsed >= 0.5f)
+        {
+            float fps = (float)titleFrames / titleElapsed;
+            float frameMs = titleElapsed * 1000.0f / (float)titleFrames;
+            char title[128];
+            snprintf(title, sizeof(title), "KEngine Application | %.1f FPS | %.2f ms", fps, frameMs);
+            m_WindowInterface->SetTitle(title);
+            titleElapsed = 0.0f;
+            titleFrames = 0;
+        }
 
         // Process continuous keyboard input (velocity-based)
         ProcessKeyboardInput(deltaTime);
@@ -101,6 +115,7 @@ void Application::Run()
         }
 
         // --- CSM SHADOW MAP UPDATE ---
+        if (m_CSM->Enabled())
         {
             m_CSM->Update(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix(), m_Camera->getNearPlane(), m_Camera->getFarPlane());
 
@@ -206,6 +221,7 @@ void Application::Run()
                 }
 
                 // Directional light indicator
+                if (m_CSM->Enabled())
                 {
                     glm::vec3 lightPos(0.0f, 100.0f, 0.0f);
                     glm::vec3 lightDir = glm::normalize(m_CSM->GetLight().Direction);
@@ -422,7 +438,7 @@ void Application::PopOverlay(std::shared_ptr<Layer> overlay)
 Ref<Object3D> Application::LoadObject3D(const std::filesystem::path& filepath)
 {
     auto object = CreateRef<Object3D>();
-    if (!object->LoadFromPath<VertexNormal>(filepath))
+    if (!object->LoadFromPath<VertexNormalTexture>(filepath))
         return nullptr;
 
     std::string displayName;
