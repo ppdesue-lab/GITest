@@ -53,6 +53,7 @@ Ref<Texture> TextureLibrary::GetTexture(const std::string& name, const Ref<Image
 
 	if (tex)
 	{
+		tex->SourceImage = image;
 		s_Textures[name] = tex;
 	}
 

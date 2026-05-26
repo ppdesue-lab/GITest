@@ -19,6 +19,8 @@ public:
     Ref<Material> Mat;
     Transform Transfm;
     Ref<VertexArray> VertexObject = nullptr;
+    std::vector<VertexNormalTexture> TraceVertices;
+    std::vector<uint32_t> TraceIndices;
 };
 
 class Object3D

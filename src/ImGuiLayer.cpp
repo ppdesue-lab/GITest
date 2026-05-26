@@ -751,6 +751,21 @@ void ImGuiLayer::DrawViewportPanel()
 {
     Application& app = Application::Get();
 
+    bool editorMode = app.GetViewportRenderMode() == Application::ViewportRenderMode::Editor;
+    if (ImGui::Selectable("Editor", editorMode, 0, ImVec2(86.0f, 0.0f)))
+        app.SetViewportRenderMode(Application::ViewportRenderMode::Editor);
+    ImGui::SameLine();
+    if (ImGui::Selectable("Rendering", !editorMode, 0, ImVec2(96.0f, 0.0f)))
+        app.SetViewportRenderMode(Application::ViewportRenderMode::Rendering);
+    if (!editorMode)
+    {
+        ImGui::SameLine();
+        PathTracer& tracer = app.GetPathTracer();
+        ImGui::TextDisabled("SPP %u | Tris %u | %s", tracer.GetSampleCount(), tracer.GetTriangleCount(),
+            tracer.GetStatus().c_str());
+    }
+    ImGui::Separator();
+
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
     app.SetViewportSize(glm::vec2(viewportSize.x, viewportSize.y));
 

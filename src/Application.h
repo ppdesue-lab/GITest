@@ -17,6 +17,7 @@
 #include <Renderer/PBRIBL.h>
 #include <Renderer/SSAO.h>
 #include <Renderer/FXAA.h>
+#include <Renderer/PathTracer.h>
 #include <memory>
 #include <Renderer/Shader.h>
 #include <Renderer/FrameBuffer.h>
@@ -56,8 +57,11 @@ public:
 	void ClearObject3Ds();
 
 	// Viewport
+	enum class ViewportRenderMode { Editor, Rendering };
 	Ref<FrameBuffer> GetViewportFBO() { return m_ViewportFBO; }
 	uint64_t GetViewportColorTextureID() const;
+	ViewportRenderMode GetViewportRenderMode() const { return m_ViewportRenderMode; }
+	void SetViewportRenderMode(ViewportRenderMode mode);
 	const glm::vec2& GetViewportSize() const { return m_ViewportSize; }
 	void SetViewportSize(const glm::vec2& size);
 	glm::vec2& GetViewportMousePos() { return m_ViewportMousePos; }
@@ -86,6 +90,7 @@ public:
 	PBRIBL& GetPBRIBL() { return *m_PBRIBL; }
 	SSAO& GetSSAO() { return *m_SSAO; }
 	FXAA& GetFXAA() { return *m_FXAA; }
+	PathTracer& GetPathTracer() { return *m_PathTracer; }
 	int& GetBackgroundMode() { return m_BackgroundMode; }
 	bool GetDebugCascadeView() const { return m_DebugCascadeView; }
 	void SetDebugCascadeView(bool enabled) { m_DebugCascadeView = enabled; }
@@ -117,6 +122,8 @@ private:
 	Ref<FrameBuffer> m_ViewportFBO;
 	Ref<SSAO> m_SSAO;
 	Ref<FXAA> m_FXAA;
+	Ref<PathTracer> m_PathTracer;
+	ViewportRenderMode m_ViewportRenderMode = ViewportRenderMode::Editor;
 	glm::vec2 m_ViewportSize = { 1280.0f, 720.0f };
 	glm::vec2 m_ViewportMousePos = { 0.0f, 0.0f };
 	glm::vec2 m_ViewportOrigin = { 0.0f, 0.0f };

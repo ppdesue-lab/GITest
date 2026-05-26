@@ -35,6 +35,9 @@ SceneCube::SceneCube(float size)
 
     mesh->VertexObject = va;
     mesh->Mat = CreateRef<MaterialPBR>();
+    for (const auto& vertex : verts)
+        mesh->TraceVertices.emplace_back(vertex.Position, vertex.Normal, glm::vec2(0.0f));
+    mesh->TraceIndices = idxs;
     Meshes.push_back(mesh);
 }
 
@@ -78,6 +81,8 @@ SceneSphere::SceneSphere(float radius, uint32_t sc, uint32_t st)
 
     mesh->VertexObject = va;
     mesh->Mat = CreateRef<MaterialPBR>();
+    mesh->TraceVertices = verts;
+    mesh->TraceIndices = idxs;
     Meshes.push_back(mesh);
 }
 
@@ -104,6 +109,9 @@ ScenePlane::ScenePlane(float size)
 
     mesh->VertexObject = va;
     mesh->Mat = CreateRef<MaterialPBR>();
+    for (const auto& vertex : verts)
+        mesh->TraceVertices.emplace_back(vertex.Position, vertex.Normal, glm::vec2(0.0f));
+    mesh->TraceIndices = idxs;
     Meshes.push_back(mesh);
 }
 

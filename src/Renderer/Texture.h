@@ -25,6 +25,7 @@ public:
     void Unload();
 
     unsigned int m_RendererID;
+    Ref<Image> SourceImage;
 };
 
 class TextureLibrary

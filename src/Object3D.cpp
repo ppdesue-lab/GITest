@@ -359,6 +359,11 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 		mesh->VertexObject->SetIndexBuffer(IndexBuffer::Create(indices.data(), indices.size()));
 		mesh->VertexObject->Unbind();
 		mesh->Mat = createMaterial(sourceMesh);
+		if constexpr (std::is_same_v<T, VertexNormalTexture>)
+		{
+			mesh->TraceVertices = vertices;
+			mesh->TraceIndices = indices;
+		}
 		Meshes.push_back(mesh);
 	};
 

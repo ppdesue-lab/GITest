@@ -77,8 +77,9 @@ Application::Application(int w,int h)
     // CSM must be created after OpenGL context is initialized
     m_CSM = CreateRef<CSM>();
     m_ProbeGI = CreateRef<ProbeGI>();
-    m_PBRIBL = CreateRef<PBRIBL>(
-        R"(E:\githubs\glslpathtracer\assets\HDR\sunset.hdr)");
+    const std::string environmentPath = R"(D:\algorithm\kengine\build\_deps\tinybvh-src\testdata\sky_15.hdr)";//R"(E:\githubs\glslpathtracer\assets\HDR\sunset.hdr)";
+    m_PBRIBL = CreateRef<PBRIBL>(environmentPath);
+    m_PathTracer = CreateRef<PathTracer>((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y, environmentPath);
 }
 
 void Application::Run()
@@ -115,6 +116,7 @@ void Application::Run()
             m_ViewportFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             m_SSAO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             m_FXAA->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+            m_PathTracer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
         }
 
         // --- CSM SHADOW MAP UPDATE ---
@@ -293,7 +295,7 @@ void Application::Run()
             RenderCommand::SetDepthRange(0, 1);
 
             if (m_ViewportFBO) m_ViewportFBO->Unbind();
-            if (m_SSAO->Enabled())
+            if (m_ViewportRenderMode == ViewportRenderMode::Editor && m_SSAO->Enabled())
             {
                 m_SSAO->Render(
                     m_ViewportFBO->GetColorAttachmentRendererID(0),
@@ -302,13 +304,15 @@ void Application::Run()
                     m_Camera->GetViewMatrix(),
                     m_Camera->GetProjectionMatrix());
             }
-            if (m_FXAA->Enabled())
+            if (m_ViewportRenderMode == ViewportRenderMode::Editor && m_FXAA->Enabled())
             {
                 uint64_t sourceTexture = m_SSAO->Enabled()
                     ? m_SSAO->GetOutputTexture()
                     : m_ViewportFBO->GetColorAttachmentRendererID(0);
                 m_FXAA->Render(sourceTexture);
             }
+            if (m_ViewportRenderMode == ViewportRenderMode::Rendering)
+                m_PathTracer->Render(m_Scene, *m_Camera);
         }
         else
         {
@@ -489,10 +493,21 @@ void Application::SetSelectedObjectIndex(int index)
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
 }
 
+void Application::SetViewportRenderMode(ViewportRenderMode mode)
+{
+    if (m_ViewportRenderMode == mode)
+        return;
+    m_ViewportRenderMode = mode;
+    if (m_PathTracer && mode == ViewportRenderMode::Rendering)
+        m_PathTracer->ResetAccumulation();
+}
+
 uint64_t Application::GetViewportColorTextureID() const
 {
     if (!m_ViewportFBO)
         return 0;
+    if (m_ViewportRenderMode == ViewportRenderMode::Rendering && m_PathTracer && m_PathTracer->GetOutputTexture())
+        return m_PathTracer->GetOutputTexture();
     if (m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
         return m_FXAA->GetOutputTexture();
     if (m_SSAO && m_SSAO->Enabled() && m_SSAO->GetOutputTexture())

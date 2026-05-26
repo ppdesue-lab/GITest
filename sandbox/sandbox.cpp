@@ -15,14 +15,23 @@ public:
         // Ground managed by Scene
         Application::Get().GetScene().CreatePlane("Ground");
 
-        auto rustedIron = Application::Get().GetScene().CreateSphere("Rusted Iron PBR");
-        if (rustedIron && !rustedIron->Meshes.empty())
-        {
-            rustedIron->Meshes[0]->Mat = CreateRef<MaterialPBR>(
-                "E:/githubs/MapleEngine-main/Assets/textures/rusted_iron");
-            rustedIron->Meshes[0]->Transfm.translation = glm::vec3(0.0f, 0.0f, 2.0f);
-            rustedIron->Meshes[0]->Transfm.scale = glm::vec3(2.0f);
-        }
+        //auto rustedIron = Application::Get().GetScene().CreateSphere("Rusted Iron PBR",10.f);
+        //if (rustedIron && !rustedIron->Meshes.empty())
+        //{
+        //    rustedIron->Meshes[0]->Mat = CreateRef<MaterialPBR>(
+        //        "E:/githubs/MapleEngine-main/Assets/textures/rusted_iron");
+        //    rustedIron->Meshes[0]->Transfm.translation = glm::vec3(0.0f, 0.0f, 2.0f);
+        //    
+        //}
+
+        //auto waterBottle = Application::Get().LoadObject3D(
+        //    "E:/projects/ktcore/UnrealEngine/Engine/Source/ThirdParty/Windows/glTF-Toolkit/"
+        //    "glTF-Toolkit.UWP.Test/Assets/3DModels/WaterBottle.glb");
+        //if (waterBottle)
+        //{
+        //    for (auto& mesh : waterBottle->Meshes)
+        //        mesh->Transfm.translation = glm::vec3(-20.0f, 0.0f, 0.0f);
+        //}
 
         // Load first object at natural scale
         auto obj = Application::Get().LoadObject3D("D:/Untitled.obj");

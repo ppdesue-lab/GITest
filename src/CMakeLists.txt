@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(KENGINE_RENDERER_API "OpenGL" CACHE STRING "Renderer backend: OpenGL or DX11")
 #set_property(CACHE KENGINE_RENDERER_API PROPERTY STRINGS OpenGL DX11)
 
+set(KENGINE_OPENCL_ROOT "D:/lib/opencl" CACHE PATH "OpenCL SDK root used by the path tracer")
+set(KENGINE_OPENCL_LIBRARY "${KENGINE_OPENCL_ROOT}/lib/x86_64/OpenCL.lib")
+
 file(GLOB_RECURSE SRC_FILES *.cpp *.h)
 
 #------------------third party
@@ -69,6 +72,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
+# tinybvh provides the GPU BVH layout and the lightweight OpenCL wrapper used by PathTracer.
+FetchContent_Declare(
+  tinybvh
+  GIT_REPOSITORY https://github.com/jbikker/tinybvh.git
+  GIT_TAG dev
+)
+FetchContent_GetProperties(tinybvh)
+if(NOT tinybvh_POPULATED)
+  FetchContent_Populate(tinybvh)
+endif()
+
 
 #fetch spdlog
 FetchContent_Declare(
@@ -102,6 +116,7 @@ set(third_party_libs
   glad
   spdlog
   libimgui
+  ${KENGINE_OPENCL_LIBRARY}
 #  Vulkan::Vulkan
 #C:/VulkanSDK/1.3.275.0/Lib/shaderc_shared.lib
 #C:/VulkanSDK/1.3.275.0/Lib/spirv-cross-core.lib
@@ -116,6 +131,9 @@ set(all_includes
     ${Vulkan_INCLUDE_DIRS}
     ${imgui_SOURCE_DIR}
     ${stb_SOURCE_DIR}
+    ${tinybvh_SOURCE_DIR}
+    ${KENGINE_OPENCL_ROOT}/include
+    ${KENGINE_OPENCL_ROOT}/include/CL
 )
 
 set(all_compiler_definitions 
@@ -143,6 +161,10 @@ target_precompile_headers(${project_name} PRIVATE stdsfx.h stdsfx.cpp)
 target_compile_definitions(${project_name} PUBLIC ${all_compiler_definitions})
 #link third party libs
 target_link_libraries(${project_name} PUBLIC ${third_party_libs})
+if(MSVC)
+  # tiny_ocl.h emits a sample-project-relative default library; use the configured SDK library above.
+  target_link_options(${project_name} INTERFACE "/NODEFAULTLIB:../external/OpenCL/lib/OpenCL.lib")
+endif()
 #include dirs
 target_include_directories(${project_name} PRIVATE ${all_includes})
 
