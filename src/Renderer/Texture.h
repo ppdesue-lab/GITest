@@ -32,4 +32,5 @@ class TextureLibrary
     static std::unordered_map<std::string, Ref<Texture>> s_Textures;
 public:
     static Ref<Texture> GetTexture(const std::string& name);
+    static Ref<Texture> GetTexture(const std::string& name, const Ref<Image>& image);
 };

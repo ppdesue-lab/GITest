@@ -1,0 +1,178 @@
+#include "stdsfx.h"
+#include "FXAA.h"
+
+#ifdef G_OPENGL
+#include <glad/glad.h>
+#endif
+
+FXAA::FXAA(uint32_t width, uint32_t height)
+    : m_Width(width), m_Height(height)
+{
+#ifdef G_OPENGL
+    const std::string fullscreenVertex = R"(
+        #version 410 core
+        out vec2 v_UV;
+        void main()
+        {
+            vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+            v_UV = p;
+            gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+        }
+    )";
+    const std::string fxaaFragment = R"(
+        #version 410 core
+        in vec2 v_UV;
+        layout(location = 0) out vec4 o_Color;
+        uniform sampler2D u_SceneColor;
+        uniform vec2 u_InvResolution;
+        uniform float u_EdgeThreshold;
+        uniform float u_EdgeThresholdMin;
+        uniform float u_SubpixelQuality;
+        uniform float u_SpanMax;
+        uniform int u_DebugMode;
+
+        float Luma(vec3 color)
+        {
+            return dot(color, vec3(0.299, 0.587, 0.114));
+        }
+
+        void main()
+        {
+            vec4 center = texture(u_SceneColor, v_UV);
+            vec3 rgbN = texture(u_SceneColor, v_UV + vec2(0.0, -u_InvResolution.y)).rgb;
+            vec3 rgbS = texture(u_SceneColor, v_UV + vec2(0.0, u_InvResolution.y)).rgb;
+            vec3 rgbW = texture(u_SceneColor, v_UV + vec2(-u_InvResolution.x, 0.0)).rgb;
+            vec3 rgbE = texture(u_SceneColor, v_UV + vec2(u_InvResolution.x, 0.0)).rgb;
+            vec3 rgbNW = texture(u_SceneColor, v_UV + vec2(-u_InvResolution.x, -u_InvResolution.y)).rgb;
+            vec3 rgbNE = texture(u_SceneColor, v_UV + vec2(u_InvResolution.x, -u_InvResolution.y)).rgb;
+            vec3 rgbSW = texture(u_SceneColor, v_UV + vec2(-u_InvResolution.x, u_InvResolution.y)).rgb;
+            vec3 rgbSE = texture(u_SceneColor, v_UV + vec2(u_InvResolution.x, u_InvResolution.y)).rgb;
+
+            float lumaM = Luma(center.rgb);
+            float lumaN = Luma(rgbN);
+            float lumaS = Luma(rgbS);
+            float lumaW = Luma(rgbW);
+            float lumaE = Luma(rgbE);
+            float lumaNW = Luma(rgbNW);
+            float lumaNE = Luma(rgbNE);
+            float lumaSW = Luma(rgbSW);
+            float lumaSE = Luma(rgbSE);
+            float lumaMin = min(lumaM, min(min(min(lumaN, lumaS), min(lumaW, lumaE)),
+                min(min(lumaNW, lumaNE), min(lumaSW, lumaSE))));
+            float lumaMax = max(lumaM, max(max(max(lumaN, lumaS), max(lumaW, lumaE)),
+                max(max(lumaNW, lumaNE), max(lumaSW, lumaSE))));
+            float lumaRange = lumaMax - lumaMin;
+
+            if (lumaRange < max(u_EdgeThresholdMin, lumaMax * u_EdgeThreshold))
+            {
+                o_Color = u_DebugMode == 1 ? vec4(0.0, 0.0, 0.0, 1.0) : center;
+                return;
+            }
+
+            vec2 direction = vec2(
+                -((lumaNW + lumaNE) - (lumaSW + lumaSE)),
+                (lumaNW + lumaSW) - (lumaNE + lumaSE));
+            float reduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * 0.03125, 1.0 / 128.0);
+            float inverseMinimum = 1.0 / (min(abs(direction.x), abs(direction.y)) + reduce);
+            direction = clamp(direction * inverseMinimum, vec2(-u_SpanMax), vec2(u_SpanMax));
+            direction *= u_InvResolution;
+
+            vec3 rgbA = 0.5 * (
+                texture(u_SceneColor, v_UV + direction * (1.0 / 3.0 - 0.5)).rgb +
+                texture(u_SceneColor, v_UV + direction * (2.0 / 3.0 - 0.5)).rgb);
+            vec3 rgbB = rgbA * 0.5 + 0.25 * (
+                texture(u_SceneColor, v_UV + direction * -0.5).rgb +
+                texture(u_SceneColor, v_UV + direction * 0.5).rgb);
+            float lumaB = Luma(rgbB);
+            vec3 filtered = (lumaB < lumaMin || lumaB > lumaMax) ? rgbA : rgbB;
+            vec3 result = mix(center.rgb, filtered, u_SubpixelQuality);
+            if (u_DebugMode == 1)
+            {
+                o_Color = vec4(vec3(clamp(lumaRange * 4.0, 0.0, 1.0)), 1.0);
+                return;
+            }
+            if (u_DebugMode == 2)
+            {
+                o_Color = vec4(abs(result - center.rgb) * 12.0, 1.0);
+                return;
+            }
+            o_Color = vec4(result, center.a);
+        }
+    )";
+    m_Shader = Shader::Create("FXAA", fullscreenVertex, fxaaFragment);
+    glCreateVertexArrays(1, &m_QuadVAO);
+    Invalidate();
+#endif
+}
+
+FXAA::~FXAA()
+{
+#ifdef G_OPENGL
+    glDeleteVertexArrays(1, &m_QuadVAO);
+    glDeleteFramebuffers(1, &m_OutputFBO);
+    glDeleteTextures(1, &m_OutputTexture);
+#endif
+}
+
+void FXAA::Resize(uint32_t width, uint32_t height)
+{
+    if (width == 0 || height == 0 || (width == m_Width && height == m_Height))
+        return;
+    m_Width = width;
+    m_Height = height;
+    Invalidate();
+}
+
+void FXAA::Invalidate()
+{
+#ifdef G_OPENGL
+    if (m_OutputFBO)
+    {
+        glDeleteFramebuffers(1, &m_OutputFBO);
+        glDeleteTextures(1, &m_OutputTexture);
+    }
+
+    glCreateFramebuffers(1, &m_OutputFBO);
+    glCreateTextures(GL_TEXTURE_2D, 1, &m_OutputTexture);
+    glTextureStorage2D(m_OutputTexture, 1, GL_RGBA16F, m_Width, m_Height);
+    glTextureParameteri(m_OutputTexture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(m_OutputTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(m_OutputTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(m_OutputTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glNamedFramebufferTexture(m_OutputFBO, GL_COLOR_ATTACHMENT0, m_OutputTexture, 0);
+    if (glCheckNamedFramebufferStatus(m_OutputFBO, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        ERROR("FXAA framebuffer is incomplete!");
+#endif
+}
+
+void FXAA::Render(uint64_t colorTexture)
+{
+#ifdef G_OPENGL
+    if (!m_Enabled || !m_Shader || !m_OutputFBO || !colorTexture)
+        return;
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_OutputFBO);
+    glViewport(0, 0, m_Width, m_Height);
+    glBindVertexArray(m_QuadVAO);
+
+    m_Shader->Bind();
+    m_Shader->SetInt("u_SceneColor", 0);
+    m_Shader->SetFloat2("u_InvResolution", glm::vec2(1.0f / (float)m_Width, 1.0f / (float)m_Height));
+    m_Shader->SetFloat("u_EdgeThreshold", m_EdgeThreshold);
+    m_Shader->SetFloat("u_EdgeThresholdMin", m_EdgeThresholdMin);
+    m_Shader->SetFloat("u_SubpixelQuality", m_SubpixelQuality);
+    m_Shader->SetFloat("u_SpanMax", m_SpanMax);
+    m_Shader->SetInt("u_DebugMode", m_DebugMode);
+    glBindTextureUnit(0, (uint32_t)colorTexture);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindVertexArray(0);
+    glEnable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+#else
+    (void)colorTexture;
+#endif
+}

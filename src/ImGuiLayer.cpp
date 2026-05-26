@@ -224,6 +224,10 @@ void ImGuiLayer::DrawShadowDebugWindow()
     float splitLambda = csm.GetSplitLambda();
     if (ImGui::SliderFloat("Split Lambda", &splitLambda, 0.0f, 1.0f, "%.2f"))
         csm.SetSplitLambda(splitLambda);
+    ImGui::SliderFloat("Constant Bias", &csm.ConstantBias(), 0.0f, 0.02f, "%.5f");
+    ImGui::SliderFloat("Slope Bias", &csm.SlopeBias(), 0.0f, 0.05f, "%.5f");
+    ImGui::SliderFloat("Offset Factor", &csm.PolygonOffsetFactor(), 0.0f, 8.0f, "%.2f");
+    ImGui::SliderFloat("Offset Units", &csm.PolygonOffsetUnits(), 0.0f, 16.0f, "%.2f");
     DirectionalLight& light = csm.GetLight();
     glm::vec3 lightDirection = light.Direction;
     if (ImGui::DragFloat3("Light Direction", &lightDirection.x, 0.01f))
@@ -331,6 +335,41 @@ void ImGuiLayer::DrawSSAODebugWindow()
         ImGui::Image((ImTextureID)aoTexture, ImVec2(width, height), ImVec2(0, 1), ImVec2(1, 0));
     }
 
+    ImGui::PopID();
+}
+
+void ImGuiLayer::DrawFXAADebugWindow()
+{
+    FXAA& fxaa = Application::Get().GetFXAA();
+
+    ImGui::PushID("FXAADebug");
+    ImGui::Checkbox("Enable", &fxaa.Enabled());
+    if (fxaa.Enabled())
+    {
+        const char* modes[] = { "Result", "Edges", "Difference" };
+        ImGui::Combo("View Mode", &fxaa.DebugMode(), modes, IM_ARRAYSIZE(modes));
+        ImGui::SliderFloat("Edge Threshold", &fxaa.EdgeThreshold(), 0.0312f, 0.333f, "%.4f");
+        ImGui::SliderFloat("Minimum Threshold", &fxaa.EdgeThresholdMin(), 0.0f, 0.0833f, "%.4f");
+        ImGui::SliderFloat("Subpixel Quality", &fxaa.SubpixelQuality(), 0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Span Max", &fxaa.SpanMax(), 2.0f, 16.0f, "%.1f");
+        ImGui::TextDisabled("Edges/Difference confirms which silhouette pixels FXAA processes.");
+    }
+    ImGui::PopID();
+}
+
+void ImGuiLayer::DrawPBRIBLDebugWindow()
+{
+    PBRIBL& ibl = Application::Get().GetPBRIBL();
+    const char* views[] = { "Lit", "Albedo", "World Normal", "IBL Diffuse", "IBL Specular" };
+
+    ImGui::PushID("PBRIBLDebug");
+    ImGui::Checkbox("Enable IBL", &ibl.Enabled());
+    ImGui::Checkbox("Diffuse IBL", &ibl.DiffuseEnabled());
+    ImGui::Checkbox("Specular IBL", &ibl.SpecularEnabled());
+    ImGui::SliderFloat("Diffuse Intensity", &ibl.DiffuseIntensity(), 0.0f, 4.0f, "%.2f");
+    ImGui::SliderFloat("Specular Intensity", &ibl.SpecularIntensity(), 0.0f, 4.0f, "%.2f");
+    ImGui::Combo("PBR View", &ibl.DebugMode(), views, IM_ARRAYSIZE(views));
+    ImGui::TextDisabled("Albedo isolates texture; Normal/IBL reveal shading stripes.");
     ImGui::PopID();
 }
 
@@ -499,6 +538,32 @@ void ImGuiLayer::DrawPropertiesPanel()
             ImGui::SliderFloat("Roughness", &pbr->Roughness, 0.04f, 1.0f, "%.2f");
             ImGui::SliderFloat("Material AO", &pbr->AmbientOcclusion, 0.0f, 1.0f, "%.2f");
         }
+        Ref<ToonMaterial> toon = std::dynamic_pointer_cast<ToonMaterial>(selectedEntry->Object->Meshes[0]->Mat);
+        if (toon)
+        {
+            ImGui::SeparatorText("Toon Material");
+            ImGui::ColorEdit3("Diffuse", &toon->Diffuse.x);
+            ImGui::ColorEdit3("Ambient", &toon->Ambient.x);
+            ImGui::ColorEdit3("Specular", &toon->Specular.x);
+            ImGui::SliderFloat("Shininess", &toon->SpecularPower, 1.0f, 128.0f, "%.1f");
+            ImGui::SliderFloat("Alpha", &toon->Alpha, 0.0f, 1.0f, "%.2f");
+            ImGui::Checkbox("Two Sided", &toon->TwoSided);
+            ImGui::Checkbox("Edge", &toon->EdgeEnabled);
+            if (toon->EdgeEnabled)
+            {
+                ImGui::ColorEdit4("Edge Color", &toon->EdgeColor.x);
+                float edgeSize = toon->EdgeSize;
+                if (ImGui::SliderFloat("Edge Size", &edgeSize, 0.0f, 8.0f, "%.2f px"))
+                {
+                    for (const auto& mesh : selectedEntry->Object->Meshes)
+                    {
+                        Ref<ToonMaterial> meshToon = std::dynamic_pointer_cast<ToonMaterial>(mesh->Mat);
+                        if (meshToon)
+                            meshToon->EdgeSize = edgeSize;
+                    }
+                }
+            }
+        }
     }
 
     ImGui::SeparatorText("Gizmo");
@@ -557,6 +622,16 @@ void ImGuiLayer::DrawPropertiesPanel()
         if (ImGui::TreeNodeEx("SSAO", ImGuiTreeNodeFlags_DefaultOpen))
         {
             DrawSSAODebugWindow();
+            ImGui::TreePop();
+        }
+        if (ImGui::TreeNodeEx("FXAA", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            DrawFXAADebugWindow();
+            ImGui::TreePop();
+        }
+        if (ImGui::TreeNodeEx("PBR / IBL", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            DrawPBRIBLDebugWindow();
             ImGui::TreePop();
         }
     }

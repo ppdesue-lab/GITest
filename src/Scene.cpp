@@ -126,16 +126,16 @@ int Scene::AddObject(const Ref<Object3D>& object, const std::string& name, const
     return idx;
 }
 
-Ref<SceneCube> Scene::CreateCube(const std::string& name)
+Ref<SceneCube> Scene::CreateCube(const std::string& name, float size)
 {
     auto obj = CreateRef<SceneCube>();
     AddObjectRaw(obj, name, "");
     return obj;
 }
 
-Ref<SceneSphere> Scene::CreateSphere(const std::string& name)
+Ref<SceneSphere> Scene::CreateSphere(const std::string& name, float radius, uint32_t sectorCount, uint32_t stackCount)
 {
-    auto obj = CreateRef<SceneSphere>();
+    auto obj = CreateRef<SceneSphere>(radius, sectorCount, stackCount);
     AddObjectRaw(obj, name, "");
     return obj;
 }
@@ -180,7 +180,7 @@ Scene::Entry* Scene::GetSelectedEntry()
 Transform* Scene::GetSelectedTransform()
 {
     Entry* entry = GetSelectedEntry();
-    if (entry && !entry->Object->Meshes.empty())
-        return &entry->Object->Meshes[0]->Transfm;
+    if (entry && entry->Object)
+        return &entry->Object->Transfm;
     return nullptr;
 }

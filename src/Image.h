@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base.h"
+#include <cstddef>
 
 enum class PixelType
 {
@@ -30,7 +31,8 @@ struct Image
         Data = nullptr;
     }
 
-	void Save(const std::string& path) const;
+    void Save(const std::string& path) const;
 
     static Ref<Image> Load(const char* path, PixelType type = PixelType::BYTE);
+    static Ref<Image> LoadFromMemory(const unsigned char* data, size_t size, PixelType type = PixelType::BYTE);
 };

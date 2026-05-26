@@ -32,6 +32,7 @@ Application::Application(int w,int h)
     RenderCommand::Init();
 
     m_Camera = CreateRef<FPSCamera>(glm::vec3(100, 100, 100), glm::vec3(0, 0, 0), 45.0f, w / (float)h);
+    m_ViewportSize = glm::vec2((float)w, (float)h);
 
     // Push ImGui layer as overlay
     m_ImGuiLayer = std::make_shared<ImGuiLayer>();
@@ -70,13 +71,14 @@ Application::Application(int w,int h)
           FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA16F),
           FrameBufferTextureSpecification(FrameBufferTextureFormat::Depth) } });
     m_SSAO = CreateRef<SSAO>((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+    m_FXAA = CreateRef<FXAA>((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
     SetGizmoViewportSize((int)m_ViewportSize.x, (int)m_ViewportSize.y);
 
     // CSM must be created after OpenGL context is initialized
     m_CSM = CreateRef<CSM>();
     m_ProbeGI = CreateRef<ProbeGI>();
     m_PBRIBL = CreateRef<PBRIBL>(
-        "E:/githubs/MapleEngine-main/Assets/textures/HDR_110_Tunnel_Ref.hdr");
+        R"(E:\githubs\glslpathtracer\assets\HDR\sunset.hdr)");
 }
 
 void Application::Run()
@@ -112,6 +114,7 @@ void Application::Run()
         {
             m_ViewportFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             m_SSAO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+            m_FXAA->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
         }
 
         // --- CSM SHADOW MAP UPDATE ---
@@ -132,7 +135,7 @@ void Application::Run()
                     depthShader->SetMat4("u_LightViewProj", lightViewProj[i]);
                     for (auto& mesh : entry.Object->Meshes)
                     {
-                        depthShader->SetMat4("u_Model", mesh->Transfm.GetMatrix());
+                        depthShader->SetMat4("u_Model", entry.Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
                         RenderCommand::DrawIndexed(mesh->VertexObject);
                     }
                 }
@@ -299,6 +302,13 @@ void Application::Run()
                     m_Camera->GetViewMatrix(),
                     m_Camera->GetProjectionMatrix());
             }
+            if (m_FXAA->Enabled())
+            {
+                uint64_t sourceTexture = m_SSAO->Enabled()
+                    ? m_SSAO->GetOutputTexture()
+                    : m_ViewportFBO->GetColorAttachmentRendererID(0);
+                m_FXAA->Render(sourceTexture);
+            }
         }
         else
         {
@@ -461,8 +471,16 @@ void Application::ClearObject3Ds()
 
 void Application::SetViewportSize(const glm::vec2& size)
 {
-    m_ViewportSize = size;
-    SetGizmoViewportSize((int)size.x, (int)size.y);
+    const uint32_t width = static_cast<uint32_t>(std::max(size.x, 1.0f));
+    const uint32_t height = static_cast<uint32_t>(std::max(size.y, 1.0f));
+    const glm::vec2 pixelSize((float)width, (float)height);
+    if (pixelSize == m_ViewportSize)
+        return;
+
+    m_ViewportSize = pixelSize;
+    if (m_Camera)
+        m_Camera->setAspectRatio(pixelSize.x / pixelSize.y);
+    SetGizmoViewportSize((int)pixelSize.x, (int)pixelSize.y);
 }
 
 void Application::SetSelectedObjectIndex(int index)
@@ -475,6 +493,8 @@ uint64_t Application::GetViewportColorTextureID() const
 {
     if (!m_ViewportFBO)
         return 0;
+    if (m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
+        return m_FXAA->GetOutputTexture();
     if (m_SSAO && m_SSAO->Enabled() && m_SSAO->GetOutputTexture())
         return m_SSAO->GetOutputTexture();
     return m_ViewportFBO->GetColorAttachmentRendererID(0);

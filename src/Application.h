@@ -16,6 +16,7 @@
 #include <Renderer/ProbeGI.h>
 #include <Renderer/PBRIBL.h>
 #include <Renderer/SSAO.h>
+#include <Renderer/FXAA.h>
 #include <memory>
 #include <Renderer/Shader.h>
 #include <Renderer/FrameBuffer.h>
@@ -84,6 +85,7 @@ public:
 	ProbeGI& GetProbeGI() { return *m_ProbeGI; }
 	PBRIBL& GetPBRIBL() { return *m_PBRIBL; }
 	SSAO& GetSSAO() { return *m_SSAO; }
+	FXAA& GetFXAA() { return *m_FXAA; }
 	int& GetBackgroundMode() { return m_BackgroundMode; }
 	bool GetDebugCascadeView() const { return m_DebugCascadeView; }
 	void SetDebugCascadeView(bool enabled) { m_DebugCascadeView = enabled; }
@@ -114,6 +116,7 @@ private:
 	// Viewport
 	Ref<FrameBuffer> m_ViewportFBO;
 	Ref<SSAO> m_SSAO;
+	Ref<FXAA> m_FXAA;
 	glm::vec2 m_ViewportSize = { 1280.0f, 720.0f };
 	glm::vec2 m_ViewportMousePos = { 0.0f, 0.0f };
 	glm::vec2 m_ViewportOrigin = { 0.0f, 0.0f };

@@ -8,7 +8,7 @@
 class Material
 {
 public:
-    ~Material() = default;
+    virtual ~Material() = default;
 
     virtual void Bind() {
         assert(MatShader);
@@ -53,6 +53,36 @@ public:
     Ref<Texture> MetallicMap;
     Ref<Texture> RoughnessMap;
     Ref<Texture> AOMap;
+    int MetallicMapChannel = 0;
+    int RoughnessMapChannel = 0;
+    int AOMapChannel = 0;
+};
+
+class ToonMaterial : public Material
+{
+public:
+    ToonMaterial();
+
+    void Bind() override;
+    void BindEdge(const glm::mat4& view, const glm::mat4& projection,
+        const glm::mat4& model, const glm::vec2& screenSize);
+
+    glm::vec3 Diffuse = glm::vec3(1.0f);
+    glm::vec3 Ambient = glm::vec3(0.2f);
+    glm::vec3 Specular = glm::vec3(0.0f);
+    float SpecularPower = 1.0f;
+    float Alpha = 1.0f;
+    Ref<Texture> MainTexture;
+    Ref<Texture> SphereTexture;
+    Ref<Texture> ToonTexture;
+    int SphereMode = 0; // 0: disabled, 1: multiply, 2: add
+    bool TwoSided = false;
+    bool EdgeEnabled = true;
+    glm::vec4 EdgeColor = glm::vec4(0.02f, 0.02f, 0.02f, 1.0f);
+    float EdgeSize = 1.0f;
+
+private:
+    Ref<Shader> m_EdgeShader;
 };
 
 class MaterialMatcap : public Material

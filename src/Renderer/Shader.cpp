@@ -197,6 +197,8 @@ void ShaderLibrary::LoadDefault()
 			uniform mat4 u_lightViewProj[4];
 			uniform sampler2DArray u_shadowMap;
 			uniform float u_shadowMapSize;
+			uniform float u_shadowConstantBias;
+			uniform float u_shadowSlopeBias;
 			uniform int u_debugCascadeView;
 			uniform int u_giEnabled;
 			uniform int u_giDebugMode;
@@ -248,7 +250,8 @@ void ShaderLibrary::LoadDefault()
 				    lightNDC.y < -1.0 || lightNDC.y > 1.0 ||
 				    lightNDC.z < -1.0 || lightNDC.z > 1.0) return 1.0;
 				vec3 uvz = lightNDC * 0.5 + 0.5;
-				float bias = max(0.005 * (1.0 - dot(normalize(normal), normalize(-u_lightDir))), 0.001);
+				float bias = max(u_shadowSlopeBias * (1.0 - dot(normalize(normal), normalize(-u_lightDir))),
+					u_shadowConstantBias);
 				return ShadowVisibility(uvz, cascade, bias);
 			}
 
@@ -323,6 +326,188 @@ void ShaderLibrary::LoadDefault()
 	}
 #pragma endregion
 
+#pragma region pmx_toon_shader
+	{
+		auto vSource = R"(
+			#version 330 core
+			layout(location = 0) in vec3 a_Position;
+			layout(location = 1) in vec3 a_Normal;
+			layout(location = 2) in vec2 a_TexCoord;
+			uniform mat4 u_Model;
+			uniform mat4 u_View;
+			uniform mat4 u_Projection;
+			out vec3 v_Position;
+			out vec3 v_Normal;
+			out vec2 v_TexCoord;
+			void main()
+			{
+				vec4 worldPos = u_Model * vec4(a_Position, 1.0);
+				v_Position = worldPos.xyz;
+				v_Normal = mat3(transpose(inverse(u_Model))) * a_Normal;
+				v_TexCoord = a_TexCoord;
+				gl_Position = u_Projection * u_View * worldPos;
+			}
+		)";
+		auto fSource = R"(
+			#version 330 core
+			layout(location = 0) out vec4 color;
+			layout(location = 1) out vec4 gPosition;
+			layout(location = 2) out vec4 gNormal;
+			in vec3 v_Position;
+			in vec3 v_Normal;
+			in vec2 v_TexCoord;
+			uniform mat4 u_View;
+			uniform vec3 u_viewPos;
+			uniform vec3 u_lightDir;
+			uniform vec3 u_lightColor;
+			uniform vec3 u_Diffuse;
+			uniform vec3 u_Ambient;
+			uniform vec3 u_Specular;
+			uniform float u_SpecularPower;
+			uniform float u_Alpha;
+			uniform sampler2D u_MainTexture;
+			uniform sampler2D u_SphereTexture;
+			uniform sampler2D u_ToonTexture;
+			uniform int u_HasMainTexture;
+			uniform int u_HasSphereTexture;
+			uniform int u_HasToonTexture;
+			uniform int u_SphereMode;
+			uniform int u_cascadeCount;
+			uniform float u_cascadeDistances[4];
+			uniform mat4 u_lightViewProj[4];
+			uniform sampler2DArray u_shadowMap;
+			uniform float u_shadowMapSize;
+			uniform float u_shadowConstantBias;
+			uniform float u_shadowSlopeBias;
+			uniform int u_debugCascadeView;
+
+			vec3 CascadeColor(int cascade)
+			{
+				if (cascade == 0) return vec3(1.0, 0.2, 0.2);
+				if (cascade == 1) return vec3(0.2, 1.0, 0.2);
+				if (cascade == 2) return vec3(0.2, 0.4, 1.0);
+				return vec3(1.0, 1.0, 0.2);
+			}
+			int SelectCascade(float viewDepth)
+			{
+				for (int i = 0; i < u_cascadeCount - 1; ++i)
+					if (viewDepth <= u_cascadeDistances[i + 1]) return i;
+				return max(u_cascadeCount - 1, 0);
+			}
+			float ShadowFactor(vec3 worldPos, vec3 normal)
+			{
+				if (u_cascadeCount <= 0)
+					return 1.0;
+				float viewDepth = max(-(u_View * vec4(worldPos, 1.0)).z, 0.0);
+				int cascade = SelectCascade(viewDepth);
+				vec4 lightClip = u_lightViewProj[cascade] * vec4(worldPos, 1.0);
+				vec3 ndc = lightClip.xyz / lightClip.w;
+				if (any(greaterThan(abs(ndc), vec3(1.0))))
+					return 1.0;
+				vec3 uvz = ndc * 0.5 + 0.5;
+				float bias = max(u_shadowSlopeBias * (1.0 - dot(normal, normalize(-u_lightDir))),
+					u_shadowConstantBias);
+				float visibility = 0.0;
+				vec2 texel = vec2(1.0 / u_shadowMapSize);
+				for (int y = -1; y <= 1; ++y)
+					for (int x = -1; x <= 1; ++x)
+					{
+						float depth = texture(u_shadowMap, vec3(uvz.xy + vec2(x, y) * texel, cascade)).r;
+						visibility += uvz.z - bias > depth ? 0.35 : 1.0;
+					}
+				return visibility / 9.0;
+			}
+			void main()
+			{
+				vec3 n = normalize(v_Normal);
+				gPosition = vec4(v_Position, 1.0);
+				gNormal = vec4(n, 1.0);
+				if (u_debugCascadeView != 0)
+				{
+					int cascade = SelectCascade(max(-(u_View * vec4(v_Position, 1.0)).z, 0.0));
+					color = vec4(CascadeColor(cascade) * 0.85 + vec3(0.05), 1.0);
+					return;
+				}
+
+				vec3 lightDir = normalize(-u_lightDir);
+				vec3 viewDir = normalize(u_viewPos - v_Position);
+				vec3 halfDir = normalize(lightDir + viewDir);
+				float toonAmount = clamp(dot(n, lightDir) + 0.5, 0.0, 1.0);
+				float shadow = ShadowFactor(v_Position, n);
+				toonAmount *= mix(0.45, 1.0, shadow);
+
+				vec4 texColor = u_HasMainTexture != 0 ? texture(u_MainTexture, v_TexCoord) : vec4(1.0);
+				float alpha = u_Alpha * texColor.a;
+				if (alpha <= 0.001)
+					discard;
+
+				vec3 baseColor = clamp(u_Diffuse * u_lightColor + u_Ambient, vec3(0.0), vec3(1.0));
+				baseColor *= texColor.rgb;
+				vec3 toonColor;
+				if (u_HasToonTexture != 0)
+					toonColor = texture(u_ToonTexture, vec2(0.5, 1.0 - toonAmount)).rgb;
+				else
+				{
+					float band = toonAmount > 0.72 ? 1.0 : (toonAmount > 0.42 ? 0.72 : 0.48);
+					toonColor = vec3(band);
+				}
+				vec3 result = baseColor * toonColor;
+				if (u_HasSphereTexture != 0)
+				{
+					vec3 viewNormal = normalize(mat3(u_View) * n);
+					vec3 sphereColor = texture(u_SphereTexture, viewNormal.xy * 0.5 + 0.5).rgb;
+					result = u_SphereMode == 2 ? result + sphereColor : result * sphereColor;
+				}
+				float specularFactor = pow(max(dot(n, halfDir), 0.0), max(u_SpecularPower, 1.0));
+				result += u_Specular * u_lightColor * specularFactor * shadow;
+				color = vec4(result, alpha);
+			}
+		)";
+		Load("DefaultToon", vSource, fSource);
+	}
+
+	{
+		auto vSource = R"(
+			#version 330 core
+			layout(location = 0) in vec3 a_Position;
+			layout(location = 1) in vec3 a_Normal;
+			uniform mat4 u_Model;
+			uniform mat4 u_View;
+			uniform mat4 u_Projection;
+			uniform vec2 u_ScreenSize;
+			uniform float u_EdgeSize;
+			void main()
+			{
+				vec4 worldPos = u_Model * vec4(a_Position, 1.0);
+				vec4 clipPos = u_Projection * u_View * worldPos;
+				vec3 viewNormal = normalize(mat3(transpose(inverse(u_View * u_Model))) * a_Normal);
+				vec2 screenNormal = viewNormal.xy;
+				float normalLength = length(screenNormal);
+				if (normalLength > 0.0001)
+					screenNormal /= normalLength;
+				else
+					screenNormal = vec2(0.0);
+				clipPos.xy += screenNormal * (u_EdgeSize * 2.0 / max(u_ScreenSize, vec2(1.0))) * clipPos.w;
+				gl_Position = clipPos;
+			}
+		)";
+		auto fSource = R"(
+			#version 330 core
+			layout(location = 0) out vec4 color;
+			layout(location = 1) out vec4 gPosition;
+			layout(location = 2) out vec4 gNormal;
+			uniform vec4 u_EdgeColor;
+			void main()
+			{
+				color = u_EdgeColor;
+				gPosition = vec4(0.0);
+				gNormal = vec4(0.0);
+			}
+		)";
+		Load("DefaultToonEdge", vSource, fSource);
+	}
+#pragma endregion
+
 #pragma region pbr_ibl_shader
 	{
 		auto vSource = R"(
@@ -371,14 +556,25 @@ void ShaderLibrary::LoadDefault()
 			uniform int u_HasMetallicMap;
 			uniform int u_HasRoughnessMap;
 			uniform int u_HasAOMap;
+			uniform int u_MetallicMapChannel;
+			uniform int u_RoughnessMapChannel;
+			uniform int u_AOMapChannel;
 			uniform samplerCube u_IrradianceMap;
 			uniform samplerCube u_PrefilterMap;
 			uniform sampler2D u_BRDFLUT;
+			uniform int u_iblEnabled;
+			uniform int u_iblDiffuseEnabled;
+			uniform int u_iblSpecularEnabled;
+			uniform float u_iblDiffuseIntensity;
+			uniform float u_iblSpecularIntensity;
+			uniform int u_pbrDebugMode;
 			uniform int u_cascadeCount;
 			uniform float u_cascadeDistances[4];
 			uniform mat4 u_lightViewProj[4];
 			uniform sampler2DArray u_shadowMap;
 			uniform float u_shadowMapSize;
+			uniform float u_shadowConstantBias;
+			uniform float u_shadowSlopeBias;
 			uniform int u_debugCascadeView;
 			uniform int u_giEnabled;
 			uniform int u_giDebugMode;
@@ -412,7 +608,8 @@ void ShaderLibrary::LoadDefault()
 				if (any(greaterThan(abs(ndc), vec3(1.0))))
 					return 1.0;
 				vec3 uvz = ndc * 0.5 + 0.5;
-				float bias = max(0.005 * (1.0 - dot(normal, normalize(-u_lightDir))), 0.001);
+				float bias = max(u_shadowSlopeBias * (1.0 - dot(normal, normalize(-u_lightDir))),
+					u_shadowConstantBias);
 				float visibility = 0.0;
 				vec2 texel = vec2(1.0 / u_shadowMapSize);
 				for (int y = -1; y <= 1; ++y)
@@ -493,19 +690,37 @@ void ShaderLibrary::LoadDefault()
 				vec3 b = normalize(-cross(n, t));
 				return normalize(mat3(t, b, n) * tangentNormal);
 			}
+			float SampleChannel(sampler2D tex, vec2 uv, int channel)
+			{
+				vec4 value = texture(tex, uv);
+				if (channel == 1) return value.g;
+				if (channel == 2) return value.b;
+				if (channel == 3) return value.a;
+				return value.r;
+			}
 			void main()
 			{
 				vec3 albedo = u_HasAlbedoMap != 0
-					? pow(texture(u_AlbedoMap, v_TexCoord).rgb, vec3(2.2)) : u_Albedo;
+					? pow(texture(u_AlbedoMap, v_TexCoord).rgb, vec3(2.2)) * u_Albedo : u_Albedo;
 				float roughness = clamp(u_HasRoughnessMap != 0
-					? texture(u_RoughnessMap, v_TexCoord).r : u_Roughness, 0.04, 1.0);
+					? SampleChannel(u_RoughnessMap, v_TexCoord, u_RoughnessMapChannel) : u_Roughness, 0.04, 1.0);
 				float metallic = clamp(u_HasMetallicMap != 0
-					? texture(u_MetallicMap, v_TexCoord).r : u_Metallic, 0.0, 1.0);
+					? SampleChannel(u_MetallicMap, v_TexCoord, u_MetallicMapChannel) : u_Metallic, 0.0, 1.0);
 				float ao = clamp(u_HasAOMap != 0
-					? texture(u_AOMap, v_TexCoord).r : u_AO, 0.0, 1.0);
+					? SampleChannel(u_AOMap, v_TexCoord, u_AOMapChannel) : u_AO, 0.0, 1.0);
 				vec3 n = GetNormal();
 				gPosition = vec4(v_Position, 1.0);
 				gNormal = vec4(n, 1.0);
+				if (u_pbrDebugMode == 1)
+				{
+					color = vec4(pow(max(albedo, vec3(0.0)), vec3(1.0 / 2.2)), 1.0);
+					return;
+				}
+				if (u_pbrDebugMode == 2)
+				{
+					color = vec4(n * 0.5 + 0.5, 1.0);
+					return;
+				}
 				if (u_debugCascadeView != 0)
 				{
 					int cascade = SelectCascade(max(-(u_View * vec4(v_Position, 1.0)).z, 0.0));
@@ -530,7 +745,20 @@ void ShaderLibrary::LoadDefault()
 				vec3 diffuse = texture(u_IrradianceMap, n).rgb * albedo;
 				vec3 prefiltered = textureLod(u_PrefilterMap, r, roughness * 4.0).rgb;
 				vec2 brdf = texture(u_BRDFLUT, vec2(ndotv, roughness)).rg;
-				vec3 ambient = (iblKD * diffuse + prefiltered * (iblF * brdf.x + brdf.y)) * ao;
+				vec3 diffuseIBL = iblKD * diffuse * u_iblDiffuseIntensity;
+				vec3 specularIBL = prefiltered * (iblF * brdf.x + brdf.y) * u_iblSpecularIntensity;
+				if (u_iblEnabled == 0 || u_iblDiffuseEnabled == 0)
+					diffuseIBL = vec3(0.0);
+				if (u_iblEnabled == 0 || u_iblSpecularEnabled == 0)
+					specularIBL = vec3(0.0);
+				if (u_pbrDebugMode == 3 || u_pbrDebugMode == 4)
+				{
+					vec3 debugIBL = u_pbrDebugMode == 3 ? diffuseIBL : specularIBL;
+					debugIBL = debugIBL / (debugIBL + vec3(1.0));
+					color = vec4(pow(debugIBL, vec3(1.0 / 2.2)), 1.0);
+					return;
+				}
+				vec3 ambient = (diffuseIBL + specularIBL) * ao;
 				vec3 indirect = SampleProbeGI(v_Position, n, albedo, metallic);
 				if (u_giDebugMode == 1)
 				{
@@ -584,6 +812,7 @@ void ShaderLibrary::LoadDefault()
 			uniform mat4 u_lightViewProj[4];
 			uniform sampler2DArray u_shadowMap;
 			uniform float u_shadowMapSize;
+			uniform float u_shadowConstantBias;
 			uniform int u_debugCascadeView;
 
 			vec3 CascadeColor(int cascade)
@@ -628,7 +857,7 @@ void ShaderLibrary::LoadDefault()
 				    lightNDC.y < -1.0 || lightNDC.y > 1.0 ||
 				    lightNDC.z < -1.0 || lightNDC.z > 1.0) return 1.0;
 				vec3 uvz = lightNDC * 0.5 + 0.5;
-				float bias = 0.002;
+				float bias = u_shadowConstantBias;
 				return ShadowVisibility(uvz, cascade, bias);
 			}
 

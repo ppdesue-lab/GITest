@@ -275,6 +275,21 @@ void PBRIBL::BuildEnvironment(const std::string& hdrPath)
     glVertexArrayAttribBinding(m_CubeVAO, 0, 0);
     glCreateVertexArrays(1, &m_QuadVAO);
     glCreateFramebuffers(1, &m_CaptureFBO);
+    glNamedFramebufferDrawBuffer(m_CaptureFBO, GL_COLOR_ATTACHMENT0);
+    glNamedFramebufferReadBuffer(m_CaptureFBO, GL_COLOR_ATTACHMENT0);
+
+    const GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+    const GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+
+    auto checkCaptureFramebuffer = [&](const char* pass)
+    {
+        if (glCheckNamedFramebufferStatus(m_CaptureFBO, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            ERROR("PBR IBL framebuffer incomplete during {} pass", pass);
+    };
 
     glm::mat4 projection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
     const glm::mat4 views[] = {
@@ -339,6 +354,8 @@ void PBRIBL::BuildEnvironment(const std::string& hdrPath)
     for (uint32_t face = 0; face < 6; ++face)
     {
         glNamedFramebufferTextureLayer(m_CaptureFBO, GL_COLOR_ATTACHMENT0, m_EnvironmentMap, 0, face);
+        if (face == 0)
+            checkCaptureFramebuffer("environment");
         envShader->SetMat4("u_View", views[face]);
         glDrawArrays(GL_TRIANGLES, 0, 36);
     }
@@ -361,6 +378,8 @@ void PBRIBL::BuildEnvironment(const std::string& hdrPath)
     for (uint32_t face = 0; face < 6; ++face)
     {
         glNamedFramebufferTextureLayer(m_CaptureFBO, GL_COLOR_ATTACHMENT0, m_IrradianceMap, 0, face);
+        if (face == 0)
+            checkCaptureFramebuffer("irradiance");
         irradianceShader->SetMat4("u_View", views[face]);
         glDrawArrays(GL_TRIANGLES, 0, 36);
     }
@@ -386,6 +405,8 @@ void PBRIBL::BuildEnvironment(const std::string& hdrPath)
         for (uint32_t face = 0; face < 6; ++face)
         {
             glNamedFramebufferTextureLayer(m_CaptureFBO, GL_COLOR_ATTACHMENT0, m_PrefilterMap, mip, face);
+            if (mip == 0 && face == 0)
+                checkCaptureFramebuffer("prefilter");
             prefilterShader->SetMat4("u_View", views[face]);
             glDrawArrays(GL_TRIANGLES, 0, 36);
         }
@@ -399,12 +420,28 @@ void PBRIBL::BuildEnvironment(const std::string& hdrPath)
     glTextureParameteri(m_BRDFLUT, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     auto brdfShader = Shader::Create("PBRBRDFLUT", s_QuadVertex, s_BRDFFragment);
     glNamedFramebufferTexture(m_CaptureFBO, GL_COLOR_ATTACHMENT0, m_BRDFLUT, 0);
+    checkCaptureFramebuffer("BRDF LUT");
     glViewport(0, 0, 512, 512);
     glBindVertexArray(m_QuadVAO);
     brdfShader->Bind();
+    const float emptyBRDF[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    glClearBufferfv(GL_COLOR, 0, emptyBRDF);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+    std::vector<glm::vec2> brdfValues(512u * 512u);
+    glGetTextureImage(m_BRDFLUT, 0, GL_RG, GL_FLOAT,
+        static_cast<GLsizei>(brdfValues.size() * sizeof(glm::vec2)), brdfValues.data());
+    float maxBRDF = 0.0f;
+    for (const auto& value : brdfValues)
+        maxBRDF = glm::max(maxBRDF, glm::max(value.x, value.y));
+    if (maxBRDF <= 0.0f)
+        ERROR("PBR BRDF LUT generation produced only zeros");
+    else
+        INFO("Generated PBR BRDF LUT, maximum value: {}", maxBRDF);
     glBindVertexArray(0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (depthTestEnabled) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (blendEnabled) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    if (cullFaceEnabled) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
 #else
     (void)hdrPath;
 #endif
@@ -418,6 +455,12 @@ void PBRIBL::Bind(const Ref<Shader>& shader) const
     shader->SetInt("u_IrradianceMap", 3);
     shader->SetInt("u_PrefilterMap", 4);
     shader->SetInt("u_BRDFLUT", 5);
+    shader->SetInt("u_iblEnabled", m_Enabled ? 1 : 0);
+    shader->SetInt("u_iblDiffuseEnabled", m_DiffuseEnabled ? 1 : 0);
+    shader->SetInt("u_iblSpecularEnabled", m_SpecularEnabled ? 1 : 0);
+    shader->SetFloat("u_iblDiffuseIntensity", m_DiffuseIntensity);
+    shader->SetFloat("u_iblSpecularIntensity", m_SpecularIntensity);
+    shader->SetInt("u_pbrDebugMode", m_DebugMode);
     glBindTextureUnit(3, m_IrradianceMap);
     glBindTextureUnit(4, m_PrefilterMap);
     glBindTextureUnit(5, m_BRDFLUT);

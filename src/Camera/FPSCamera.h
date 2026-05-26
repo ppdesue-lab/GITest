@@ -41,7 +41,7 @@ public:
     void setFOV(float fov);
     float getFOV() const;
     
-    void setAspectRatio(float aspectRatio);
+    void setAspectRatio(float aspectRatio) override;
     float getAspectRatio() const;
     
     void setNearPlane(float nearPlane);

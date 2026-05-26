@@ -8,6 +8,7 @@ public:
 	virtual ~Camera() = default;
 	virtual glm::mat4 GetViewMatrix() const = 0;
 	virtual glm::mat4 GetProjectionMatrix() const = 0;
+	virtual void setAspectRatio(float aspectRatio) = 0;
 	virtual void setInputEnabled(bool enabled) = 0;
 	virtual bool isInputEnabled() const = 0;
 

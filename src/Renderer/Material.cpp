@@ -3,6 +3,10 @@
 
 #include "Application.h"
 
+#ifdef G_OPENGL
+#include <glad/glad.h>
+#endif
+
 MaterialColor::MaterialColor(const glm::vec3& color) :
     Material(), Color(color) {
     
@@ -53,11 +57,68 @@ void MaterialPBR::Bind()
     MatShader->SetInt("u_HasMetallicMap", MetallicMap ? 1 : 0);
     MatShader->SetInt("u_HasRoughnessMap", RoughnessMap ? 1 : 0);
     MatShader->SetInt("u_HasAOMap", AOMap ? 1 : 0);
+    MatShader->SetInt("u_MetallicMapChannel", MetallicMapChannel);
+    MatShader->SetInt("u_RoughnessMapChannel", RoughnessMapChannel);
+    MatShader->SetInt("u_AOMapChannel", AOMapChannel);
     if (AlbedoMap) AlbedoMap->Bind(6);
     if (NormalMap) NormalMap->Bind(7);
     if (MetallicMap) MetallicMap->Bind(8);
     if (RoughnessMap) RoughnessMap->Bind(9);
     if (AOMap) AOMap->Bind(10);
+#ifdef G_OPENGL
+    // Clear unused slots so missing-map materials cannot retain textures from a previous draw.
+    if (!AlbedoMap) glBindTextureUnit(6, 0);
+    if (!NormalMap) glBindTextureUnit(7, 0);
+    if (!MetallicMap) glBindTextureUnit(8, 0);
+    if (!RoughnessMap) glBindTextureUnit(9, 0);
+    if (!AOMap) glBindTextureUnit(10, 0);
+#endif
+}
+
+ToonMaterial::ToonMaterial()
+    : Material()
+{
+    MatShader = Application::Get().GetShaderLibrary()->Get("DefaultToon");
+    m_EdgeShader = Application::Get().GetShaderLibrary()->Get("DefaultToonEdge");
+}
+
+void ToonMaterial::Bind()
+{
+    Material::Bind();
+    MatShader->SetFloat3("u_Diffuse", Diffuse);
+    MatShader->SetFloat3("u_Ambient", Ambient);
+    MatShader->SetFloat3("u_Specular", Specular);
+    MatShader->SetFloat("u_SpecularPower", glm::max(SpecularPower, 1.0f));
+    MatShader->SetFloat("u_Alpha", glm::clamp(Alpha, 0.0f, 1.0f));
+    MatShader->SetInt("u_MainTexture", 6);
+    MatShader->SetInt("u_SphereTexture", 7);
+    MatShader->SetInt("u_ToonTexture", 8);
+    MatShader->SetInt("u_HasMainTexture", MainTexture ? 1 : 0);
+    MatShader->SetInt("u_HasSphereTexture", SphereTexture && SphereMode != 0 ? 1 : 0);
+    MatShader->SetInt("u_SphereMode", SphereMode);
+    MatShader->SetInt("u_HasToonTexture", ToonTexture ? 1 : 0);
+    if (MainTexture) MainTexture->Bind(6);
+    if (SphereTexture && SphereMode != 0) SphereTexture->Bind(7);
+    if (ToonTexture) ToonTexture->Bind(8);
+#ifdef G_OPENGL
+    if (!MainTexture) glBindTextureUnit(6, 0);
+    if (!SphereTexture || SphereMode == 0) glBindTextureUnit(7, 0);
+    if (!ToonTexture) glBindTextureUnit(8, 0);
+#endif
+}
+
+void ToonMaterial::BindEdge(const glm::mat4& view, const glm::mat4& projection,
+    const glm::mat4& model, const glm::vec2& screenSize)
+{
+    if (!m_EdgeShader)
+        return;
+    m_EdgeShader->Bind();
+    m_EdgeShader->SetMat4("u_View", view);
+    m_EdgeShader->SetMat4("u_Projection", projection);
+    m_EdgeShader->SetMat4("u_Model", model);
+    m_EdgeShader->SetFloat2("u_ScreenSize", screenSize);
+    m_EdgeShader->SetFloat("u_EdgeSize", EdgeSize);
+    m_EdgeShader->SetFloat4("u_EdgeColor", EdgeColor);
 }
 
 MaterialMatcap::MaterialMatcap(const std::string& texpath, const glm::vec3& color)

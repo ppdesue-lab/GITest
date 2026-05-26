@@ -73,6 +73,8 @@ void CSM::BeginShadowPass(uint32_t cascadeIndex)
     glViewport(0, 0, m_ShadowMapSize, m_ShadowMapSize);
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(m_PolygonOffsetFactor, m_PolygonOffsetUnits);
     glClear(GL_DEPTH_BUFFER_BIT);
 #endif
 }
@@ -80,6 +82,7 @@ void CSM::BeginShadowPass(uint32_t cascadeIndex)
 void CSM::EndShadowPass()
 {
 #ifdef G_OPENGL
+    glDisable(GL_POLYGON_OFFSET_FILL);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 #endif
 }

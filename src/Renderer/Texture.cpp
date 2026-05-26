@@ -11,7 +11,6 @@ std::unordered_map<std::string, Ref<Texture>> TextureLibrary::s_Textures;
 
 Ref<Texture> TextureLibrary::GetTexture(const std::string& filepath)
 {
-    
 	auto it = s_Textures.find(filepath);
 	if (it != s_Textures.end())
 		return it->second;
@@ -23,6 +22,18 @@ Ref<Texture> TextureLibrary::GetTexture(const std::string& filepath)
 		ERROR("{} not exist!", filepath);
 		return nullptr;//not exist
 	}
+
+	return GetTexture(filepath, img);
+};
+
+Ref<Texture> TextureLibrary::GetTexture(const std::string& name, const Ref<Image>& image)
+{
+	auto it = s_Textures.find(name);
+	if (it != s_Textures.end())
+		return it->second;
+	if (!image)
+		return nullptr;
+
 	Ref<Texture> tex;
 
 	switch (Renderer::GetAPI())
@@ -30,11 +41,11 @@ Ref<Texture> TextureLibrary::GetTexture(const std::string& filepath)
 	case Renderer::API::None:
 		throw std::string("not implement!");
 	case Renderer::API::OpenGL:
-		tex = CreateRef<OpenGLTexture>(img);
+		tex = CreateRef<OpenGLTexture>(image);
 		break;
 #ifdef G_DX11
 	case Renderer::API::DX11:
-		tex = CreateRef<DX11Texture>(img);
+		tex = CreateRef<DX11Texture>(image);
 		break;
 #endif
 
@@ -42,7 +53,7 @@ Ref<Texture> TextureLibrary::GetTexture(const std::string& filepath)
 
 	if (tex)
 	{
-		s_Textures[filepath] = tex;
+		s_Textures[name] = tex;
 	}
 
 	return tex;
