@@ -42,12 +42,12 @@ public:
         }
 
         // Load second object at origin
-        auto monkey = Application::Get().LoadObject3D("D:/Untitled.obj");
-        if (monkey && !monkey->Meshes.empty())
-        {
-            auto& t = monkey->Meshes[0]->Transfm;
-            t.translation = glm::vec3(0.0f, 0.0f, 0.0f);
-        }
+        //auto monkey = Application::Get().LoadObject3D("D:/Untitled.obj");
+        //if (monkey && !monkey->Meshes.empty())
+        //{
+        //    auto& t = monkey->Meshes[0]->Transfm;
+        //    t.translation = glm::vec3(0.0f, 0.0f, 0.0f);
+        //}
 
         Application& app = Application::Get();
         fbo = FrameBuffer::Create(FrameBufferSpecification{ app.GetWindow().GetWidth(),app.GetWindow().GetHeight(),

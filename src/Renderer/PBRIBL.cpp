@@ -258,6 +258,9 @@ PBRIBL::~PBRIBL()
 void PBRIBL::BuildEnvironment(const std::string& hdrPath)
 {
 #ifdef G_OPENGL
+    // This cubemap is shown directly as the raster viewport background, so it
+    // needs substantially more detail than the convolution maps used for IBL.
+    const uint32_t environmentResolution = hdrPath.empty() ? 128u : 1024u;
     const float cubeVertices[] = {
         -1,-1,-1,  1,-1,-1,  1, 1,-1,  1, 1,-1, -1, 1,-1, -1,-1,-1,
         -1,-1, 1,  1,-1, 1,  1, 1, 1,  1, 1, 1, -1, 1, 1, -1,-1, 1,
@@ -302,7 +305,7 @@ void PBRIBL::BuildEnvironment(const std::string& hdrPath)
     };
 
     glCreateTextures(GL_TEXTURE_CUBE_MAP, 1, &m_EnvironmentMap);
-    glTextureStorage2D(m_EnvironmentMap, 1, GL_RGB16F, 128, 128);
+    glTextureStorage2D(m_EnvironmentMap, 1, GL_RGB16F, environmentResolution, environmentResolution);
     glTextureParameteri(m_EnvironmentMap, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTextureParameteri(m_EnvironmentMap, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTextureParameteri(m_EnvironmentMap, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -349,7 +352,7 @@ void PBRIBL::BuildEnvironment(const std::string& hdrPath)
         envShader->SetVec3Array("u_SHCoeffs", (float*)&s_SHCoeffs[0].x, 9);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, m_CaptureFBO);
-    glViewport(0, 0, 128, 128);
+    glViewport(0, 0, environmentResolution, environmentResolution);
     glBindVertexArray(m_CubeVAO);
     for (uint32_t face = 0; face < 6; ++face)
     {

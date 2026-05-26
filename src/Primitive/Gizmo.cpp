@@ -1164,10 +1164,11 @@ static void GizmoHandleInput(const GizmoData* data,bool leftdown,glm::vec2 mouse
 				break;
 			case GZ_ACTION_ROTATE:
 				{
+					constexpr float rotationSensitivity = 0.1f;
 					GIZMO.activeTransform->rotation = GIZMO.startTransform.rotation;
 					//SetMouseCursor(MOUSE_CURSOR_RESIZE_EW);
 					const float delta = glm::clamp(glm::dot(pVec, (data->right +  data->up)), -glm::pi<float>()*2.f,
-					                          +glm::pi<float>() * 2.f);
+					                          +glm::pi<float>() * 2.f) * rotationSensitivity;
 					if (GIZMO.activeAxis & GZ_ACTIVE_X)
 					{
 						const glm::quat q = glm::angleAxis(delta, data->axis[GZ_AXIS_X]);// QuaternionFromAxisAngle(data->axis[GZ_AXIS_X], delta);

@@ -1,5 +1,6 @@
 #include "stdsfx.h"
 #include "Object3D.h"
+#include <Importer/StepLoader.h>
 #include <Renderer/RenderCommand.h>
 
 #include <functional>
@@ -76,6 +77,30 @@ void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& pa
 	if (toon)
 		glDisable(GL_CULL_FACE);
 #endif
+	if (ShowEdges && EdgeVertexObject && EdgeVertexCount > 0 &&
+		Application::Get().GetAppMode() == Application::AppMode::Editor)
+	{
+		auto edgeShader = Application::Get().GetShaderLibrary()->Get("DefaultColor");
+		edgeShader->Bind();
+		edgeShader->SetMat4("u_View", view);
+		edgeShader->SetMat4("u_Projection", proj);
+		edgeShader->SetMat4("u_Model", model);
+		RenderCommand::EnableDepthTest(true);
+		RenderCommand::SetLineWidth(2.0f);
+		// Give coplanar STEP curves a tiny forward bias while retaining the
+		// depth test, so unrelated geometry in front still occludes them.
+		RenderCommand::SetDepthRange(0.0f, 1.0);
+#ifdef G_OPENGL
+		// Edges share the tessellated surface depth: accept equal fragments but
+		// retain depth testing against geometry in front of the STEP model.
+		glDepthFunc(GL_LEQUAL);
+#endif
+		RenderCommand::DrawLines(EdgeVertexObject, EdgeVertexCount);
+#ifdef G_OPENGL
+		glDepthFunc(GL_LESS);
+#endif
+		RenderCommand::SetDepthRange(0.0f, 1.0f);
+	}
 };
 
 void Object3D::Draw(const glm::mat4& view,const glm::mat4 proj)
@@ -112,6 +137,58 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 	if (!hint.empty() && hint[0] == '.') hint = hint.substr(1);
 	std::transform(hint.begin(), hint.end(), hint.begin(),
 		[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+	if constexpr (std::is_same_v<T, VertexNormalTexture>)
+	{
+		if (hint == "step" || hint == "stp")
+		{
+			StepMeshData stepMesh;
+			if (!StepLoader::Load(filepath, stepMesh))
+			{
+				ERROR("Failed to import STEP model {}: {}", filepath.u8string(), stepMesh.Error);
+				return false;
+			}
+
+			Meshes.clear();
+			Ref<Mesh> mesh = CreateRef<Mesh>();
+			mesh->VertexObject = VertexArray::Create();
+			auto vbuffer = VertexBuffer::Create(reinterpret_cast<float*>(stepMesh.Vertices.data()),
+				stepMesh.Vertices.size() * sizeof(VertexNormalTexture));
+			vbuffer->SetLayout({
+				BufferElement(ShaderDataType::Float3, "a_Position", false),
+				BufferElement(ShaderDataType::Float3, "a_Normal", false),
+				BufferElement(ShaderDataType::Float2, "a_TexCoord", false)
+			});
+			mesh->VertexObject->AddVertexBuffer(vbuffer);
+			mesh->VertexObject->SetIndexBuffer(IndexBuffer::Create(stepMesh.Indices.data(), stepMesh.Indices.size()));
+			mesh->VertexObject->Unbind();
+			mesh->Mat = CreateRef<MaterialPBR>();
+			mesh->TraceVertices = std::move(stepMesh.Vertices);
+			mesh->TraceIndices = std::move(stepMesh.Indices);
+			mesh->EdgeVertices = std::move(stepMesh.EdgeVertices);
+			mesh->ShowEdges = true;
+			if (!mesh->EdgeVertices.empty())
+			{
+				std::vector<LineVertex> edgeVertices;
+				edgeVertices.reserve(mesh->EdgeVertices.size());
+				for (const glm::vec3& position : mesh->EdgeVertices)
+					edgeVertices.push_back({ position, glm::vec4(0.02f, 0.02f, 0.02f, 1.0f) });
+
+				mesh->EdgeVertexObject = VertexArray::Create();
+				auto edgeBuffer = VertexBuffer::Create(reinterpret_cast<float*>(edgeVertices.data()),
+					edgeVertices.size() * sizeof(LineVertex));
+				edgeBuffer->SetLayout({
+					BufferElement(ShaderDataType::Float3, "a_Position", false),
+					BufferElement(ShaderDataType::Float4, "a_Color", false)
+				});
+				mesh->EdgeVertexObject->AddVertexBuffer(edgeBuffer);
+				mesh->EdgeVertexObject->Unbind();
+				mesh->EdgeVertexCount = static_cast<uint32_t>(edgeVertices.size());
+			}
+			Meshes.push_back(mesh);
+			return true;
+		}
+	}
 
 	const bool flipPMXTextureUVY = hint == "pmx";
 	unsigned int flags = aiProcess_Triangulate | aiProcess_GenNormals;

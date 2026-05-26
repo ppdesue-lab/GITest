@@ -10,6 +10,24 @@ set(KENGINE_RENDERER_API "OpenGL" CACHE STRING "Renderer backend: OpenGL or DX11
 
 set(KENGINE_OPENCL_ROOT "D:/lib/opencl" CACHE PATH "OpenCL SDK root used by the path tracer")
 set(KENGINE_OPENCL_LIBRARY "${KENGINE_OPENCL_ROOT}/lib/x86_64/OpenCL.lib")
+set(KENGINE_OCCT_ROOT "D:/gitclones/CarveraCAM/thirdparty/occt" CACHE PATH "OpenCASCADE installation used by the STEP loader")
+set(KENGINE_OCCT_AUX_RUNTIME_DIR "D:/soft/Mayo-0.9.0-win64-binaries" CACHE PATH "Directory containing auxiliary DLLs required by this OCCT build")
+set(KENGINE_OCCT_LIB_DIR "${KENGINE_OCCT_ROOT}/win64/vc14/lib")
+set(KENGINE_OCCT_LIBRARIES
+  "${KENGINE_OCCT_LIB_DIR}/TKernel.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKMath.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKG2d.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKG3d.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKGeomBase.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKBRep.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKGeomAlgo.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKTopAlgo.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKShHealing.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKMesh.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKDE.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKXSBase.lib"
+  "${KENGINE_OCCT_LIB_DIR}/TKDESTEP.lib"
+)
 
 file(GLOB_RECURSE SRC_FILES *.cpp *.h)
 
@@ -117,6 +135,7 @@ set(third_party_libs
   spdlog
   libimgui
   ${KENGINE_OPENCL_LIBRARY}
+  ${KENGINE_OCCT_LIBRARIES}
 #  Vulkan::Vulkan
 #C:/VulkanSDK/1.3.275.0/Lib/shaderc_shared.lib
 #C:/VulkanSDK/1.3.275.0/Lib/spirv-cross-core.lib
@@ -134,6 +153,7 @@ set(all_includes
     ${tinybvh_SOURCE_DIR}
     ${KENGINE_OPENCL_ROOT}/include
     ${KENGINE_OPENCL_ROOT}/include/CL
+    ${KENGINE_OCCT_ROOT}/inc
 )
 
 set(all_compiler_definitions 

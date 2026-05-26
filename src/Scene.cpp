@@ -189,6 +189,12 @@ Transform* Scene::GetSelectedTransform()
 {
     Entry* entry = GetSelectedEntry();
     if (entry && entry->Object)
+    {
+        // A single-mesh asset has no separate hierarchy node exposed in the editor.
+        // Bind its visible mesh transform so programmatic mesh placement and the gizmo agree.
+        if (entry->Object->Meshes.size() == 1 && entry->Object->Meshes[0])
+            return &entry->Object->Meshes[0]->Transfm;
         return &entry->Object->Transfm;
+    }
     return nullptr;
 }

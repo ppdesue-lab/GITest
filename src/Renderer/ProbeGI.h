@@ -32,7 +32,7 @@ private:
     void Rebuild();
 
     bool m_Enabled = true;
-    bool m_ShowProbes = true;
+    bool m_ShowProbes = false;
     float m_Intensity = 0.85f;
     int m_DebugMode = 0;
     glm::vec3 m_Origin = glm::vec3(-30.0f, 3.0f, -30.0f);

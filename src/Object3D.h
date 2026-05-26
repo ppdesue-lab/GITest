@@ -19,8 +19,12 @@ public:
     Ref<Material> Mat;
     Transform Transfm;
     Ref<VertexArray> VertexObject = nullptr;
+    Ref<VertexArray> EdgeVertexObject = nullptr;
+    uint32_t EdgeVertexCount = 0;
     std::vector<VertexNormalTexture> TraceVertices;
     std::vector<uint32_t> TraceIndices;
+    std::vector<glm::vec3> EdgeVertices;
+    bool ShowEdges = false;
 };
 
 class Object3D

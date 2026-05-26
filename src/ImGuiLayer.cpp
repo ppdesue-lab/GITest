@@ -538,6 +538,28 @@ void ImGuiLayer::DrawPropertiesPanel()
             ImGui::SliderFloat("Roughness", &pbr->Roughness, 0.04f, 1.0f, "%.2f");
             ImGui::SliderFloat("Material AO", &pbr->AmbientOcclusion, 0.0f, 1.0f, "%.2f");
         }
+        Ref<Mesh> edgeMesh;
+        for (const auto& mesh : selectedEntry->Object->Meshes)
+        {
+            if (mesh && !mesh->EdgeVertices.empty())
+            {
+                edgeMesh = mesh;
+                break;
+            }
+        }
+        if (edgeMesh)
+        {
+            ImGui::SeparatorText("STEP Display");
+            const bool showEdges = edgeMesh->ShowEdges;
+            if (ImGui::Button(showEdges ? "Hide Edges" : "Show Edges"))
+            {
+                for (const auto& mesh : selectedEntry->Object->Meshes)
+                {
+                    if (mesh && !mesh->EdgeVertices.empty())
+                        mesh->ShowEdges = !showEdges;
+                }
+            }
+        }
         Ref<ToonMaterial> toon = std::dynamic_pointer_cast<ToonMaterial>(selectedEntry->Object->Meshes[0]->Mat);
         if (toon)
         {
@@ -697,7 +719,8 @@ void ImGuiLayer::DrawContentBrowser()
 
             bool isModel = (extension == ".obj" || extension == ".stl" || extension == ".ply" ||
                            extension == ".gltf" || extension == ".glb" ||
-                           extension == ".pmx" || extension == ".pmd");
+                           extension == ".pmx" || extension == ".pmd" ||
+                           extension == ".step" || extension == ".stp");
             if (isModel)
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 1.0f, 1.0f));
 
@@ -816,7 +839,7 @@ void ImGuiLayer::OpenModelFile()
         "Open 3D Model",
         "",
         {
-            "3D Model Files", "*.obj *.stl *.ply *.gltf *.glb *.pmx *.pmd",
+            "3D Model Files", "*.obj *.stl *.ply *.gltf *.glb *.pmx *.pmd *.step *.stp",
             "All Files", "*"
         }).result();
 
@@ -852,7 +875,8 @@ bool ImGuiLayer::IsSupportedModelFile(const std::filesystem::path& filepath) con
 
     return extension == ".obj" || extension == ".stl" || extension == ".ply" ||
            extension == ".gltf" || extension == ".glb" ||
-           extension == ".pmx" || extension == ".pmd";
+           extension == ".pmx" || extension == ".pmd" ||
+           extension == ".step" || extension == ".stp";
 }
 
 void ImGuiLayer::OnEvent(Event& event)
