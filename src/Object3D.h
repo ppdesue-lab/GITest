@@ -8,6 +8,13 @@
 
 #include <Renderer/VertexDesc.h>
 
+struct BoundingSphere
+{
+    glm::vec3 Center = glm::vec3(0.0f);
+    float Radius = 0.0f;
+    bool Valid = false;
+};
+
 class Mesh
 {
 public:
@@ -15,6 +22,7 @@ public:
 
     virtual void Draw(const glm::mat4& view, const glm::mat4 proj,
         const glm::mat4& parentTransform = glm::mat4(1.0f));
+    void UpdateBoundingSphere();
     
     Ref<Material> Mat;
     Transform Transfm;
@@ -25,6 +33,7 @@ public:
     std::vector<uint32_t> TraceIndices;
     std::vector<glm::vec3> EdgeVertices;
     bool ShowEdges = false;
+    BoundingSphere Bounds;
 };
 
 class Object3D
@@ -37,9 +46,12 @@ public:
     template<typename T>
     bool LoadFromPath(const std::filesystem::path& filepath);
     virtual void Draw(const glm::mat4& view,const glm::mat4 proj);
+    void UpdateBoundingSphere();
+    BoundingSphere GetWorldBoundingSphere() const;
 
     Transform Transfm;
 	std::vector<Ref<Mesh>> Meshes;
+    BoundingSphere Bounds;
 };
 
 extern template bool Object3D::Load<VertexColor>(const std::string& filepath);

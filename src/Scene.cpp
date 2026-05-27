@@ -119,6 +119,7 @@ ScenePlane::ScenePlane(float size)
 int Scene::AddObjectRaw(const Ref<Object3D>& object, const std::string& name, const std::string& filepath)
 {
     if (!object) return -1;
+    object->UpdateBoundingSphere();
     Entry entry;
     entry.Object = object;
     entry.Name = name.empty() ? ("Object " + std::to_string(m_Objects.size())) : name;

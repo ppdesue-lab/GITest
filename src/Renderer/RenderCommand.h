@@ -73,6 +73,21 @@ public:
         s_RendererAPI->SetLineWidth(width);
     }
 
+    static void Enable(const std::string& capability)
+    {
+        s_RendererAPI->Enable(capability);
+    }
+
+    static void Disable(const std::string& capability)
+    {
+        s_RendererAPI->Disable(capability);
+    }
+
+    static void Cull(const std::string& face)
+    {
+        s_RendererAPI->Cull(face);
+    }
+
     static void EnableDepthTest(bool enable)
     {
         s_RendererAPI->EnableDepthTest(enable);

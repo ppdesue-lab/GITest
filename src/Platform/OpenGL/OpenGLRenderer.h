@@ -18,6 +18,9 @@ public:
 
     virtual void SetLineWidth(float width) override;
 
+    virtual void Enable(const std::string& capability) override;
+    virtual void Disable(const std::string& capability) override;
+    virtual void Cull(const std::string& face) override;
 	virtual void EnableDepthTest(bool enable) override;
     virtual void SetDepthRange(float min = 0.0f, float max = 1.0f) override;
 

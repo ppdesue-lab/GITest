@@ -12,9 +12,16 @@ public:
 	void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) override;
 	void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount) override;
 	void SetLineWidth(float width) override;
+	void Enable(const std::string& capability) override;
+	void Disable(const std::string& capability) override;
+	void Cull(const std::string& face) override;
 	void EnableDepthTest(bool enable) override;
 	void SetDepthRange(float min = 0.0f, float max = 1.0f) override;
 
 private:
+	void ApplyRasterizerState();
+
 	glm::vec4 m_ClearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+	bool m_CullEnabled = false;
+	std::string m_CullFace = "Back";
 };

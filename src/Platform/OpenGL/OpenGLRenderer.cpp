@@ -2,6 +2,18 @@
 
 #include <glad/glad.h>
 
+namespace
+{
+GLenum ResolveCapability(const std::string& capability)
+{
+	if (capability == "BLEND") return GL_BLEND;
+	if (capability == "CULL_FACE") return GL_CULL_FACE;
+	if (capability == "DEPTH_TEST") return GL_DEPTH_TEST;
+	if (capability == "LINE_SMOOTH") return GL_LINE_SMOOTH;
+	if (capability == "POLYGON_OFFSET_FILL") return GL_POLYGON_OFFSET_FILL;
+	return 0;
+}
+}
 
 void OpenGLRenderer::Init()
 {
@@ -51,12 +63,36 @@ void OpenGLRenderer::SetLineWidth(float width)
 	glLineWidth(width);
 }
 
+void OpenGLRenderer::Enable(const std::string& capability)
+{
+	const GLenum value = ResolveCapability(capability);
+	if (value != 0)
+		glEnable(value);
+}
+
+void OpenGLRenderer::Disable(const std::string& capability)
+{
+	const GLenum value = ResolveCapability(capability);
+	if (value != 0)
+		glDisable(value);
+}
+
+void OpenGLRenderer::Cull(const std::string& face)
+{
+	if (face == "Front")
+		glCullFace(GL_FRONT);
+	else if (face == "Back")
+		glCullFace(GL_BACK);
+	else if (face == "FrontAndBack")
+		glCullFace(GL_FRONT_AND_BACK);
+}
+
 void OpenGLRenderer::EnableDepthTest(bool enable)
 {
 	if (enable)
-		glEnable(GL_DEPTH_TEST);
+		Enable("DEPTH_TEST");
 	else
-		glDisable(GL_DEPTH_TEST);
+		Disable("DEPTH_TEST");
 }
 
 void OpenGLRenderer::SetDepthRange(float min, float max)

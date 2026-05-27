@@ -2,6 +2,7 @@
 
 #include <glm/glm.hpp>
 #include <base.h>
+#include <string>
 #include "VertexArray.h"
 #include "Shader.h"
 
@@ -30,6 +31,9 @@ public:
 
 	virtual void SetLineWidth(float width) = 0;
 
+    virtual void Enable(const std::string& capability) = 0;
+    virtual void Disable(const std::string& capability) = 0;
+    virtual void Cull(const std::string& face) = 0;
 	virtual void EnableDepthTest(bool enable) = 0;
     virtual void SetDepthRange(float min = 0.0f, float max = 1.0f) = 0;
 

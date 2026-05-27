@@ -2,6 +2,7 @@
 #include "Application.h"
 #include "ImGuiLayer.h"
 #include <ApplicationEvent.h>
+#include <array>
 #include <filesystem>
 #include <chrono>
 #ifdef G_OPENGL
@@ -17,6 +18,47 @@
 #include "Camera/FPSCamera.h"
 
 #include <Primitive/Gizmo.h>
+
+namespace
+{
+class Frustum
+{
+public:
+    explicit Frustum(const glm::mat4& viewProjection)
+    {
+        const glm::mat4 rows = glm::transpose(viewProjection);
+        m_Planes = {
+            rows[3] + rows[0],
+            rows[3] - rows[0],
+            rows[3] + rows[1],
+            rows[3] - rows[1],
+            rows[3] + rows[2],
+            rows[3] - rows[2]
+        };
+        for (glm::vec4& plane : m_Planes)
+        {
+            const float normalLength = glm::length(glm::vec3(plane));
+            if (normalLength > 0.000001f)
+                plane /= normalLength;
+        }
+    }
+
+    bool Intersects(const BoundingSphere& sphere) const
+    {
+        if (!sphere.Valid)
+            return true;
+        for (const glm::vec4& plane : m_Planes)
+        {
+            if (glm::dot(glm::vec3(plane), sphere.Center) + plane.w < -sphere.Radius)
+                return false;
+        }
+        return true;
+    }
+
+private:
+    std::array<glm::vec4, 6> m_Planes;
+};
+}
 
 
 Application* Application::s_Instance = nullptr;
@@ -209,9 +251,11 @@ void Application::Run()
         for (auto& layer : m_LayerStack)
             layer->OnUpdate();
 
-        // Draw all visible objects in the scene
+        // Draw visible objects intersecting the active camera frustum.
+        const Frustum cameraFrustum(m_Camera->GetProjectionMatrix() * m_Camera->GetViewMatrix());
         for (const auto& entry : m_Scene.GetObjects())
-            if (entry.Visible)
+            if (entry.Visible && entry.Object &&
+                cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
                 entry.Object->Draw(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix());
 
             if (m_AppMode == AppMode::Editor)

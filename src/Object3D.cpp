@@ -6,12 +6,75 @@
 #include <functional>
 #include <fstream>
 #include <cctype>
+#include <algorithm>
+#include <limits>
 
 #include "Application.h"
 
-#ifdef G_OPENGL
-#include <glad/glad.h>
-#endif
+namespace
+{
+BoundingSphere TransformBoundingSphere(const BoundingSphere& sphere, const glm::mat4& transform)
+{
+	if (!sphere.Valid)
+		return {};
+
+	BoundingSphere transformed = sphere;
+	transformed.Center = glm::vec3(transform * glm::vec4(sphere.Center, 1.0f));
+	const float maximumScale = std::max({
+		glm::length(glm::vec3(transform[0])),
+		glm::length(glm::vec3(transform[1])),
+		glm::length(glm::vec3(transform[2]))
+	});
+	transformed.Radius *= maximumScale;
+	return transformed;
+}
+
+void MergeBoundingSphere(BoundingSphere& aggregate, const BoundingSphere& sphere)
+{
+	if (!sphere.Valid)
+		return;
+	if (!aggregate.Valid)
+	{
+		aggregate = sphere;
+		return;
+	}
+
+	const glm::vec3 offset = sphere.Center - aggregate.Center;
+	const float distance = glm::length(offset);
+	if (distance + sphere.Radius <= aggregate.Radius)
+		return;
+	if (distance + aggregate.Radius <= sphere.Radius)
+	{
+		aggregate = sphere;
+		return;
+	}
+
+	const float radius = (distance + aggregate.Radius + sphere.Radius) * 0.5f;
+	if (distance > 0.000001f)
+		aggregate.Center += offset * ((radius - aggregate.Radius) / distance);
+	aggregate.Radius = radius;
+}
+}
+
+void Mesh::UpdateBoundingSphere()
+{
+	Bounds = {};
+	if (TraceVertices.empty())
+		return;
+
+	glm::vec3 minimum(std::numeric_limits<float>::max());
+	glm::vec3 maximum(std::numeric_limits<float>::lowest());
+	for (const auto& vertex : TraceVertices)
+	{
+		minimum = glm::min(minimum, vertex.Position);
+		maximum = glm::max(maximum, vertex.Position);
+	}
+
+	Bounds.Center = (minimum + maximum) * 0.5f;
+	for (const auto& vertex : TraceVertices)
+		Bounds.Radius = std::max(Bounds.Radius, glm::length(vertex.Position - Bounds.Center));
+	Bounds.Valid = true;
+}
 
 
 void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& parentTransform)
@@ -61,45 +124,32 @@ void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& pa
 	Ref<ToonMaterial> toon = std::dynamic_pointer_cast<ToonMaterial>(Mat);
 	if (toon && !toon->TwoSided)
 	{
-		glEnable(GL_CULL_FACE);
-		glCullFace(GL_BACK);
+		RenderCommand::Enable("CULL_FACE");
+		RenderCommand::Cull("Back");
 	}
 #endif
     RenderCommand::DrawIndexed(VertexObject);
 #ifdef G_OPENGL
 	if (toon && toon->EdgeEnabled && toon->Alpha > 0.0f)
 	{
-		glEnable(GL_CULL_FACE);
-		glCullFace(GL_FRONT);
+		RenderCommand::Enable("CULL_FACE");
+		RenderCommand::Cull("Front");
 		toon->BindEdge(view, proj, model, Application::Get().GetViewportSize());
 		RenderCommand::DrawIndexed(VertexObject);
 	}
 	if (toon)
-		glDisable(GL_CULL_FACE);
+		RenderCommand::Disable("CULL_FACE");
 #endif
-	if (ShowEdges && EdgeVertexObject && EdgeVertexCount > 0 &&
-		Application::Get().GetAppMode() == Application::AppMode::Editor)
+	if (ShowEdges && EdgeVertexObject && EdgeVertexCount > 0)
 	{
-		auto edgeShader = Application::Get().GetShaderLibrary()->Get("DefaultColor");
+		auto edgeShader = Application::Get().GetShaderLibrary()->Get("DefaultLineColor");
 		edgeShader->Bind();
 		edgeShader->SetMat4("u_View", view);
 		edgeShader->SetMat4("u_Projection", proj);
 		edgeShader->SetMat4("u_Model", model);
 		RenderCommand::EnableDepthTest(true);
-		RenderCommand::SetLineWidth(2.0f);
-		// Give coplanar STEP curves a tiny forward bias while retaining the
-		// depth test, so unrelated geometry in front still occludes them.
-		RenderCommand::SetDepthRange(0.0f, 1.0);
-#ifdef G_OPENGL
-		// Edges share the tessellated surface depth: accept equal fragments but
-		// retain depth testing against geometry in front of the STEP model.
-		glDepthFunc(GL_LEQUAL);
-#endif
+		RenderCommand::SetLineWidth(3.0f);
 		RenderCommand::DrawLines(EdgeVertexObject, EdgeVertexCount);
-#ifdef G_OPENGL
-		glDepthFunc(GL_LESS);
-#endif
-		RenderCommand::SetDepthRange(0.0f, 1.0f);
 	}
 };
 
@@ -107,6 +157,31 @@ void Object3D::Draw(const glm::mat4& view,const glm::mat4 proj)
 {
 	for (auto& mesh : Meshes)
 		mesh->Draw(view, proj, Transfm.GetMatrix());
+}
+
+void Object3D::UpdateBoundingSphere()
+{
+	Bounds = {};
+	for (const auto& mesh : Meshes)
+	{
+		if (!mesh)
+			continue;
+		mesh->UpdateBoundingSphere();
+		MergeBoundingSphere(Bounds, TransformBoundingSphere(mesh->Bounds, mesh->Transfm.GetMatrix()));
+	}
+}
+
+BoundingSphere Object3D::GetWorldBoundingSphere() const
+{
+	BoundingSphere currentBounds;
+	for (const auto& mesh : Meshes)
+	{
+		if (mesh)
+			MergeBoundingSphere(currentBounds, TransformBoundingSphere(mesh->Bounds, mesh->Transfm.GetMatrix()));
+	}
+	if (!currentBounds.Valid)
+		currentBounds = Bounds;
+	return TransformBoundingSphere(currentBounds, Transfm.GetMatrix());
 }
 
 

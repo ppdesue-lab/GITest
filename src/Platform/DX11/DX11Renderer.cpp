@@ -7,14 +7,7 @@
 void DX11Renderer::Init()
 {
 	EnableDepthTest(true);
-
-	D3D11_RASTERIZER_DESC rasterizerDesc = {};
-	rasterizerDesc.FillMode = D3D11_FILL_SOLID;
-	rasterizerDesc.CullMode = D3D11_CULL_NONE;
-	rasterizerDesc.DepthClipEnable = TRUE;
-	Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizerState;
-	DX11Context::GetDevice()->CreateRasterizerState(&rasterizerDesc, &rasterizerState);
-	DX11Context::GetDeviceContext()->RSSetState(rasterizerState.Get());
+	ApplyRasterizerState();
 
 	D3D11_BLEND_DESC blendDesc = {};
 	blendDesc.RenderTarget[0].BlendEnable = TRUE;
@@ -82,6 +75,55 @@ void DX11Renderer::DrawLines(const Ref<VertexArray>& vertexArray, uint32_t index
 void DX11Renderer::SetLineWidth(float width)
 {
 	(void)width;
+}
+
+void DX11Renderer::ApplyRasterizerState()
+{
+	D3D11_RASTERIZER_DESC desc = {};
+	desc.FillMode = D3D11_FILL_SOLID;
+	desc.CullMode = m_CullEnabled
+		? (m_CullFace == "Front" ? D3D11_CULL_FRONT : D3D11_CULL_BACK)
+		: D3D11_CULL_NONE;
+	desc.DepthClipEnable = TRUE;
+	Microsoft::WRL::ComPtr<ID3D11RasterizerState> state;
+	DX11Context::GetDevice()->CreateRasterizerState(&desc, &state);
+	DX11Context::GetDeviceContext()->RSSetState(state.Get());
+}
+
+void DX11Renderer::Enable(const std::string& capability)
+{
+	if (capability == "CULL_FACE")
+	{
+		m_CullEnabled = true;
+		ApplyRasterizerState();
+	}
+	else if (capability == "DEPTH_TEST")
+	{
+		EnableDepthTest(true);
+	}
+}
+
+void DX11Renderer::Disable(const std::string& capability)
+{
+	if (capability == "CULL_FACE")
+	{
+		m_CullEnabled = false;
+		ApplyRasterizerState();
+	}
+	else if (capability == "DEPTH_TEST")
+	{
+		EnableDepthTest(false);
+	}
+}
+
+void DX11Renderer::Cull(const std::string& face)
+{
+	if (face == "Front" || face == "Back")
+	{
+		m_CullFace = face;
+		if (m_CullEnabled)
+			ApplyRasterizerState();
+	}
 }
 
 void DX11Renderer::EnableDepthTest(bool enable)
