@@ -7,6 +7,7 @@
 #include <glm/gtx/euler_angles.hpp>
 
 #include "Application.h"
+#include <Import/GCode/GCodeObject.h>
 #include <Primitive/Gizmo.h>
 #include <Renderer/RenderCommand.h>
 
@@ -435,6 +436,8 @@ void ImGuiLayer::DrawMenuBar()
         {
             if (ImGui::MenuItem("Open Model"))
                 OpenModelFile();
+            if (ImGui::MenuItem("Open GCode"))
+                OpenGCodeFile();
 
             if (ImGui::MenuItem("Close All"))
                 Application::Get().ClearObject3Ds();
@@ -588,6 +591,34 @@ void ImGuiLayer::DrawPropertiesPanel()
             }
 
             Scene::Entry* selectedEntry = app.GetScene().GetSelectedEntry();
+            Ref<GCodeObject> gcodeObject = selectedEntry ? std::dynamic_pointer_cast<GCodeObject>(selectedEntry->Object) : nullptr;
+            if (gcodeObject)
+            {
+                ImGui::SeparatorText("GCode");
+                float progress = gcodeObject->GetProgress();
+                if (ImGui::SliderFloat("Progress", &progress, 0.0f, 1.0f, "%.3f"))
+                    gcodeObject->SetProgress(progress);
+                ImGui::TextDisabled("Line %d / %d | %.2f mm",
+                    gcodeObject->GetDisplayIndex(),
+                    gcodeObject->GetTotalSegmentCount(),
+                    gcodeObject->GetTotalDistance());
+
+                if (ImGui::Button(gcodeObject->IsPlaying() ? "Pause" : "Play"))
+                    gcodeObject->TogglePlaying();
+                ImGui::SameLine();
+                if (ImGui::Button("Reset##GCode"))
+                    gcodeObject->Reset();
+
+                bool showFastMoves = gcodeObject->ShowFastMoves();
+                if (ImGui::Checkbox("Show Fast Moves", &showFastMoves))
+                    gcodeObject->ShowFastMoves() = showFastMoves;
+                bool showTool = gcodeObject->ShowTool();
+                if (ImGui::Checkbox("Show Tool", &showTool))
+                    gcodeObject->ShowTool() = showTool;
+                float speed = gcodeObject->PlaybackSpeed();
+                if (ImGui::SliderFloat("Playback Speed", &speed, 1.0f, 1000.0f, "%.0f seg/s"))
+                    gcodeObject->PlaybackSpeed() = speed;
+            }
             if (selectedEntry && selectedEntry->Object && !selectedEntry->Object->Meshes.empty())
             {
                 ImGui::SeparatorText("Display");
@@ -790,12 +821,12 @@ void ImGuiLayer::DrawContentBrowser()
             std::transform(extension.begin(), extension.end(), extension.begin(),
                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-            bool isModel = (extension == ".obj" || extension == ".stl" || extension == ".ply" ||
-                           extension == ".gltf" || extension == ".glb" ||
-                           extension == ".pmx" || extension == ".pmd" ||
-                           extension == ".step" || extension == ".stp");
+            bool isModel = IsSupportedModelFile(path);
+            bool isGCode = IsSupportedGCodeFile(path);
             if (isModel)
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 1.0f, 1.0f));
+            else if (isGCode)
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.9f, 0.35f, 1.0f));
 
             if (ImGui::Selectable(filename.c_str(), m_SelectedFile == filename, ImGuiSelectableFlags_AllowDoubleClick))
             {
@@ -805,9 +836,14 @@ void ImGuiLayer::DrawContentBrowser()
                     if (!Application::Get().LoadObject3D(path.u8string()))
                         WARN("Failed to load: {}", path.u8string());
                 }
+                if (ImGui::IsMouseDoubleClicked(0) && isGCode)
+                {
+                    if (!Application::Get().LoadGCode(path))
+                        WARN("Failed to load GCode: {}", path.u8string());
+                }
             }
 
-            if (isModel)
+            if (isModel || isGCode)
                 ImGui::PopStyleColor();
         }
     }
@@ -949,6 +985,35 @@ void ImGuiLayer::OpenModelFile()
         ::Log::GetCoreLogger()->error("Failed to load model file: {}", fspath.u8string());
 }
 
+void ImGuiLayer::OpenGCodeFile()
+{
+    auto selectedFiles = pfd::open_file(
+        "Open GCode",
+        "",
+        {
+            "GCode Files", "*.gcode *.nc *.cnc *.tap",
+            "All Files", "*"
+        }).result();
+
+    if (selectedFiles.empty())
+        return;
+
+    const std::string& utf8path = selectedFiles[0];
+    auto fspath = std::filesystem::u8path(utf8path);
+    if (!IsSupportedGCodeFile(fspath))
+    {
+        WARN("Unsupported GCode file: {}", utf8path);
+        return;
+    }
+    if (!std::filesystem::exists(fspath))
+    {
+        ::Log::GetCoreLogger()->error("File does not exist: {}", utf8path);
+        return;
+    }
+    if (!Application::Get().LoadGCode(fspath))
+        ::Log::GetCoreLogger()->error("Failed to load GCode file: {}", fspath.u8string());
+}
+
 bool ImGuiLayer::IsSupportedModelFile(const std::filesystem::path& filepath) const
 {
     std::string extension = filepath.extension().string();
@@ -959,6 +1024,15 @@ bool ImGuiLayer::IsSupportedModelFile(const std::filesystem::path& filepath) con
            extension == ".gltf" || extension == ".glb" ||
            extension == ".pmx" || extension == ".pmd" ||
            extension == ".step" || extension == ".stp";
+}
+
+bool ImGuiLayer::IsSupportedGCodeFile(const std::filesystem::path& filepath) const
+{
+    std::string extension = filepath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    return extension == ".gcode" || extension == ".nc" || extension == ".cnc" || extension == ".tap";
 }
 
 void ImGuiLayer::OnEvent(Event& event)

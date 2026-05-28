@@ -52,7 +52,9 @@ private:
     void DrawSVGFDenoiserWindow();
     void DrawPBRIBLDebugWindow();
     void OpenModelFile();
+    void OpenGCodeFile();
     bool IsSupportedModelFile(const std::filesystem::path& filepath) const;
+    bool IsSupportedGCodeFile(const std::filesystem::path& filepath) const;
 
     bool OnMouseButtonDown(MouseButtonPressedEvent& e);
     bool OnMouseButtonUp(MouseButtonReleasedEvent& e);

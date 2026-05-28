@@ -18,6 +18,7 @@
 #include "Camera/FPSCamera.h"
 
 #include <Primitive/Gizmo.h>
+#include <Import/GCode/GCodeObject.h>
 
 namespace
 {
@@ -153,6 +154,12 @@ void Application::Run()
 
         // Process continuous keyboard input (velocity-based)
         ProcessKeyboardInput(deltaTime);
+        for (const auto& entry : m_Scene.GetObjects())
+        {
+            Ref<GCodeObject> gcodeObject = std::dynamic_pointer_cast<GCodeObject>(entry.Object);
+            if (gcodeObject)
+                gcodeObject->Update(deltaTime);
+        }
         // --- RESIZE FBO IF VIEWPORT SIZE CHANGED SINCE LAST FRAME ---
         if (m_ViewportFBO && (m_ViewportFBO->GetSpecification().Width != (uint32_t)m_ViewportSize.x ||
                               m_ViewportFBO->GetSpecification().Height != (uint32_t)m_ViewportSize.y))
@@ -598,6 +605,25 @@ Ref<Object3D> Application::LoadObject3D(const std::filesystem::path& filepath)
     }
     m_Scene.AddObject(object, displayName, filepath.u8string());
     // Update gizmo target to the new selection
+    m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    m_SelectedOutlineValid = false;
+    return object;
+}
+
+Ref<Object3D> Application::LoadGCode(const std::filesystem::path& filepath)
+{
+    Ref<GCodeObject> object = CreateRef<GCodeObject>();
+    if (!object->LoadFromFile(filepath))
+        return nullptr;
+
+    std::string displayName;
+    try {
+        displayName = filepath.filename().u8string();
+    } catch (...) {
+        displayName = filepath.filename().string();
+    }
+
+    m_Scene.AddObject(object, displayName, filepath.u8string());
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
     m_SelectedOutlineValid = false;
     return object;
