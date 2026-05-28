@@ -304,6 +304,7 @@ static bool CheckGizmoCenter(const GizmoData* data, Ray ray);
  * @return A glm::vec3 representing the mouse position in world space.
  */
 static glm::vec3 GetWorldMouse(const GizmoData* data, glm::vec2 mousepos);
+static bool CheckGizmoScreen(const GizmoData* data, glm::vec2 mousepos, int& outAxis, int& outType);
 
 
 /**
@@ -382,6 +383,9 @@ bool isMouseOverGizmo(const glm::mat4& camView, const glm::mat4& camProj,
 	bool leftdown, glm::vec2 mousepos
 	, int flags, Transform* transform, bool isperpective)
 {
+	(void)leftdown;
+	(void)isperpective;
+	if (flags == GIZMO_DISABLED || !transform) return false;
 	if (GIZMO.width == 0) {
 		printf("set viewport size first: SetViewportSize");
 		return false;
@@ -392,32 +396,51 @@ bool isMouseOverGizmo(const glm::mat4& camView, const glm::mat4& camProj,
 	glm::mat4 invMat = glm::inverse(matView);
 	float* invMatPtr = glm::value_ptr(invMat);
 	float* matViewPtr = glm::value_ptr(matView);
-	data.invViewProj = glm::inverse(matProj * matView);
+	data.viewProj = matProj * matView;
+	data.invViewProj = glm::inverse(data.viewProj);
 	data.camPos = { invMatPtr[12], invMatPtr[13], invMatPtr[14] };
 	data.right = { matViewPtr[0], matViewPtr[4], matViewPtr[8] };
 	data.up = { matViewPtr[1], matViewPtr[5], matViewPtr[9] };
-	data.forward = { matViewPtr[2], matViewPtr[6], matViewPtr[10] };
-	data.curTransform = transform; // We only need to check the gizmo handles, not the transformation itself
-	data.gizmoSize = GIZMO.gizmoSize * calculateScaleForOrtho(camProj);
-	data.flags = flags; // Check all types of gizmo handles
-	ComputeAxisOrientation(&data);
-	// Check if the mouse is over any of the gizmo handles
-	Ray ray = Vec3ScreenToWorldRay(mousepos, &data.invViewProj, GIZMO.width, GIZMO.height);
-	for (int i = 0; i < GIZMO_AXIS_COUNT; ++i)
 	{
-		if (CheckGizmoAxis(&data, i, ray, GIZMO_TRANSLATE) ||
-			CheckGizmoAxis(&data, i, ray, GIZMO_SCALE) ||
-			CheckGizmoPlane(&data, i, ray) ||
-			CheckGizmoCircle(&data, i, ray))
+		glm::vec3 fwd = transform->translation - data.camPos;
+		data.forward = (glm::length(fwd) > 0.001f) ? glm::normalize(fwd) : glm::vec3(0.0f, 0.0f, -1.0f);
+	}
+	data.curTransform = transform;
+	data.gizmoSize = GIZMO.gizmoSize * glm::distance(data.camPos, transform->translation) * 0.1f;
+	data.flags = flags;
+	ComputeAxisOrientation(&data);
+
+	int screenAxis = 0, screenType = 0;
+	if (CheckGizmoScreen(&data, mousepos, screenAxis, screenType))
+		return true;
+
+	const Ray ray = Vec3ScreenToWorldRay(mousepos, &data.invViewProj, GIZMO.width, GIZMO.height);
+
+	for (int k = 0; k < 2; ++k)
+	{
+		const int gizmoFlag = k == 0 ? GIZMO_SCALE : GIZMO_TRANSLATE;
+		if (data.flags & gizmoFlag)
 		{
-			return true; // Mouse is over a gizmo handle
+			if (CheckGizmoCenter(&data, ray))
+				return true;
+			for (int i = 0; i < GIZMO_AXIS_COUNT; ++i)
+			{
+				if (CheckGizmoAxis(&data, i, ray, gizmoFlag) || CheckGizmoPlane(&data, i, ray))
+					return true;
+			}
 		}
 	}
-	if (CheckGizmoCenter(&data, ray))
+
+	if (data.flags & GIZMO_ROTATE)
 	{
-		return true; // Mouse is over the gizmo center
+		for (int i = 0; i < GIZMO_AXIS_COUNT; ++i)
+		{
+			if (CheckGizmoCircle(&data, i, ray))
+				return true;
+		}
 	}
-	return false; // Mouse is not over any gizmo handle
+
+	return false;
 }
 //---------------------------------------------------------------------------------------------------
 // Functions Definitions - GIZMO API

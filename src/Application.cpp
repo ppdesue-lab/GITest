@@ -82,6 +82,8 @@ Application::Application(int w,int h)
 
 	m_ShaderLibrary = CreateRef<ShaderLibrary>();
     m_ShaderLibrary->LoadDefault();
+    m_PickupShader = m_ShaderLibrary->Get("ObjectPickup");
+    m_SelectedMaskShader = m_ShaderLibrary->Get("SelectedMask");
 
 
     // Background skybox cube (simple position-only vertex data)
@@ -112,6 +114,7 @@ Application::Application(int w,int h)
     m_FXAA = CreateRef<FXAA>((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
     InitializeWeightedBlendedOIT();
     InitializeTransparentStepEdgeResources();
+    InitializeSelectedOutlineResources();
     SetGizmoViewportSize((int)m_ViewportSize.x, (int)m_ViewportSize.y);
 
     // CSM must be created after OpenGL context is initialized
@@ -157,12 +160,17 @@ void Application::Run()
             m_ViewportFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             if (m_ViewportResolvedFBO)
                 m_ViewportResolvedFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+            if (m_PickupFBO)
+                m_PickupFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+            if (m_SelectedMaskFBO)
+                m_SelectedMaskFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             m_SSAO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             m_FXAA->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             m_PathTracer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             m_SVGF->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             ResizeWeightedBlendedOIT((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             ResizeTransparentStepEdgeResources((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+            ResizeSelectedOutlineResources((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
         }
 
         // --- CSM SHADOW MAP UPDATE ---
@@ -278,6 +286,14 @@ void Application::Run()
 
             if (m_AppMode == AppMode::Editor)
             {
+                RenderPickupPass();
+                RenderSelectedMaskPass();
+                if (m_ViewportFBO) m_ViewportFBO->Bind(false);
+#ifdef G_OPENGL
+                const GLenum editorBuffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
+                glDrawBuffers(3, editorBuffers);
+#endif
+
                 // Reset model matrix to identity so gizmo lines render in world space
                 {
                     auto resetShader = GetShaderLibrary()->Get("DefaultColor");
@@ -344,9 +360,12 @@ void Application::Run()
                 SetGizmoLineWidth(m_GizmoLineWidth);
                 SetGizmoViewportSize((int)m_ViewportSize.x, (int)m_ViewportSize.y);
 
+                const Transform beforeGizmo = *targetTransform;
                 if (DrawGizmo3D(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix(),
                     m_LeftDownGizmo, m_ViewportMousePos, gizmoFlags, targetTransform))
                 {
+                    ApplyGizmoDeltaToSelection(beforeGizmo, *targetTransform);
+                    m_SelectedOutlineValid = false;
                     if (m_Camera->isInputEnabled()) m_Camera->setInputEnabled(false);
                 }
             }
@@ -413,8 +432,16 @@ void Application::Run()
             {
                 m_FXAA->Render(sceneColor);
             }
+            if (m_ViewportRenderMode == ViewportRenderMode::Editor)
+            {
+                uint64_t outlineSource = sceneColor;
+                if (!IsMSAAEnabled() && m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
+                    outlineSource = m_FXAA->GetOutputTexture();
+                CompositeSelectedOutline(outlineSource);
+            }
             if (m_ViewportRenderMode == ViewportRenderMode::Rendering)
             {
+                m_SelectedOutlineValid = false;
                 m_PathTracer->Render(m_Scene, *m_Camera);
                 if (m_PathTracer->GetSampleCount() <= 1)
                     m_SVGF->ResetHistory();
@@ -572,6 +599,7 @@ Ref<Object3D> Application::LoadObject3D(const std::filesystem::path& filepath)
     m_Scene.AddObject(object, displayName, filepath.u8string());
     // Update gizmo target to the new selection
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    m_SelectedOutlineValid = false;
     return object;
 }
 
@@ -579,6 +607,7 @@ void Application::ClearObject3Ds()
 {
     m_Scene.Clear();
     m_GizmoTargetTransform = nullptr;
+    m_SelectedOutlineValid = false;
 }
 
 void Application::CreateViewportFrameBuffers()
@@ -595,6 +624,18 @@ void Application::CreateViewportFrameBuffers()
 
     specification.Samples = 1;
     m_ViewportResolvedFBO = FrameBuffer::Create(specification);
+
+    FrameBufferSpecification pickupSpecification{ (uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y,
+        { FrameBufferTextureSpecification(FrameBufferTextureFormat::RED_INTEGER),
+          FrameBufferTextureSpecification(FrameBufferTextureFormat::Depth) } };
+    pickupSpecification.Samples = 1;
+    m_PickupFBO = FrameBuffer::Create(pickupSpecification);
+
+    FrameBufferSpecification selectedMaskSpecification{ (uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y,
+        { FrameBufferTextureSpecification(FrameBufferTextureFormat::RED_INTEGER),
+          FrameBufferTextureSpecification(FrameBufferTextureFormat::Depth) } };
+    selectedMaskSpecification.Samples = 1;
+    m_SelectedMaskFBO = FrameBuffer::Create(selectedMaskSpecification);
 }
 
 void Application::SetMSAASamples(int samples)
@@ -802,6 +843,89 @@ void Application::ResizeTransparentStepEdgeResources(uint32_t width, uint32_t he
 #endif
 }
 
+void Application::InitializeSelectedOutlineResources()
+{
+#ifdef G_OPENGL
+    const std::string fullscreenVertex = R"(
+        #version 330 core
+        out vec2 v_UV;
+        void main()
+        {
+            vec2 positions[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+            vec2 position = positions[gl_VertexID];
+            v_UV = position * 0.5 + 0.5;
+            gl_Position = vec4(position, 0.0, 1.0);
+        }
+    )";
+    const std::string edgeFragment = R"(
+        #version 330 core
+        in vec2 v_UV;
+        layout(location = 0) out vec4 color;
+        uniform sampler2D u_SceneColor;
+        uniform isampler2D u_SelectedMask;
+        uniform vec2 u_ViewportSize;
+        uniform float u_EdgeWidth;
+        uniform vec4 u_EdgeColor;
+
+        int SampleMask(ivec2 pixel)
+        {
+            ivec2 size = textureSize(u_SelectedMask, 0);
+            pixel = clamp(pixel, ivec2(0), size - ivec2(1));
+            return texelFetch(u_SelectedMask, pixel, 0).r;
+        }
+
+        void main()
+        {
+            ivec2 pixel = ivec2(gl_FragCoord.xy);
+            bool centerSelected = SampleMask(pixel) != 0;
+            bool neighborSelected = false;
+            int radius = int(clamp(ceil(u_EdgeWidth), 1.0, 8.0));
+            for (int y = -radius; y <= radius; y++)
+            {
+                for (int x = -radius; x <= radius; x++)
+                {
+                    if (x == 0 && y == 0)
+                        continue;
+                    if (length(vec2(x, y)) > float(radius) + 0.001)
+                        continue;
+                    neighborSelected = neighborSelected || SampleMask(pixel + ivec2(x, y)) != 0;
+                }
+            }
+
+            vec4 scene = texture(u_SceneColor, v_UV);
+            color = (!centerSelected && neighborSelected) ? u_EdgeColor : scene;
+        }
+    )";
+    m_SelectedEdgeShader = Shader::Create("SelectedEdgeComposite", fullscreenVertex, edgeFragment);
+    glCreateVertexArrays(1, &m_SelectedOutlineQuadVAO);
+    glCreateFramebuffers(1, &m_SelectedOutlineFBO);
+    ResizeSelectedOutlineResources((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+#endif
+}
+
+void Application::ResizeSelectedOutlineResources(uint32_t width, uint32_t height)
+{
+#ifdef G_OPENGL
+    m_SelectedOutlineValid = false;
+    if (!m_SelectedOutlineFBO)
+        return;
+    if (m_SelectedOutlineTexture)
+        glDeleteTextures(1, &m_SelectedOutlineTexture);
+    glCreateTextures(GL_TEXTURE_2D, 1, &m_SelectedOutlineTexture);
+    glTextureStorage2D(m_SelectedOutlineTexture, 1, GL_RGBA8, width, height);
+    glTextureParameteri(m_SelectedOutlineTexture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(m_SelectedOutlineTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(m_SelectedOutlineTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(m_SelectedOutlineTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glNamedFramebufferTexture(m_SelectedOutlineFBO, GL_COLOR_ATTACHMENT0, m_SelectedOutlineTexture, 0);
+    if (glCheckNamedFramebufferStatus(m_SelectedOutlineFBO, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        ERROR("Selected outline framebuffer is incomplete!");
+#else
+    (void)width;
+    (void)height;
+#endif
+}
+
 void Application::RenderTransparentDepthPrepass()
 {
 #ifdef G_OPENGL
@@ -900,10 +1024,200 @@ void Application::RenderTransparentStepEdges(uint64_t sceneDepthTexture)
 #endif
 }
 
+void Application::RenderPickupPass()
+{
+#ifdef G_OPENGL
+    if (!m_PickupFBO || !m_PickupShader || !m_Camera)
+        return;
+
+    m_PickupFBO->Bind();
+    m_PickupFBO->ClearAttachment(0, 0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glDisable(GL_CULL_FACE);
+
+    const glm::mat4 view = m_Camera->GetViewMatrix();
+    const glm::mat4 projection = m_Camera->GetProjectionMatrix();
+    const Frustum cameraFrustum(projection * view);
+
+    m_PickupShader->Bind();
+    m_PickupShader->SetMat4("u_View", view);
+    m_PickupShader->SetMat4("u_Projection", projection);
+
+    const auto& objects = m_Scene.GetObjects();
+    for (int i = 0; i < (int)objects.size(); i++)
+    {
+        const auto& entry = objects[i];
+        if (!entry.Visible || !entry.Object || entry.Object->Opacity <= 0.001f ||
+            !cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
+            continue;
+
+        m_PickupShader->SetInt("u_ObjectID", i + 1);
+        for (const auto& mesh : entry.Object->Meshes)
+        {
+            if (!mesh || !mesh->VertexObject)
+                continue;
+            m_PickupShader->SetMat4("u_Model", entry.Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
+            RenderCommand::DrawIndexed(mesh->VertexObject);
+        }
+    }
+
+    m_PickupFBO->Unbind();
+    glEnable(GL_BLEND);
+#endif
+}
+
+void Application::RenderSelectedMaskPass()
+{
+#ifdef G_OPENGL
+    if (!m_SelectedMaskFBO || !m_SelectedMaskShader || !m_Camera)
+        return;
+
+    m_SelectedMaskFBO->Bind();
+    m_SelectedMaskFBO->ClearAttachment(0, 0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glDisable(GL_CULL_FACE);
+
+    if (m_Scene.GetSelectedCount() == 0)
+    {
+        m_SelectedMaskFBO->Unbind();
+        glEnable(GL_BLEND);
+        return;
+    }
+
+    const glm::mat4 view = m_Camera->GetViewMatrix();
+    const glm::mat4 projection = m_Camera->GetProjectionMatrix();
+    const Frustum cameraFrustum(projection * view);
+
+    m_SelectedMaskShader->Bind();
+    m_SelectedMaskShader->SetMat4("u_View", view);
+    m_SelectedMaskShader->SetMat4("u_Projection", projection);
+
+    for (int selectedIndex : m_Scene.GetSelectedIndices())
+    {
+        Scene::Entry* entry = m_Scene.GetEntry(selectedIndex);
+        if (!entry || !entry->Visible || !entry->Object || entry->Object->Opacity <= 0.001f ||
+            !cameraFrustum.Intersects(entry->Object->GetWorldBoundingSphere()))
+            continue;
+
+        for (const auto& mesh : entry->Object->Meshes)
+        {
+            if (!mesh || !mesh->VertexObject)
+                continue;
+            m_SelectedMaskShader->SetMat4("u_Model", entry->Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
+            RenderCommand::DrawIndexed(mesh->VertexObject);
+        }
+    }
+
+    m_SelectedMaskFBO->Unbind();
+    glDepthMask(GL_TRUE);
+    glEnable(GL_BLEND);
+#endif
+}
+
+uint64_t Application::CompositeSelectedOutline(uint64_t sceneColorTexture)
+{
+#ifdef G_OPENGL
+    m_SelectedOutlineValid = false;
+    if (!sceneColorTexture || !m_SelectedMaskFBO || !m_SelectedEdgeShader ||
+        !m_SelectedOutlineFBO || !m_SelectedOutlineTexture)
+        return sceneColorTexture;
+
+    if (m_Scene.GetSelectedCount() == 0)
+        return sceneColorTexture;
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_SelectedOutlineFBO);
+    glViewport(0, 0, (GLsizei)m_ViewportSize.x, (GLsizei)m_ViewportSize.y);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glBindVertexArray(m_SelectedOutlineQuadVAO);
+
+    m_SelectedEdgeShader->Bind();
+    m_SelectedEdgeShader->SetInt("u_SceneColor", 0);
+    m_SelectedEdgeShader->SetInt("u_SelectedMask", 1);
+    m_SelectedEdgeShader->SetFloat2("u_ViewportSize", m_ViewportSize);
+    m_SelectedEdgeShader->SetFloat("u_EdgeWidth", m_SelectedEdgeWidth);
+    m_SelectedEdgeShader->SetFloat4("u_EdgeColor", glm::vec4(1.0f, 0.85f, 0.05f, 1.0f));
+    glBindTextureUnit(0, (uint32_t)sceneColorTexture);
+    glBindTextureUnit(1, (uint32_t)m_SelectedMaskFBO->GetColorAttachmentRendererID(0));
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glBindVertexArray(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glEnable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    m_SelectedOutlineValid = true;
+    return m_SelectedOutlineTexture;
+#else
+    return sceneColorTexture;
+#endif
+}
+
+int Application::ReadPickupPixel(int x, int y)
+{
+    if (!m_PickupFBO)
+        return 0;
+
+    const auto& spec = m_PickupFBO->GetSpecification();
+    if (x < 0 || y < 0 || x >= (int)spec.Width || y >= (int)spec.Height)
+        return 0;
+
+    m_PickupFBO->Bind(false);
+    const int id = m_PickupFBO->ReadPixel(0, x, y);
+    m_PickupFBO->Unbind();
+    return id;
+}
+
 void Application::SetSelectedObjectIndex(int index)
 {
     m_Scene.SetSelectedIndex(index);
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    m_SelectedOutlineValid = false;
+}
+
+void Application::AddSelectedObjectIndex(int index)
+{
+    m_Scene.AddSelectedIndex(index);
+    m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    m_SelectedOutlineValid = false;
+}
+
+void Application::ApplyGizmoDeltaToSelection(const Transform& before, const Transform& after)
+{
+    if (m_Scene.GetSelectedCount() <= 1)
+        return;
+
+    const int activeIndex = m_Scene.GetSelectedIndex();
+    const glm::vec3 translationDelta = after.translation - before.translation;
+    const glm::quat rotationDelta = glm::normalize(after.rotation * glm::inverse(before.rotation));
+    glm::vec3 scaleRatio(1.0f);
+    for (int axis = 0; axis < 3; axis++)
+    {
+        const float beforeScale = before.scale[axis];
+        scaleRatio[axis] = std::abs(beforeScale) > 0.000001f ? after.scale[axis] / beforeScale : 1.0f;
+    }
+
+    for (int selectedIndex : m_Scene.GetSelectedIndices())
+    {
+        if (selectedIndex == activeIndex)
+            continue;
+
+        Transform* transform = m_Scene.GetTransform(selectedIndex);
+        if (!transform)
+            continue;
+
+        transform->translation += translationDelta;
+        transform->rotation = glm::normalize(rotationDelta * transform->rotation);
+        transform->scale *= scaleRatio;
+    }
 }
 
 void Application::SetViewportRenderMode(ViewportRenderMode mode)
@@ -921,6 +1235,8 @@ uint64_t Application::GetViewportColorTextureID() const
 {
     if (!m_ViewportFBO)
         return 0;
+    if (m_ViewportRenderMode == ViewportRenderMode::Editor && m_SelectedOutlineValid && m_SelectedOutlineTexture)
+        return m_SelectedOutlineTexture;
     if (m_ViewportRenderMode == ViewportRenderMode::Rendering && m_SVGF && m_SVGF->Enabled() &&
         m_SVGF->GetOutputTexture() && m_SVGF->HasHistory())
         return m_SVGF->GetOutputTexture();

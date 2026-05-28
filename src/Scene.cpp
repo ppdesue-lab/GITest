@@ -4,6 +4,7 @@
 #include <Renderer/VertexArray.h>
 #include <Renderer/VertexDesc.h>
 #include <glm/gtc/constants.hpp>
+#include <algorithm>
 #include <cmath>
 
 // --- SceneCube ---
@@ -160,14 +161,29 @@ void Scene::RemoveObject(int index)
 {
     if (index < 0 || index >= (int)m_Objects.size()) return;
     m_Objects.erase(m_Objects.begin() + index);
+
+    std::vector<int> updatedSelection;
+    updatedSelection.reserve(m_SelectedIndices.size());
+    for (int selected : m_SelectedIndices)
+    {
+        if (selected == index)
+            continue;
+        updatedSelection.push_back(selected > index ? selected - 1 : selected);
+    }
+    m_SelectedIndices = updatedSelection;
+
+    if (m_SelectedIndex == index)
+        m_SelectedIndex = m_SelectedIndices.empty() ? -1 : m_SelectedIndices.back();
+    else if (m_SelectedIndex > index)
+        --m_SelectedIndex;
     if (m_SelectedIndex >= (int)m_Objects.size())
-        m_SelectedIndex = (int)m_Objects.size() - 1;
+        m_SelectedIndex = m_SelectedIndices.empty() ? -1 : m_SelectedIndices.back();
 }
 
 void Scene::Clear()
 {
     m_Objects.clear();
-    m_SelectedIndex = -1;
+    ClearSelection();
 }
 
 Scene::Entry* Scene::GetEntry(int index)
@@ -178,7 +194,16 @@ Scene::Entry* Scene::GetEntry(int index)
 
 void Scene::SetSelectedIndex(int index)
 {
-    m_SelectedIndex = index;
+    m_SelectedIndices.clear();
+    if (index >= 0 && index < (int)m_Objects.size())
+    {
+        m_SelectedIndex = index;
+        m_SelectedIndices.push_back(index);
+    }
+    else
+    {
+        m_SelectedIndex = -1;
+    }
 }
 
 Scene::Entry* Scene::GetSelectedEntry()
@@ -186,9 +211,29 @@ Scene::Entry* Scene::GetSelectedEntry()
     return GetEntry(m_SelectedIndex);
 }
 
-Transform* Scene::GetSelectedTransform()
+bool Scene::IsSelected(int index) const
 {
-    Entry* entry = GetSelectedEntry();
+    return std::find(m_SelectedIndices.begin(), m_SelectedIndices.end(), index) != m_SelectedIndices.end();
+}
+
+void Scene::AddSelectedIndex(int index)
+{
+    if (index < 0 || index >= (int)m_Objects.size())
+        return;
+    if (!IsSelected(index))
+        m_SelectedIndices.push_back(index);
+    m_SelectedIndex = index;
+}
+
+void Scene::ClearSelection()
+{
+    m_SelectedIndex = -1;
+    m_SelectedIndices.clear();
+}
+
+Transform* Scene::GetTransform(int index)
+{
+    Entry* entry = GetEntry(index);
     if (entry && entry->Object)
     {
         // A single-mesh asset has no separate hierarchy node exposed in the editor.
@@ -198,4 +243,9 @@ Transform* Scene::GetSelectedTransform()
         return &entry->Object->Transfm;
     }
     return nullptr;
+}
+
+Transform* Scene::GetSelectedTransform()
+{
+    return GetTransform(m_SelectedIndex);
 }

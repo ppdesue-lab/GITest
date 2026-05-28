@@ -63,6 +63,7 @@ public:
 	uint64_t GetViewportColorTextureID() const;
 	ViewportRenderMode GetViewportRenderMode() const { return m_ViewportRenderMode; }
 	void SetViewportRenderMode(ViewportRenderMode mode);
+	int ReadPickupPixel(int x, int y);
 	int GetMSAASamples() const { return m_MSAASamples; }
 	void SetMSAASamples(int samples);
 	bool IsMSAAEnabled() const { return m_MSAASamples > 1; }
@@ -76,7 +77,11 @@ public:
 
 	// Selection (convenience delegates to Scene)
 	int GetSelectedObjectIndex() const { return m_Scene.GetSelectedIndex(); }
+	const std::vector<int>& GetSelectedObjectIndices() const { return m_Scene.GetSelectedIndices(); }
+	int GetSelectedObjectCount() const { return m_Scene.GetSelectedCount(); }
+	bool IsObjectSelected(int index) const { return m_Scene.IsSelected(index); }
 	void SetSelectedObjectIndex(int index);
+	void AddSelectedObjectIndex(int index);
 	Transform* GetGizmoTargetTransform() { return m_GizmoTargetTransform; }
 	void BindGizmoTargetTransform(Transform* transform) { m_GizmoTargetTransform = transform; }
 
@@ -117,6 +122,12 @@ private:
 	void ResizeTransparentStepEdgeResources(uint32_t width, uint32_t height);
 	void RenderTransparentDepthPrepass();
 	void RenderTransparentStepEdges(uint64_t sceneDepthTexture);
+	void RenderPickupPass();
+	void InitializeSelectedOutlineResources();
+	void ResizeSelectedOutlineResources(uint32_t width, uint32_t height);
+	void RenderSelectedMaskPass();
+	uint64_t CompositeSelectedOutline(uint64_t sceneColorTexture);
+	void ApplyGizmoDeltaToSelection(const Transform& before, const Transform& after);
 
     WindowInterface* m_WindowInterface = nullptr;
     LayerStack m_LayerStack;
@@ -136,14 +147,22 @@ private:
 	// Viewport
 	Ref<FrameBuffer> m_ViewportFBO;
 	Ref<FrameBuffer> m_ViewportResolvedFBO;
+	Ref<FrameBuffer> m_PickupFBO;
+	Ref<FrameBuffer> m_SelectedMaskFBO;
 	Ref<SSAO> m_SSAO;
 	Ref<FXAA> m_FXAA;
 	Ref<PathTracer> m_PathTracer;
 	Ref<SVGF> m_SVGF;
 	Ref<Shader> m_OITCompositeShader;
+	Ref<Shader> m_PickupShader;
+	Ref<Shader> m_SelectedMaskShader;
+	Ref<Shader> m_SelectedEdgeShader;
 	uint32_t m_OITCompositeFBO = 0;
 	uint32_t m_OITCompositeTexture = 0;
 	uint32_t m_OITQuadVAO = 0;
+	uint32_t m_SelectedOutlineFBO = 0;
+	uint32_t m_SelectedOutlineTexture = 0;
+	uint32_t m_SelectedOutlineQuadVAO = 0;
 	Ref<Shader> m_TransparentDepthShader;
 	Ref<Shader> m_TransparentStepEdgeShader;
 	uint32_t m_TransparentDepthFBO = 0;
@@ -154,6 +173,8 @@ private:
 	glm::vec2 m_ViewportMousePos = { 0.0f, 0.0f };
 	glm::vec2 m_ViewportOrigin = { 0.0f, 0.0f };
 	bool m_ViewportHovered = false;
+	float m_SelectedEdgeWidth = 2.0f;
+	bool m_SelectedOutlineValid = false;
 
 	// Gizmo state
 	int m_GizmoMode = 0;

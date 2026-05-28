@@ -187,6 +187,57 @@ void ShaderLibrary::LoadDefault()
 		)";
 		Load("DefaultLineColor", vSource, fSource);
 	}
+
+	{
+		auto vSource = R"(
+			#version 330 core
+
+			layout(location = 0) in vec3 a_Position;
+			uniform mat4 u_View;
+			uniform mat4 u_Projection;
+			uniform mat4 u_Model;
+			void main()
+			{
+				gl_Position = u_Projection * u_View * u_Model * vec4(a_Position, 1.0);
+			}
+		)";
+		auto fSource = R"(
+			#version 330 core
+
+			layout(location = 0) out int o_ObjectID;
+			uniform int u_ObjectID;
+			void main()
+			{
+				o_ObjectID = u_ObjectID;
+			}
+		)";
+		Load("ObjectPickup", vSource, fSource);
+	}
+
+	{
+		auto vSource = R"(
+			#version 330 core
+
+			layout(location = 0) in vec3 a_Position;
+			uniform mat4 u_View;
+			uniform mat4 u_Projection;
+			uniform mat4 u_Model;
+			void main()
+			{
+				gl_Position = u_Projection * u_View * u_Model * vec4(a_Position, 1.0);
+			}
+		)";
+		auto fSource = R"(
+			#version 330 core
+
+			layout(location = 0) out int o_Mask;
+			void main()
+			{
+				o_Mask = 1;
+			}
+		)";
+		Load("SelectedMask", vSource, fSource);
+	}
 #pragma endregion
 
 #pragma region phong shader with CSM shadow

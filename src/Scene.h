@@ -50,12 +50,19 @@ public:
     Ref<ScenePlane> CreatePlane(const std::string& name = "Plane", float size = 100.0f);
 
     int GetSelectedIndex() const { return m_SelectedIndex; }
+    const std::vector<int>& GetSelectedIndices() const { return m_SelectedIndices; }
+    int GetSelectedCount() const { return (int)m_SelectedIndices.size(); }
+    bool IsSelected(int index) const;
     void SetSelectedIndex(int index);
+    void AddSelectedIndex(int index);
+    void ClearSelection();
     Entry* GetSelectedEntry();
+    Transform* GetTransform(int index);
     Transform* GetSelectedTransform();
 
 private:
     int AddObjectRaw(const Ref<Object3D>& object, const std::string& name, const std::string& filepath);
     std::vector<Entry> m_Objects;
     int m_SelectedIndex = -1;
+    std::vector<int> m_SelectedIndices;
 };

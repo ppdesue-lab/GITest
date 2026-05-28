@@ -473,24 +473,21 @@ void ImGuiLayer::DrawMenuBar()
             if (ImGui::MenuItem("Cube"))
             {
                 auto cube = Application::Get().GetScene().CreateCube();
-                Application::Get().GetScene().SetSelectedIndex(Application::Get().GetScene().GetCount() - 1);
-                Application::Get().BindGizmoTargetTransform(Application::Get().GetScene().GetSelectedTransform());
+                Application::Get().SetSelectedObjectIndex(Application::Get().GetScene().GetCount() - 1);
                 TRACE("Created Cube: {}", cube ? "success" : "failed");
             }
 
             if (ImGui::MenuItem("Sphere"))
             {
                 auto sphere = Application::Get().GetScene().CreateSphere();
-                Application::Get().GetScene().SetSelectedIndex(Application::Get().GetScene().GetCount() - 1);
-                Application::Get().BindGizmoTargetTransform(Application::Get().GetScene().GetSelectedTransform());
+                Application::Get().SetSelectedObjectIndex(Application::Get().GetScene().GetCount() - 1);
                 TRACE("Created Sphere: {}", sphere ? "success" : "failed");
             }
 
             if (ImGui::MenuItem("Plane"))
             {
                 auto plane = Application::Get().GetScene().CreatePlane();
-                Application::Get().GetScene().SetSelectedIndex(Application::Get().GetScene().GetCount() - 1);
-                Application::Get().BindGizmoTargetTransform(Application::Get().GetScene().GetSelectedTransform());
+                Application::Get().SetSelectedObjectIndex(Application::Get().GetScene().GetCount() - 1);
                 TRACE("Created Plane: {}", plane ? "success" : "failed");
             }
 
@@ -519,7 +516,7 @@ void ImGuiLayer::DrawProjectPanel()
 
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
-            bool selected = (i == app.GetSelectedObjectIndex());
+            bool selected = app.IsObjectSelected(i);
             if (selected)
             {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
@@ -538,7 +535,10 @@ void ImGuiLayer::DrawProjectPanel()
             ImGui::TreeNodeEx((void*)(intptr_t)i, flags, "%s", entry.Name.c_str());
             if (ImGui::IsItemClicked())
             {
-                app.SetSelectedObjectIndex(i);
+                if (ImGui::GetIO().KeyShift)
+                    app.AddSelectedObjectIndex(i);
+                else
+                    app.SetSelectedObjectIndex(i);
             }
 
             if (selected)
@@ -551,6 +551,7 @@ void ImGuiLayer::DrawPropertiesPanel()
 {
     Application& app = Application::Get();
     Transform* targetTransform = app.GetGizmoTargetTransform();
+    const int selectedCount = app.GetSelectedObjectCount();
 
     if (!targetTransform)
     {
@@ -558,131 +559,141 @@ void ImGuiLayer::DrawPropertiesPanel()
     }
     else
     {
-        ImGui::SeparatorText("Transform");
-
-    float translation[3] = { targetTransform->translation.x, targetTransform->translation.y, targetTransform->translation.z };
-    if (ImGui::DragFloat3("Translation", translation, 0.1f))
-    {
-        targetTransform->translation = glm::vec3(translation[0], translation[1], translation[2]);
-    }
-
-    glm::vec3 euler = glm::degrees(quatToEulerSafe(targetTransform->rotation));
-    float rotationDeg[3] = { euler.x, euler.y, euler.z };
-    if (ImGui::InputFloat3("Rotation (deg)", rotationDeg, "%.2f"))
-    {
-        glm::vec3 rad = glm::radians(glm::vec3(rotationDeg[0], rotationDeg[1], rotationDeg[2]));
-        targetTransform->rotation = glm::yawPitchRoll(rad.y, rad.x, rad.z);
-    }
-
-    float scale[3] = { targetTransform->scale.x, targetTransform->scale.y, targetTransform->scale.z };
-    if (ImGui::DragFloat3("Scale", scale, 0.1f))
-    {
-        targetTransform->scale = glm::vec3(scale[0], scale[1], scale[2]);
-    }
-
-    Scene::Entry* selectedEntry = app.GetScene().GetSelectedEntry();
-    if (selectedEntry && selectedEntry->Object && !selectedEntry->Object->Meshes.empty())
-    {
-        ImGui::SeparatorText("Display");
-        ImGui::SliderFloat("Opacity", &selectedEntry->Object->Opacity, 0.0f, 1.0f, "%.2f");
-
-        Ref<MaterialPBR> pbr = std::dynamic_pointer_cast<MaterialPBR>(selectedEntry->Object->Meshes[0]->Mat);
-        if (pbr)
+        if (selectedCount > 1)
         {
-            ImGui::SeparatorText("PBR Material");
-            ImGui::ColorEdit3("Albedo", &pbr->Albedo.x);
-            ImGui::SliderFloat("Metallic", &pbr->Metallic, 0.0f, 1.0f, "%.2f");
-            ImGui::SliderFloat("Roughness", &pbr->Roughness, 0.04f, 1.0f, "%.2f");
-            ImGui::SliderFloat("Material AO", &pbr->AmbientOcclusion, 0.0f, 1.0f, "%.2f");
+            ImGui::TextDisabled("%d objects selected", selectedCount);
         }
-        Ref<Mesh> edgeMesh;
-        for (const auto& mesh : selectedEntry->Object->Meshes)
+        else
         {
-            if (mesh && !mesh->EdgeVertices.empty())
+            ImGui::SeparatorText("Transform");
+
+            float translation[3] = { targetTransform->translation.x, targetTransform->translation.y, targetTransform->translation.z };
+            if (ImGui::DragFloat3("Translation", translation, 0.1f))
             {
-                edgeMesh = mesh;
-                break;
+                targetTransform->translation = glm::vec3(translation[0], translation[1], translation[2]);
             }
-        }
-        if (edgeMesh)
-        {
-            ImGui::SeparatorText("STEP Display");
-            const bool showEdges = edgeMesh->ShowEdges;
-            if (ImGui::Button(showEdges ? "Hide Edges" : "Show Edges"))
+
+            glm::vec3 euler = glm::degrees(quatToEulerSafe(targetTransform->rotation));
+            float rotationDeg[3] = { euler.x, euler.y, euler.z };
+            if (ImGui::InputFloat3("Rotation (deg)", rotationDeg, "%.2f"))
             {
+                glm::vec3 rad = glm::radians(glm::vec3(rotationDeg[0], rotationDeg[1], rotationDeg[2]));
+                targetTransform->rotation = glm::yawPitchRoll(rad.y, rad.x, rad.z);
+            }
+
+            float scale[3] = { targetTransform->scale.x, targetTransform->scale.y, targetTransform->scale.z };
+            if (ImGui::DragFloat3("Scale", scale, 0.1f))
+            {
+                targetTransform->scale = glm::vec3(scale[0], scale[1], scale[2]);
+            }
+
+            Scene::Entry* selectedEntry = app.GetScene().GetSelectedEntry();
+            if (selectedEntry && selectedEntry->Object && !selectedEntry->Object->Meshes.empty())
+            {
+                ImGui::SeparatorText("Display");
+                ImGui::SliderFloat("Opacity", &selectedEntry->Object->Opacity, 0.0f, 1.0f, "%.2f");
+
+                Ref<MaterialPBR> pbr = std::dynamic_pointer_cast<MaterialPBR>(selectedEntry->Object->Meshes[0]->Mat);
+                if (pbr)
+                {
+                    ImGui::SeparatorText("PBR Material");
+                    ImGui::ColorEdit3("Albedo", &pbr->Albedo.x);
+                    ImGui::SliderFloat("Metallic", &pbr->Metallic, 0.0f, 1.0f, "%.2f");
+                    ImGui::SliderFloat("Roughness", &pbr->Roughness, 0.04f, 1.0f, "%.2f");
+                    ImGui::SliderFloat("Material AO", &pbr->AmbientOcclusion, 0.0f, 1.0f, "%.2f");
+                }
+                Ref<Mesh> edgeMesh;
                 for (const auto& mesh : selectedEntry->Object->Meshes)
                 {
                     if (mesh && !mesh->EdgeVertices.empty())
-                        mesh->ShowEdges = !showEdges;
-                }
-            }
-        }
-        Ref<ToonMaterial> toon = std::dynamic_pointer_cast<ToonMaterial>(selectedEntry->Object->Meshes[0]->Mat);
-        if (toon)
-        {
-            ImGui::SeparatorText("Toon Material");
-            ImGui::ColorEdit3("Diffuse", &toon->Diffuse.x);
-            ImGui::ColorEdit3("Ambient", &toon->Ambient.x);
-            ImGui::ColorEdit3("Specular", &toon->Specular.x);
-            ImGui::SliderFloat("Shininess", &toon->SpecularPower, 1.0f, 128.0f, "%.1f");
-            ImGui::SliderFloat("Alpha", &toon->Alpha, 0.0f, 1.0f, "%.2f");
-            ImGui::Checkbox("Two Sided", &toon->TwoSided);
-            ImGui::Checkbox("Edge", &toon->EdgeEnabled);
-            if (toon->EdgeEnabled)
-            {
-                ImGui::ColorEdit4("Edge Color", &toon->EdgeColor.x);
-                float edgeSize = toon->EdgeSize;
-                if (ImGui::SliderFloat("Edge Size", &edgeSize, 0.0f, 8.0f, "%.2f px"))
-                {
-                    for (const auto& mesh : selectedEntry->Object->Meshes)
                     {
-                        Ref<ToonMaterial> meshToon = std::dynamic_pointer_cast<ToonMaterial>(mesh->Mat);
-                        if (meshToon)
-                            meshToon->EdgeSize = edgeSize;
+                        edgeMesh = mesh;
+                        break;
+                    }
+                }
+                if (edgeMesh)
+                {
+                    ImGui::SeparatorText("STEP Display");
+                    const bool showEdges = edgeMesh->ShowEdges;
+                    if (ImGui::Button(showEdges ? "Hide Edges" : "Show Edges"))
+                    {
+                        for (const auto& mesh : selectedEntry->Object->Meshes)
+                        {
+                            if (mesh && !mesh->EdgeVertices.empty())
+                                mesh->ShowEdges = !showEdges;
+                        }
+                    }
+                }
+                Ref<ToonMaterial> toon = std::dynamic_pointer_cast<ToonMaterial>(selectedEntry->Object->Meshes[0]->Mat);
+                if (toon)
+                {
+                    ImGui::SeparatorText("Toon Material");
+                    ImGui::ColorEdit3("Diffuse", &toon->Diffuse.x);
+                    ImGui::ColorEdit3("Ambient", &toon->Ambient.x);
+                    ImGui::ColorEdit3("Specular", &toon->Specular.x);
+                    ImGui::SliderFloat("Shininess", &toon->SpecularPower, 1.0f, 128.0f, "%.1f");
+                    ImGui::SliderFloat("Alpha", &toon->Alpha, 0.0f, 1.0f, "%.2f");
+                    ImGui::Checkbox("Two Sided", &toon->TwoSided);
+                    ImGui::Checkbox("Edge", &toon->EdgeEnabled);
+                    if (toon->EdgeEnabled)
+                    {
+                        ImGui::ColorEdit4("Edge Color", &toon->EdgeColor.x);
+                        float edgeSize = toon->EdgeSize;
+                        if (ImGui::SliderFloat("Edge Size", &edgeSize, 0.0f, 8.0f, "%.2f px"))
+                        {
+                            for (const auto& mesh : selectedEntry->Object->Meshes)
+                            {
+                                Ref<ToonMaterial> meshToon = std::dynamic_pointer_cast<ToonMaterial>(mesh->Mat);
+                                if (meshToon)
+                                    meshToon->EdgeSize = edgeSize;
+                            }
+                        }
                     }
                 }
             }
         }
-    }
 
-    ImGui::SeparatorText("Gizmo");
+        ImGui::SeparatorText("Gizmo");
 
-    int& gizmoMode = app.GetGizmoMode();
-    ImGui::Text("Mode:");
-    ImGui::SameLine();
-    ImGui::RadioButton("Move", &gizmoMode, 0); ImGui::SameLine();
-    ImGui::RadioButton("Rotate", &gizmoMode, 1); ImGui::SameLine();
-    ImGui::RadioButton("Scale", &gizmoMode, 2);
+        int& gizmoMode = app.GetGizmoMode();
+        ImGui::Text("Mode:");
+        ImGui::SameLine();
+        ImGui::RadioButton("Move", &gizmoMode, 0); ImGui::SameLine();
+        ImGui::RadioButton("Rotate", &gizmoMode, 1); ImGui::SameLine();
+        ImGui::RadioButton("Scale", &gizmoMode, 2);
 
-    bool local = app.GetGizmoLocal();
-    if (ImGui::Checkbox("Local", &local))
-        app.GetGizmoLocal() = local;
-    ImGui::SameLine();
-    bool view = app.GetGizmoView();
-    if (ImGui::Checkbox("View", &view))
-        app.GetGizmoView() = view;
+        bool local = app.GetGizmoLocal();
+        if (ImGui::Checkbox("Local", &local))
+            app.GetGizmoLocal() = local;
+        ImGui::SameLine();
+        bool view = app.GetGizmoView();
+        if (ImGui::Checkbox("View", &view))
+            app.GetGizmoView() = view;
 
-    float gizmoSize = app.GetGizmoSize();
-    if (ImGui::SliderFloat("Size", &gizmoSize, 0.1f, 5.0f))
-        app.GetGizmoSize() = gizmoSize;
+        float gizmoSize = app.GetGizmoSize();
+        if (ImGui::SliderFloat("Size", &gizmoSize, 0.1f, 5.0f))
+            app.GetGizmoSize() = gizmoSize;
 
-    float gizmoLineWidth = app.GetGizmoLineWidth();
-    if (ImGui::SliderFloat("Line Width", &gizmoLineWidth, 0.5f, 10.0f))
-        app.GetGizmoLineWidth() = gizmoLineWidth;
+        float gizmoLineWidth = app.GetGizmoLineWidth();
+        if (ImGui::SliderFloat("Line Width", &gizmoLineWidth, 0.5f, 10.0f))
+            app.GetGizmoLineWidth() = gizmoLineWidth;
 
-    bool active = IsGizmoActivate();
-    ImGui::Text("Active: %s", active ? "Yes" : "No");
+        bool active = IsGizmoActivate();
+        ImGui::Text("Active: %s", active ? "Yes" : "No");
 
-    if (ImGui::Button("Reset"))
-    {
-        targetTransform->translation = glm::vec3(0.0f);
-        targetTransform->rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-        targetTransform->scale = glm::vec3(0.1f);
-    }
-    ImGui::SameLine();
-        if (ImGui::Button("Focus"))
+        if (selectedCount <= 1 && ImGui::Button("Reset"))
         {
-            if (m_Camera) m_Camera->setInputEnabled(true);
+            targetTransform->translation = glm::vec3(0.0f);
+            targetTransform->rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+            targetTransform->scale = glm::vec3(0.1f);
+        }
+        if (selectedCount <= 1)
+        {
+            ImGui::SameLine();
+            if (ImGui::Button("Focus"))
+            {
+                if (m_Camera) m_Camera->setInputEnabled(true);
+            }
         }
     }
 
@@ -1030,6 +1041,47 @@ bool ImGuiLayer::OnMouseButtonDown(MouseButtonPressedEvent& e)
     }
     else if (e.GetMouseButton() == 0)
     {
+        bool mouseOverGizmo = false;
+        Transform* targetTransform = app.GetGizmoTargetTransform();
+        if (app.IsViewportHovered() && targetTransform)
+        {
+            int gizmoFlags = 0;
+            switch (app.GetGizmoMode())
+            {
+            case 0: gizmoFlags = GIZMO_TRANSLATE; break;
+            case 1: gizmoFlags = GIZMO_ROTATE;    break;
+            case 2: gizmoFlags = GIZMO_SCALE;     break;
+            case 3: gizmoFlags = GIZMO_ALL;       break;
+            default: gizmoFlags = GIZMO_TRANSLATE; break;
+            }
+            if (app.GetGizmoLocal()) gizmoFlags |= GIZMO_LOCAL;
+            if (app.GetGizmoView())  gizmoFlags |= GIZMO_VIEW;
+            SetGizmoSize(app.GetGizmoSize());
+            SetGizmoLineWidth(app.GetGizmoLineWidth());
+            SetGizmoViewportSize((int)app.GetViewportSize().x, (int)app.GetViewportSize().y);
+            mouseOverGizmo = isMouseOverGizmo(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix(),
+                false, app.GetViewportMousePos(), gizmoFlags, targetTransform);
+        }
+
+        if (app.IsViewportHovered() && !IsGizmoActivate() && !mouseOverGizmo)
+        {
+            const glm::vec2& viewportMouse = app.GetViewportMousePos();
+            const glm::vec2& viewportSize = app.GetViewportSize();
+            const int x = (int)viewportMouse.x;
+            const int y = (int)(viewportSize.y - viewportMouse.y - 1.0f);
+            const int objectID = app.ReadPickupPixel(x, y);
+            const int objectIndex = objectID - 1;
+            const bool hasPickedObject = objectIndex >= 0 && objectIndex < app.GetScene().GetCount();
+            if (io.KeyShift)
+            {
+                if (hasPickedObject)
+                    app.AddSelectedObjectIndex(objectIndex);
+            }
+            else
+            {
+                app.SetSelectedObjectIndex(hasPickedObject ? objectIndex : -1);
+            }
+        }
         m_LeftDownGizmo = true;
         app.GetLeftDownGizmo() = true;
     }
