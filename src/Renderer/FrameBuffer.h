@@ -45,7 +45,7 @@ class FrameBuffer
 public:
 	virtual ~FrameBuffer() = default;
 
-	virtual void Bind() = 0;
+	virtual void Bind(bool clearDepth = true) = 0;
 	virtual void Unbind() = 0;
 
 	virtual void Resize(uint32_t width, uint32_t height) = 0;
@@ -54,6 +54,9 @@ public:
 
 	virtual void ClearAttachment(uint32_t attachmentIndex, int value) = 0;
 	virtual uint64_t GetColorAttachmentRendererID(uint32_t index = 0) const = 0;
+	virtual uint64_t GetDepthAttachmentRendererID() const = 0;
+	virtual void ResolveTo(const Ref<FrameBuffer>& target, const std::vector<uint32_t>& attachmentIndices,
+		bool resolveDepth = false) = 0;
 	
 	//get information about this framebuffer
 	virtual const FrameBufferSpecification& GetSpecification() const = 0;

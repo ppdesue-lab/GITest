@@ -9,7 +9,7 @@ public:
 
     void Invalidate();
 
-    virtual void Bind() override;
+    virtual void Bind(bool clearDepth = true) override;
 	virtual void Unbind() override;
 
 	virtual void Resize(uint32_t width, uint32_t height) override;
@@ -18,6 +18,9 @@ public:
 
 	virtual void ClearAttachment(uint32_t attachmentIndex, int value) override;
 	virtual uint64_t GetColorAttachmentRendererID(uint32_t index =0) const override;
+	virtual uint64_t GetDepthAttachmentRendererID() const override;
+	virtual void ResolveTo(const Ref<FrameBuffer>& target, const std::vector<uint32_t>& attachmentIndices,
+		bool resolveDepth = false) override;
 	
 	//get information about this framebuffer
 	virtual const FrameBufferSpecification& GetSpecification() const override;

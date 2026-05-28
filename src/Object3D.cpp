@@ -77,13 +77,16 @@ void Mesh::UpdateBoundingSphere()
 }
 
 
-void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& parentTransform)
+void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& parentTransform,
+	float opacity, bool transparentPass)
 {
 	const glm::mat4 model = parentTransform * Transfm.GetMatrix();
 	Mat->Bind();
 	Mat->MatShader->SetMat4("u_View", view);
 	Mat->MatShader->SetMat4("u_Projection", proj);
 	Mat->MatShader->SetMat4("u_Model", model);
+	Mat->MatShader->SetFloat("u_ObjectOpacity", glm::clamp(opacity, 0.0f, 1.0f));
+	Mat->MatShader->SetInt("u_TransparentPass", transparentPass ? 1 : 0);
 	{
 		//phong stuff
 		glm::vec3 viewpos = glm::vec3(glm::inverse(view)[3]);
@@ -130,7 +133,7 @@ void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& pa
 #endif
     RenderCommand::DrawIndexed(VertexObject);
 #ifdef G_OPENGL
-	if (toon && toon->EdgeEnabled && toon->Alpha > 0.0f)
+	if (!transparentPass && toon && toon->EdgeEnabled && toon->Alpha > 0.0f)
 	{
 		RenderCommand::Enable("CULL_FACE");
 		RenderCommand::Cull("Front");
@@ -140,7 +143,7 @@ void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& pa
 	if (toon)
 		RenderCommand::Disable("CULL_FACE");
 #endif
-	if (ShowEdges && EdgeVertexObject && EdgeVertexCount > 0)
+	if (!transparentPass && ShowEdges && EdgeVertexObject && EdgeVertexCount > 0)
 	{
 		auto edgeShader = Application::Get().GetShaderLibrary()->Get("DefaultLineColor");
 		edgeShader->Bind();
@@ -148,15 +151,15 @@ void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& pa
 		edgeShader->SetMat4("u_Projection", proj);
 		edgeShader->SetMat4("u_Model", model);
 		RenderCommand::EnableDepthTest(true);
-		RenderCommand::SetLineWidth(3.0f);
+		RenderCommand::SetLineWidth(2.0f);
 		RenderCommand::DrawLines(EdgeVertexObject, EdgeVertexCount);
 	}
 };
 
-void Object3D::Draw(const glm::mat4& view,const glm::mat4 proj)
+void Object3D::Draw(const glm::mat4& view, const glm::mat4 proj, bool transparentPass)
 {
 	for (auto& mesh : Meshes)
-		mesh->Draw(view, proj, Transfm.GetMatrix());
+		mesh->Draw(view, proj, Transfm.GetMatrix(), Opacity, transparentPass);
 }
 
 void Object3D::UpdateBoundingSphere()

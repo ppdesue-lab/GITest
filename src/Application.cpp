@@ -107,13 +107,11 @@ Application::Application(int w,int h)
 
     SetGizmoViewportSize(w,h);
 
-    m_ViewportFBO = FrameBuffer::Create(FrameBufferSpecification{ (uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y,
-        { FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA8),
-          FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA16F),
-          FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA16F),
-          FrameBufferTextureSpecification(FrameBufferTextureFormat::Depth) } });
+    CreateViewportFrameBuffers();
     m_SSAO = CreateRef<SSAO>((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
     m_FXAA = CreateRef<FXAA>((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+    InitializeWeightedBlendedOIT();
+    InitializeTransparentStepEdgeResources();
     SetGizmoViewportSize((int)m_ViewportSize.x, (int)m_ViewportSize.y);
 
     // CSM must be created after OpenGL context is initialized
@@ -122,6 +120,7 @@ Application::Application(int w,int h)
     const std::string environmentPath = R"(D:\algorithm\kengine\build\_deps\tinybvh-src\testdata\sky_15.hdr)";//R"(E:\githubs\glslpathtracer\assets\HDR\sunset.hdr)";
     m_PBRIBL = CreateRef<PBRIBL>(environmentPath);
     m_PathTracer = CreateRef<PathTracer>((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y, environmentPath);
+    m_SVGF = CreateRef<SVGF>((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 }
 
 void Application::Run()
@@ -156,9 +155,14 @@ void Application::Run()
                               m_ViewportFBO->GetSpecification().Height != (uint32_t)m_ViewportSize.y))
         {
             m_ViewportFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+            if (m_ViewportResolvedFBO)
+                m_ViewportResolvedFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             m_SSAO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             m_FXAA->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             m_PathTracer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+            m_SVGF->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+            ResizeWeightedBlendedOIT((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+            ResizeTransparentStepEdgeResources((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
         }
 
         // --- CSM SHADOW MAP UPDATE ---
@@ -175,7 +179,7 @@ void Application::Run()
                 depthShader->Bind();
                 for (const auto& entry : m_Scene.GetObjects())
                 {
-                    if (!entry.Visible) continue;
+                    if (!entry.Visible || !entry.Object || entry.Object->Opacity <= 0.001f) continue;
                     depthShader->SetMat4("u_LightViewProj", lightViewProj[i]);
                     for (auto& mesh : entry.Object->Meshes)
                     {
@@ -197,6 +201,10 @@ void Application::Run()
         if (m_AppMode == AppMode::Editor)
         {
             if (m_ViewportFBO) m_ViewportFBO->Bind();
+#ifdef G_OPENGL
+            const GLenum opaqueBuffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
+            glDrawBuffers(3, opaqueBuffers);
+#endif
         }
         else
         {
@@ -253,8 +261,18 @@ void Application::Run()
 
         // Draw visible objects intersecting the active camera frustum.
         const Frustum cameraFrustum(m_Camera->GetProjectionMatrix() * m_Camera->GetViewMatrix());
+#ifdef G_OPENGL
+        if (m_AppMode == AppMode::Editor)
+        {
+            for (const auto& entry : m_Scene.GetObjects())
+                if (entry.Visible && entry.Object && entry.Object->Opacity >= 0.999f &&
+                    cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
+                    entry.Object->Draw(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix());
+        }
+        else
+#endif
         for (const auto& entry : m_Scene.GetObjects())
-            if (entry.Visible && entry.Object &&
+            if (entry.Visible && entry.Object && entry.Object->Opacity > 0.001f &&
                 cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
                 entry.Object->Draw(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix());
 
@@ -339,24 +357,70 @@ void Application::Run()
             RenderCommand::SetDepthRange(0, 1);
 
             if (m_ViewportFBO) m_ViewportFBO->Unbind();
+            Ref<FrameBuffer> postProcessFBO = IsMSAAEnabled() ? m_ViewportResolvedFBO : m_ViewportFBO;
+            if (IsMSAAEnabled())
+                m_ViewportFBO->ResolveTo(m_ViewportResolvedFBO, { 0, 1, 2 }, true);
+            uint64_t opaqueColor = postProcessFBO->GetColorAttachmentRendererID(0);
             if (m_ViewportRenderMode == ViewportRenderMode::Editor && m_SSAO->Enabled())
             {
                 m_SSAO->Render(
-                    m_ViewportFBO->GetColorAttachmentRendererID(0),
-                    m_ViewportFBO->GetColorAttachmentRendererID(1),
-                    m_ViewportFBO->GetColorAttachmentRendererID(2),
+                    opaqueColor,
+                    postProcessFBO->GetColorAttachmentRendererID(1),
+                    postProcessFBO->GetColorAttachmentRendererID(2),
                     m_Camera->GetViewMatrix(),
                     m_Camera->GetProjectionMatrix());
             }
-            if (m_ViewportRenderMode == ViewportRenderMode::Editor && m_FXAA->Enabled())
+            uint64_t shadedOpaqueColor = m_SSAO->Enabled() ? m_SSAO->GetOutputTexture() : opaqueColor;
+
+#ifdef G_OPENGL
+            // Render transparent geometry after SSAO, reusing the opaque G-buffer depth attachment.
+            RenderTransparentDepthPrepass();
+            m_ViewportFBO->Bind(false);
+            const GLenum transparentBuffers[2] = { GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4 };
+            const float zero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            const float one[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+            glDrawBuffers(2, transparentBuffers);
+            glClearBufferfv(GL_COLOR, 0, zero);
+            glClearBufferfv(GL_COLOR, 1, one);
+            glDepthMask(GL_FALSE);
+            glEnable(GL_DEPTH_TEST);
+            glEnable(GL_BLEND);
+            glBlendEquation(GL_FUNC_ADD);
+            glBlendFunci(0, GL_ONE, GL_ONE);
+            glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
+
+            for (const auto& entry : m_Scene.GetObjects())
+                if (entry.Visible && entry.Object && entry.Object->Opacity > 0.001f &&
+                    entry.Object->Opacity < 0.999f &&
+                    cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
+                    entry.Object->Draw(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix(), true);
+
+            glDepthMask(GL_TRUE);
+            glBlendFunci(0, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glBlendFunci(1, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            const GLenum opaqueBuffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
+            glDrawBuffers(3, opaqueBuffers);
+            m_ViewportFBO->Unbind();
+#endif
+            if (IsMSAAEnabled())
+                m_ViewportFBO->ResolveTo(m_ViewportResolvedFBO, { 3, 4 }, false);
+            uint64_t sceneColor = CompositeWeightedBlendedOIT(
+                shadedOpaqueColor,
+                postProcessFBO->GetColorAttachmentRendererID(3),
+                postProcessFBO->GetColorAttachmentRendererID(4));
+            RenderTransparentStepEdges(postProcessFBO->GetDepthAttachmentRendererID());
+            if (m_ViewportRenderMode == ViewportRenderMode::Editor && !IsMSAAEnabled() && m_FXAA->Enabled())
             {
-                uint64_t sourceTexture = m_SSAO->Enabled()
-                    ? m_SSAO->GetOutputTexture()
-                    : m_ViewportFBO->GetColorAttachmentRendererID(0);
-                m_FXAA->Render(sourceTexture);
+                m_FXAA->Render(sceneColor);
             }
             if (m_ViewportRenderMode == ViewportRenderMode::Rendering)
+            {
                 m_PathTracer->Render(m_Scene, *m_Camera);
+                if (m_PathTracer->GetSampleCount() <= 1)
+                    m_SVGF->ResetHistory();
+                if (m_SVGF->Enabled())
+                    m_SVGF->Render(*m_PathTracer, *m_Camera);
+            }
         }
         else
         {
@@ -517,6 +581,41 @@ void Application::ClearObject3Ds()
     m_GizmoTargetTransform = nullptr;
 }
 
+void Application::CreateViewportFrameBuffers()
+{
+    FrameBufferSpecification specification{ (uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y,
+        { FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA8),
+          FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA16F),
+          FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA16F),
+          FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA16F),
+          FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA16F),
+          FrameBufferTextureSpecification(FrameBufferTextureFormat::Depth) } };
+    specification.Samples = (uint32_t)std::max(m_MSAASamples, 1);
+    m_ViewportFBO = FrameBuffer::Create(specification);
+
+    specification.Samples = 1;
+    m_ViewportResolvedFBO = FrameBuffer::Create(specification);
+}
+
+void Application::SetMSAASamples(int samples)
+{
+    int normalizedSamples = 1;
+    if (samples >= 8)
+        normalizedSamples = 8;
+    else if (samples >= 4)
+        normalizedSamples = 4;
+    else if (samples >= 2)
+        normalizedSamples = 2;
+
+    if (m_MSAASamples == normalizedSamples)
+        return;
+
+    m_MSAASamples = normalizedSamples;
+    if (m_MSAASamples > 1 && m_FXAA)
+        m_FXAA->Enabled() = false;
+    CreateViewportFrameBuffers();
+}
+
 void Application::SetViewportSize(const glm::vec2& size)
 {
     const uint32_t width = static_cast<uint32_t>(std::max(size.x, 1.0f));
@@ -529,6 +628,276 @@ void Application::SetViewportSize(const glm::vec2& size)
     if (m_Camera)
         m_Camera->setAspectRatio(pixelSize.x / pixelSize.y);
     SetGizmoViewportSize((int)pixelSize.x, (int)pixelSize.y);
+}
+
+void Application::InitializeWeightedBlendedOIT()
+{
+#ifdef G_OPENGL
+    const std::string fullscreenVertex = R"(
+        #version 330 core
+        out vec2 v_UV;
+        void main()
+        {
+            vec2 positions[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+            vec2 position = positions[gl_VertexID];
+            v_UV = position * 0.5 + 0.5;
+            gl_Position = vec4(position, 0.0, 1.0);
+        }
+    )";
+    const std::string compositeFragment = R"(
+        #version 330 core
+        in vec2 v_UV;
+        layout(location = 0) out vec4 color;
+        uniform sampler2D u_Opaque;
+        uniform sampler2D u_Accumulation;
+        uniform sampler2D u_Revealage;
+        void main()
+        {
+            vec3 opaque = texture(u_Opaque, v_UV).rgb;
+            vec4 accumulation = texture(u_Accumulation, v_UV);
+            float revealage = clamp(texture(u_Revealage, v_UV).r, 0.0, 1.0);
+            vec3 transparent = accumulation.rgb / max(accumulation.a, 0.00001);
+            color = vec4(mix(transparent, opaque, revealage), 1.0);
+        }
+    )";
+    m_OITCompositeShader = Shader::Create("WeightedBlendedOITComposite", fullscreenVertex, compositeFragment);
+    glCreateVertexArrays(1, &m_OITQuadVAO);
+    glCreateFramebuffers(1, &m_OITCompositeFBO);
+    ResizeWeightedBlendedOIT((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+#endif
+}
+
+void Application::ResizeWeightedBlendedOIT(uint32_t width, uint32_t height)
+{
+#ifdef G_OPENGL
+    if (!m_OITCompositeFBO)
+        return;
+    if (m_OITCompositeTexture)
+        glDeleteTextures(1, &m_OITCompositeTexture);
+    glCreateTextures(GL_TEXTURE_2D, 1, &m_OITCompositeTexture);
+    glTextureStorage2D(m_OITCompositeTexture, 1, GL_RGBA16F, width, height);
+    glTextureParameteri(m_OITCompositeTexture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(m_OITCompositeTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameteri(m_OITCompositeTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(m_OITCompositeTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glNamedFramebufferTexture(m_OITCompositeFBO, GL_COLOR_ATTACHMENT0, m_OITCompositeTexture, 0);
+    if (glCheckNamedFramebufferStatus(m_OITCompositeFBO, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        ERROR("Weighted blended OIT composite framebuffer is incomplete!");
+#else
+    (void)width;
+    (void)height;
+#endif
+}
+
+uint64_t Application::CompositeWeightedBlendedOIT(uint64_t opaqueTexture, uint64_t accumulationTexture,
+    uint64_t revealageTexture)
+{
+#ifdef G_OPENGL
+    if (!m_OITCompositeShader || !m_OITCompositeFBO)
+        return opaqueTexture;
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_OITCompositeFBO);
+    glViewport(0, 0, (GLsizei)m_ViewportSize.x, (GLsizei)m_ViewportSize.y);
+    glBindVertexArray(m_OITQuadVAO);
+    m_OITCompositeShader->Bind();
+    m_OITCompositeShader->SetInt("u_Opaque", 0);
+    m_OITCompositeShader->SetInt("u_Accumulation", 1);
+    m_OITCompositeShader->SetInt("u_Revealage", 2);
+    glBindTextureUnit(0, (uint32_t)opaqueTexture);
+    glBindTextureUnit(1, (uint32_t)accumulationTexture);
+    glBindTextureUnit(2, (uint32_t)revealageTexture);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindVertexArray(0);
+    glEnable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    return m_OITCompositeTexture;
+#else
+    (void)accumulationTexture;
+    (void)revealageTexture;
+    return opaqueTexture;
+#endif
+}
+
+void Application::InitializeTransparentStepEdgeResources()
+{
+#ifdef G_OPENGL
+    const std::string depthVertex = R"(
+        #version 330 core
+        layout(location = 0) in vec3 a_Position;
+        uniform mat4 u_View;
+        uniform mat4 u_Projection;
+        uniform mat4 u_Model;
+        void main()
+        {
+            gl_Position = u_Projection * u_View * u_Model * vec4(a_Position, 1.0);
+        }
+    )";
+    const std::string depthFragment = R"(
+        #version 330 core
+        void main()
+        {
+        }
+    )";
+    const std::string edgeVertex = R"(
+        #version 330 core
+        layout(location = 0) in vec3 a_Position;
+        layout(location = 1) in vec4 a_Color;
+        uniform mat4 u_View;
+        uniform mat4 u_Projection;
+        uniform mat4 u_Model;
+        out vec4 v_Color;
+        void main()
+        {
+            v_Color = a_Color;
+            gl_Position = u_Projection * u_View * u_Model * vec4(a_Position, 1.0);
+        }
+    )";
+    const std::string edgeFragment = R"(
+        #version 330 core
+        layout(location = 0) out vec4 color;
+        in vec4 v_Color;
+        uniform sampler2D u_SceneDepth;
+        uniform vec2 u_ViewportSize;
+        uniform float u_DepthBias;
+        void main()
+        {
+            vec2 uv = gl_FragCoord.xy / max(u_ViewportSize, vec2(1.0));
+            float sceneDepth = texture(u_SceneDepth, uv).r;
+            if (gl_FragCoord.z > sceneDepth + u_DepthBias)
+                discard;
+            gl_FragDepth = max(gl_FragCoord.z - u_DepthBias, 0.0);
+            color = v_Color;
+        }
+    )";
+    m_TransparentDepthShader = Shader::Create("TransparentStepDepth", depthVertex, depthFragment);
+    m_TransparentStepEdgeShader = Shader::Create("TransparentStepEdge", edgeVertex, edgeFragment);
+    glCreateFramebuffers(1, &m_TransparentDepthFBO);
+    ResizeTransparentStepEdgeResources((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+#endif
+}
+
+void Application::ResizeTransparentStepEdgeResources(uint32_t width, uint32_t height)
+{
+#ifdef G_OPENGL
+    if (!m_TransparentDepthFBO)
+        return;
+    if (m_TransparentDepthTexture)
+        glDeleteTextures(1, &m_TransparentDepthTexture);
+    glCreateTextures(GL_TEXTURE_2D, 1, &m_TransparentDepthTexture);
+    glTextureStorage2D(m_TransparentDepthTexture, 1, GL_DEPTH_COMPONENT24, width, height);
+    glTextureParameteri(m_TransparentDepthTexture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(m_TransparentDepthTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTextureParameteri(m_TransparentDepthTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(m_TransparentDepthTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glNamedFramebufferTexture(m_TransparentDepthFBO, GL_DEPTH_ATTACHMENT, m_TransparentDepthTexture, 0);
+    glNamedFramebufferDrawBuffer(m_TransparentDepthFBO, GL_NONE);
+    glNamedFramebufferReadBuffer(m_TransparentDepthFBO, GL_NONE);
+    if (glCheckNamedFramebufferStatus(m_TransparentDepthFBO, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        ERROR("Transparent STEP edge depth framebuffer is incomplete!");
+#else
+    (void)width;
+    (void)height;
+#endif
+}
+
+void Application::RenderTransparentDepthPrepass()
+{
+#ifdef G_OPENGL
+    if (!m_TransparentDepthShader || !m_TransparentDepthFBO || !m_Camera)
+        return;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_TransparentDepthFBO);
+    glViewport(0, 0, (GLsizei)m_ViewportSize.x, (GLsizei)m_ViewportSize.y);
+    glClearDepth(1.0);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+
+    const glm::mat4 view = m_Camera->GetViewMatrix();
+    const glm::mat4 projection = m_Camera->GetProjectionMatrix();
+    const Frustum cameraFrustum(projection * view);
+    m_TransparentDepthShader->Bind();
+    m_TransparentDepthShader->SetMat4("u_View", view);
+    m_TransparentDepthShader->SetMat4("u_Projection", projection);
+    for (const auto& entry : m_Scene.GetObjects())
+    {
+        if (!entry.Visible || !entry.Object || entry.Object->Opacity <= 0.001f ||
+            entry.Object->Opacity >= 0.999f ||
+            !cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
+            continue;
+        for (const auto& mesh : entry.Object->Meshes)
+        {
+            if (!mesh || !mesh->VertexObject)
+                continue;
+            m_TransparentDepthShader->SetMat4("u_Model", entry.Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
+            RenderCommand::DrawIndexed(mesh->VertexObject);
+        }
+    }
+
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glEnable(GL_BLEND);
+#endif
+}
+
+void Application::RenderTransparentStepEdges(uint64_t sceneDepthTexture)
+{
+#ifdef G_OPENGL
+    if (!m_TransparentStepEdgeShader || !m_TransparentDepthTexture || !sceneDepthTexture ||
+        !m_OITCompositeFBO || !m_Camera)
+        return;
+
+    const glm::mat4 view = m_Camera->GetViewMatrix();
+    const glm::mat4 projection = m_Camera->GetProjectionMatrix();
+    const Frustum cameraFrustum(projection * view);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_OITCompositeFBO);
+    glViewport(0, 0, (GLsizei)m_ViewportSize.x, (GLsizei)m_ViewportSize.y);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_TransparentDepthTexture, 0);
+    glDepthMask(GL_FALSE);
+    glDepthFunc(GL_LEQUAL);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBindTextureUnit(0, (uint32_t)sceneDepthTexture);
+
+    m_TransparentStepEdgeShader->Bind();
+    m_TransparentStepEdgeShader->SetMat4("u_View", view);
+    m_TransparentStepEdgeShader->SetMat4("u_Projection", projection);
+    m_TransparentStepEdgeShader->SetFloat2("u_ViewportSize", m_ViewportSize);
+    m_TransparentStepEdgeShader->SetFloat("u_DepthBias", 0.00002f);
+    m_TransparentStepEdgeShader->SetInt("u_SceneDepth", 0);
+    RenderCommand::SetLineWidth(2.0f);
+
+    for (const auto& entry : m_Scene.GetObjects())
+    {
+        if (!entry.Visible || !entry.Object || entry.Object->Opacity <= 0.001f ||
+            entry.Object->Opacity >= 0.999f ||
+            !cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
+            continue;
+        for (const auto& mesh : entry.Object->Meshes)
+        {
+            if (!mesh || !mesh->ShowEdges || !mesh->EdgeVertexObject || mesh->EdgeVertexCount == 0)
+                continue;
+            m_TransparentStepEdgeShader->SetMat4("u_Model", entry.Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
+            RenderCommand::DrawLines(mesh->EdgeVertexObject, mesh->EdgeVertexCount);
+        }
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_DEPTH_TEST);
+#else
+    (void)sceneDepthTexture;
+#endif
 }
 
 void Application::SetSelectedObjectIndex(int index)
@@ -544,16 +913,23 @@ void Application::SetViewportRenderMode(ViewportRenderMode mode)
     m_ViewportRenderMode = mode;
     if (m_PathTracer && mode == ViewportRenderMode::Rendering)
         m_PathTracer->ResetAccumulation();
+    if (m_SVGF)
+        m_SVGF->ResetHistory();
 }
 
 uint64_t Application::GetViewportColorTextureID() const
 {
     if (!m_ViewportFBO)
         return 0;
+    if (m_ViewportRenderMode == ViewportRenderMode::Rendering && m_SVGF && m_SVGF->Enabled() &&
+        m_SVGF->GetOutputTexture() && m_SVGF->HasHistory())
+        return m_SVGF->GetOutputTexture();
     if (m_ViewportRenderMode == ViewportRenderMode::Rendering && m_PathTracer && m_PathTracer->GetOutputTexture())
         return m_PathTracer->GetOutputTexture();
-    if (m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
+    if (!IsMSAAEnabled() && m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
         return m_FXAA->GetOutputTexture();
+    if (m_OITCompositeTexture)
+        return m_OITCompositeTexture;
     if (m_SSAO && m_SSAO->Enabled() && m_SSAO->GetOutputTexture())
         return m_SSAO->GetOutputTexture();
     return m_ViewportFBO->GetColorAttachmentRendererID(0);

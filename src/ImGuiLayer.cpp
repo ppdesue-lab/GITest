@@ -340,10 +340,34 @@ void ImGuiLayer::DrawSSAODebugWindow()
 
 void ImGuiLayer::DrawFXAADebugWindow()
 {
-    FXAA& fxaa = Application::Get().GetFXAA();
+    Application& app = Application::Get();
+    FXAA& fxaa = app.GetFXAA();
 
     ImGui::PushID("FXAADebug");
-    ImGui::Checkbox("Enable", &fxaa.Enabled());
+    const char* msaaModes[] = { "Off", "2x", "4x", "8x" };
+    int msaaIndex = 0;
+    switch (app.GetMSAASamples())
+    {
+    case 2: msaaIndex = 1; break;
+    case 4: msaaIndex = 2; break;
+    case 8: msaaIndex = 3; break;
+    default: msaaIndex = 0; break;
+    }
+    if (ImGui::Combo("MSAA", &msaaIndex, msaaModes, IM_ARRAYSIZE(msaaModes)))
+    {
+        const int samples[] = { 1, 2, 4, 8 };
+        app.SetMSAASamples(samples[msaaIndex]);
+    }
+
+    bool fxaaEnabled = fxaa.Enabled();
+    if (ImGui::Checkbox("Enable FXAA", &fxaaEnabled))
+    {
+        fxaa.Enabled() = fxaaEnabled;
+        if (fxaa.Enabled())
+            app.SetMSAASamples(1);
+    }
+    if (app.IsMSAAEnabled())
+        ImGui::TextDisabled("FXAA is disabled while MSAA is enabled.");
     if (fxaa.Enabled())
     {
         const char* modes[] = { "Result", "Edges", "Difference" };
@@ -353,6 +377,36 @@ void ImGuiLayer::DrawFXAADebugWindow()
         ImGui::SliderFloat("Subpixel Quality", &fxaa.SubpixelQuality(), 0.0f, 1.0f, "%.2f");
         ImGui::SliderFloat("Span Max", &fxaa.SpanMax(), 2.0f, 16.0f, "%.1f");
         ImGui::TextDisabled("Edges/Difference confirms which silhouette pixels FXAA processes.");
+    }
+    ImGui::PopID();
+}
+
+void ImGuiLayer::DrawSVGFDenoiserWindow()
+{
+    Application& app = Application::Get();
+    SVGF& svgf = app.GetSVGF();
+
+    ImGui::PushID("SVGFDenoiser");
+    bool enabled = svgf.Enabled();
+    if (ImGui::Checkbox("Enable SVGF", &enabled))
+    {
+        svgf.Enabled() = enabled;
+        svgf.ResetHistory();
+        app.GetPathTracer().ResetAccumulation();
+    }
+    if (ImGui::Button("Reset History"))
+    {
+        svgf.ResetHistory();
+        app.GetPathTracer().ResetAccumulation();
+    }
+    if (svgf.Enabled())
+    {
+        ImGui::SliderInt("Iterations", &svgf.Iterations(), 0, 6);
+        ImGui::SliderFloat("History Alpha", &svgf.HistoryAlpha(), 0.0f, 0.98f, "%.2f");
+        ImGui::SliderFloat("Phi Color", &svgf.PhiColor(), 0.5f, 16.0f, "%.2f");
+        ImGui::SliderFloat("Phi Normal", &svgf.PhiNormal(), 1.0f, 256.0f, "%.0f");
+        ImGui::SliderFloat("Phi Depth", &svgf.PhiDepth(), 0.05f, 10.0f, "%.2f");
+        ImGui::TextDisabled("Rendering mode path-tracer denoiser");
     }
     ImGui::PopID();
 }
@@ -529,6 +583,9 @@ void ImGuiLayer::DrawPropertiesPanel()
     Scene::Entry* selectedEntry = app.GetScene().GetSelectedEntry();
     if (selectedEntry && selectedEntry->Object && !selectedEntry->Object->Meshes.empty())
     {
+        ImGui::SeparatorText("Display");
+        ImGui::SliderFloat("Opacity", &selectedEntry->Object->Opacity, 0.0f, 1.0f, "%.2f");
+
         Ref<MaterialPBR> pbr = std::dynamic_pointer_cast<MaterialPBR>(selectedEntry->Object->Meshes[0]->Mat);
         if (pbr)
         {
@@ -646,9 +703,14 @@ void ImGuiLayer::DrawPropertiesPanel()
             DrawSSAODebugWindow();
             ImGui::TreePop();
         }
-        if (ImGui::TreeNodeEx("FXAA", ImGuiTreeNodeFlags_DefaultOpen))
+        if (ImGui::TreeNodeEx("Anti-Aliasing", ImGuiTreeNodeFlags_DefaultOpen))
         {
             DrawFXAADebugWindow();
+            ImGui::TreePop();
+        }
+        if (ImGui::TreeNodeEx("Denoising / SVGF", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            DrawSVGFDenoiserWindow();
             ImGui::TreePop();
         }
         if (ImGui::TreeNodeEx("PBR / IBL", ImGuiTreeNodeFlags_DefaultOpen))
@@ -786,6 +848,15 @@ void ImGuiLayer::DrawViewportPanel()
         PathTracer& tracer = app.GetPathTracer();
         ImGui::TextDisabled("SPP %u | Tris %u | %s", tracer.GetSampleCount(), tracer.GetTriangleCount(),
             tracer.GetStatus().c_str());
+        ImGui::SameLine();
+        SVGF& svgf = app.GetSVGF();
+        bool svgfEnabled = svgf.Enabled();
+        if (ImGui::Checkbox("SVGF", &svgfEnabled))
+        {
+            svgf.Enabled() = svgfEnabled;
+            svgf.ResetHistory();
+            tracer.ResetAccumulation();
+        }
     }
     ImGui::Separator();
 

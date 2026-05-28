@@ -208,11 +208,46 @@ float3 TracePath(const global struct BVHNode* nodes, const global uint* indices,
     return radiance;
 }
 
+void ComputePrimaryFeatures(const global struct BVHNode* nodes, const global uint* indices,
+    const global float4* triangles, const global float4* triangleUVs,
+    const global struct TraceMaterial* materials, const global float4* diffuseTexels,
+    uint triangleCount, float3 origin, float3 direction,
+    global float4* positions, global float4* normals, global float4* albedos, uint index)
+{
+    float distance;
+    uint primitive;
+    float2 barycentric;
+    if (!IntersectScene(nodes, indices, triangles, triangleCount, origin, direction, &distance, &primitive, &barycentric))
+    {
+        positions[index] = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
+        normals[index] = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
+        albedos[index] = (float4)(1.0f);
+        return;
+    }
+
+    const global float4* triangle = triangles + primitive * 3;
+    float3 normal = normalize(cross(triangle[1].xyz - triangle[0].xyz, triangle[2].xyz - triangle[0].xyz));
+    if (dot(normal, direction) > 0.0f)
+        normal = -normal;
+
+    const struct TraceMaterial material = materials[primitive];
+    const global float4* uvs = triangleUVs + primitive * 3;
+    const float2 uv = uvs[0].xy * (1.0f - barycentric.x - barycentric.y) +
+        uvs[1].xy * barycentric.x + uvs[2].xy * barycentric.y;
+    const float3 diffuse = material.diffuseRoughness.xyz *
+        SampleDiffuseTexture(diffuseTexels, material.textureInfo, uv);
+
+    positions[index] = (float4)(origin + direction * distance, 1.0f);
+    normals[index] = (float4)(normal, 1.0f);
+    albedos[index] = (float4)(clamp(diffuse, (float3)(0.0f), (float3)(1.0f)), 1.0f);
+}
+
 kernel void PathTrace(const global struct BVHNode* nodes, const global uint* indices, const global float4* triangles,
     const global float4* triangleUVs, const global struct TraceMaterial* materials, const global float4* diffuseTexels,
     const global float4* environment, int envWidth, int envHeight,
     uint triangleCount, float4 eye, float4 bottomLeft, float4 bottomRight, float4 topLeft,
-    uint width, uint height, uint sampleIndex, global float4* accumulation, global float4* pixels)
+    uint width, uint height, uint sampleIndex, global float4* accumulation, global float4* pixels,
+    global float4* rawRadiance, global float4* positions, global float4* normals, global float4* albedos)
 {
     uint index = get_global_id(0);
     if (index >= width * height)
@@ -224,8 +259,11 @@ kernel void PathTrace(const global struct BVHNode* nodes, const global uint* ind
     float v = ((float)y + RandomFloat(&state)) / (float)height;
     float3 direction = normalize(bottomLeft.xyz + (bottomRight.xyz - bottomLeft.xyz) * u +
         (topLeft.xyz - bottomLeft.xyz) * v);
+    ComputePrimaryFeatures(nodes, indices, triangles, triangleUVs, materials, diffuseTexels,
+        triangleCount, eye.xyz, direction, positions, normals, albedos, index);
     float3 sample = TracePath(nodes, indices, triangles, triangleUVs, materials, diffuseTexels, environment, envWidth, envHeight,
         triangleCount, eye.xyz, direction, &state);
+    rawRadiance[index] = (float4)(fmax(sample, (float3)(0.0f)), 1.0f);
     float3 sum = accumulation[index].xyz + sample;
     accumulation[index] = (float4)(sum, 1.0f);
     float3 color = sum / (float)(sampleIndex + 1u);

@@ -21,7 +21,8 @@ public:
     ~Mesh() = default;
 
     virtual void Draw(const glm::mat4& view, const glm::mat4 proj,
-        const glm::mat4& parentTransform = glm::mat4(1.0f));
+        const glm::mat4& parentTransform = glm::mat4(1.0f),
+        float opacity = 1.0f, bool transparentPass = false);
     void UpdateBoundingSphere();
     
     Ref<Material> Mat;
@@ -45,13 +46,14 @@ public:
     bool Load(const std::string& filepath);
     template<typename T>
     bool LoadFromPath(const std::filesystem::path& filepath);
-    virtual void Draw(const glm::mat4& view,const glm::mat4 proj);
+    virtual void Draw(const glm::mat4& view, const glm::mat4 proj, bool transparentPass = false);
     void UpdateBoundingSphere();
     BoundingSphere GetWorldBoundingSphere() const;
 
     Transform Transfm;
 	std::vector<Ref<Mesh>> Meshes;
     BoundingSphere Bounds;
+    float Opacity = 1.0f;
 };
 
 extern template bool Object3D::Load<VertexColor>(const std::string& filepath);

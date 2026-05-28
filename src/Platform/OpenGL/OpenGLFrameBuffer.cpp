@@ -169,8 +169,11 @@ void OpenGLFrameBuffer::Invalidate()
 
 	if (m_ColorAttachments.size() > 1)
 	{
-		GLenum buffers[4] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3 };
-		glDrawBuffers(m_ColorAttachments.size(), buffers);
+		std::vector<GLenum> buffers;
+		buffers.reserve(m_ColorAttachments.size());
+		for (size_t i = 0; i < m_ColorAttachments.size(); ++i)
+			buffers.emplace_back(GL_COLOR_ATTACHMENT0 + static_cast<GLenum>(i));
+		glDrawBuffers(static_cast<GLsizei>(buffers.size()), buffers.data());
 	}
 	else if (m_ColorAttachments.empty())
 	{
@@ -194,13 +197,16 @@ void OpenGLFrameBuffer::Invalidate()
 }
 
 
-void OpenGLFrameBuffer::Bind()
+void OpenGLFrameBuffer::Bind(bool clearDepth)
 {
 	glBindFramebuffer(GL_FRAMEBUFFER, m_RendererID);
 	glViewport(0, 0, m_Specification.Width, m_Specification.Height);
 
-	//default depth is 0,which is the near plane in OpenGL, so we clear it to 1.0f (the near plane) to avoid depth testing issues
-	glClear(GL_DEPTH_BUFFER_BIT);
+	if (clearDepth)
+	{
+		// Default depth is 0, so begin a fresh geometry pass with an empty far-plane depth buffer.
+		glClear(GL_DEPTH_BUFFER_BIT);
+	}
 }
 
 void OpenGLFrameBuffer::Unbind()
@@ -268,6 +274,43 @@ uint64_t OpenGLFrameBuffer::GetColorAttachmentRendererID(uint32_t index) const
 		return 0;
 	}
 	return m_ColorAttachments[index];
+}
+
+uint64_t OpenGLFrameBuffer::GetDepthAttachmentRendererID() const
+{
+	return m_DepthAttachment;
+}
+
+void OpenGLFrameBuffer::ResolveTo(const Ref<FrameBuffer>& target, const std::vector<uint32_t>& attachmentIndices,
+	bool resolveDepth)
+{
+	Ref<OpenGLFrameBuffer> targetFramebuffer = std::dynamic_pointer_cast<OpenGLFrameBuffer>(target);
+	if (!targetFramebuffer)
+	{
+		ERROR("OpenGLFrameBuffer::ResolveTo target is not an OpenGL framebuffer!");
+		return;
+	}
+
+	const auto& targetSpec = targetFramebuffer->GetSpecification();
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, m_RendererID);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, targetFramebuffer->m_RendererID);
+	for (uint32_t attachmentIndex : attachmentIndices)
+	{
+		if (attachmentIndex >= m_ColorAttachments.size() || attachmentIndex >= targetFramebuffer->m_ColorAttachments.size())
+			continue;
+		glReadBuffer(GL_COLOR_ATTACHMENT0 + attachmentIndex);
+		glDrawBuffer(GL_COLOR_ATTACHMENT0 + attachmentIndex);
+		glBlitFramebuffer(0, 0, m_Specification.Width, m_Specification.Height,
+			0, 0, targetSpec.Width, targetSpec.Height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	}
+	if (resolveDepth && m_DepthAttachment && targetFramebuffer->m_DepthAttachment)
+	{
+		glBlitFramebuffer(0, 0, m_Specification.Width, m_Specification.Height,
+			0, 0, targetSpec.Width, targetSpec.Height,
+			GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+	}
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 }
 
 const FrameBufferSpecification& OpenGLFrameBuffer::GetSpecification() const

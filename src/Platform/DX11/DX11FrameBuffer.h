@@ -10,13 +10,16 @@ public:
 	DX11FrameBuffer(const FrameBufferSpecification& spec);
 	~DX11FrameBuffer() override = default;
 
-	void Bind() override;
+	void Bind(bool clearDepth = true) override;
 	void Unbind() override;
 	void Resize(uint32_t width, uint32_t height) override;
 	int ReadPixel(uint32_t attachmentIndex, int x, int y) override;
 	void Save2File(const std::string& filename, uint32_t attachmentIndex) override;
 	void ClearAttachment(uint32_t attachmentIndex, int value) override;
 	uint64_t GetColorAttachmentRendererID(uint32_t index = 0) const override;
+	uint64_t GetDepthAttachmentRendererID() const override;
+	void ResolveTo(const Ref<FrameBuffer>& target, const std::vector<uint32_t>& attachmentIndices,
+		bool resolveDepth = false) override;
 	const FrameBufferSpecification& GetSpecification() const override { return m_Specification; }
 
 private:

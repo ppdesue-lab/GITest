@@ -49,6 +49,7 @@ private:
     void DrawProbeGIDebugWindow();
     void DrawSSAODebugWindow();
     void DrawFXAADebugWindow();
+    void DrawSVGFDenoiserWindow();
     void DrawPBRIBLDebugWindow();
     void OpenModelFile();
     bool IsSupportedModelFile(const std::filesystem::path& filepath) const;

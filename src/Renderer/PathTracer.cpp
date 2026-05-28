@@ -78,6 +78,10 @@ struct PathTracer::Impl
     Scope<tinyocl::Buffer> EnvironmentData;
     Scope<tinyocl::Buffer> Accumulation;
     Scope<tinyocl::Buffer> Pixels;
+    Scope<tinyocl::Buffer> RawRadiance;
+    Scope<tinyocl::Buffer> Positions;
+    Scope<tinyocl::Buffer> Normals;
+    Scope<tinyocl::Buffer> Albedos;
 
     void CreateOutputTexture()
     {
@@ -98,7 +102,15 @@ struct PathTracer::Impl
         const uint32_t byteCount = Width * Height * static_cast<uint32_t>(sizeof(glm::vec4));
         Accumulation = CreateScope<tinyocl::Buffer>(byteCount);
         Pixels = CreateScope<tinyocl::Buffer>(byteCount);
+        RawRadiance = CreateScope<tinyocl::Buffer>(byteCount);
+        Positions = CreateScope<tinyocl::Buffer>(byteCount);
+        Normals = CreateScope<tinyocl::Buffer>(byteCount);
+        Albedos = CreateScope<tinyocl::Buffer>(byteCount);
         Accumulation->Clear();
+        RawRadiance->Clear();
+        Positions->Clear();
+        Normals->Clear();
+        Albedos->Clear();
         SampleCount = 0;
     }
 
@@ -376,9 +388,14 @@ void PathTracer::Render(const Scene& scene, const Camera& camera)
     m_Impl->Kernel->SetArguments(m_Impl->Nodes.get(), m_Impl->Indices.get(), m_Impl->TriangleData.get(), m_Impl->UVData.get(),
         m_Impl->MaterialData.get(), m_Impl->DiffuseTextureData.get(), m_Impl->EnvironmentData.get(), m_Impl->EnvironmentWidth, m_Impl->EnvironmentHeight,
         m_Impl->TriangleCount, eye, bottomLeft, bottomRight, topLeft, m_Impl->Width, m_Impl->Height,
-        m_Impl->SampleCount, m_Impl->Accumulation.get(), m_Impl->Pixels.get());
+        m_Impl->SampleCount, m_Impl->Accumulation.get(), m_Impl->Pixels.get(),
+        m_Impl->RawRadiance.get(), m_Impl->Positions.get(), m_Impl->Normals.get(), m_Impl->Albedos.get());
     m_Impl->Kernel->Run(static_cast<size_t>(m_Impl->Width) * m_Impl->Height);
     m_Impl->Pixels->CopyFromDevice();
+    m_Impl->RawRadiance->CopyFromDevice();
+    m_Impl->Positions->CopyFromDevice();
+    m_Impl->Normals->CopyFromDevice();
+    m_Impl->Albedos->CopyFromDevice();
     glTextureSubImage2D(m_Impl->OutputTexture, 0, 0, 0, m_Impl->Width, m_Impl->Height, GL_RGBA, GL_FLOAT,
         m_Impl->Pixels->GetHostPtr());
     ++m_Impl->SampleCount;
@@ -399,6 +416,26 @@ void PathTracer::ResetAccumulation()
 uint64_t PathTracer::GetOutputTexture() const
 {
     return m_Impl->OutputTexture;
+}
+
+const glm::vec4* PathTracer::GetRawRadianceBuffer() const
+{
+    return m_Impl->RawRadiance ? reinterpret_cast<const glm::vec4*>(m_Impl->RawRadiance->GetHostPtr()) : nullptr;
+}
+
+const glm::vec4* PathTracer::GetPositionBuffer() const
+{
+    return m_Impl->Positions ? reinterpret_cast<const glm::vec4*>(m_Impl->Positions->GetHostPtr()) : nullptr;
+}
+
+const glm::vec4* PathTracer::GetNormalBuffer() const
+{
+    return m_Impl->Normals ? reinterpret_cast<const glm::vec4*>(m_Impl->Normals->GetHostPtr()) : nullptr;
+}
+
+const glm::vec4* PathTracer::GetAlbedoBuffer() const
+{
+    return m_Impl->Albedos ? reinterpret_cast<const glm::vec4*>(m_Impl->Albedos->GetHostPtr()) : nullptr;
 }
 
 uint32_t PathTracer::GetSampleCount() const

@@ -395,6 +395,8 @@ void ShaderLibrary::LoadDefault()
 			uniform vec3 u_Specular;
 			uniform float u_SpecularPower;
 			uniform float u_Alpha;
+			uniform float u_ObjectOpacity;
+			uniform int u_TransparentPass;
 			uniform sampler2D u_MainTexture;
 			uniform sampler2D u_SphereTexture;
 			uniform sampler2D u_ToonTexture;
@@ -447,6 +449,21 @@ void ShaderLibrary::LoadDefault()
 					}
 				return visibility / 9.0;
 			}
+			void WriteFragment(vec3 rgb, float alpha)
+			{
+				if (u_TransparentPass != 0)
+				{
+					float weight = clamp(pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1e8 *
+						pow(1.0 - gl_FragCoord.z * 0.9, 3.0), 1e-2, 3e3);
+					color = vec4(rgb * alpha, alpha) * weight;
+					gPosition = vec4(alpha);
+					gNormal = vec4(0.0);
+				}
+				else
+				{
+					color = vec4(rgb, alpha);
+				}
+			}
 			void main()
 			{
 				vec3 n = normalize(v_Normal);
@@ -455,7 +472,7 @@ void ShaderLibrary::LoadDefault()
 				if (u_debugCascadeView != 0)
 				{
 					int cascade = SelectCascade(max(-(u_View * vec4(v_Position, 1.0)).z, 0.0));
-					color = vec4(CascadeColor(cascade) * 0.85 + vec3(0.05), 1.0);
+					WriteFragment(CascadeColor(cascade) * 0.85 + vec3(0.05), u_ObjectOpacity);
 					return;
 				}
 
@@ -467,7 +484,7 @@ void ShaderLibrary::LoadDefault()
 				toonAmount *= mix(0.45, 1.0, shadow);
 
 				vec4 texColor = u_HasMainTexture != 0 ? texture(u_MainTexture, v_TexCoord) : vec4(1.0);
-				float alpha = u_Alpha * texColor.a;
+				float alpha = u_Alpha * u_ObjectOpacity * texColor.a;
 				if (alpha <= 0.001)
 					discard;
 
@@ -490,7 +507,7 @@ void ShaderLibrary::LoadDefault()
 				}
 				float specularFactor = pow(max(dot(n, halfDir), 0.0), max(u_SpecularPower, 1.0));
 				result += u_Specular * u_lightColor * specularFactor * shadow;
-				color = vec4(result, alpha);
+				WriteFragment(result, alpha);
 			}
 		)";
 		Load("DefaultToon", vSource, fSource);
@@ -576,6 +593,8 @@ void ShaderLibrary::LoadDefault()
 			uniform float u_Metallic;
 			uniform float u_Roughness;
 			uniform float u_AO;
+			uniform float u_ObjectOpacity;
+			uniform int u_TransparentPass;
 			uniform sampler2D u_AlbedoMap;
 			uniform sampler2D u_NormalMap;
 			uniform sampler2D u_MetallicMap;
@@ -728,6 +747,21 @@ void ShaderLibrary::LoadDefault()
 				if (channel == 3) return value.a;
 				return value.r;
 			}
+			void WriteFragment(vec3 rgb, float alpha)
+			{
+				if (u_TransparentPass != 0)
+				{
+					float weight = clamp(pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1e8 *
+						pow(1.0 - gl_FragCoord.z * 0.9, 3.0), 1e-2, 3e3);
+					color = vec4(rgb * alpha, alpha) * weight;
+					gPosition = vec4(alpha);
+					gNormal = vec4(0.0);
+				}
+				else
+				{
+					color = vec4(rgb, 1.0);
+				}
+			}
 			void main()
 			{
 				vec3 albedo = u_HasAlbedoMap != 0
@@ -738,23 +772,26 @@ void ShaderLibrary::LoadDefault()
 					? SampleChannel(u_MetallicMap, v_TexCoord, u_MetallicMapChannel) : u_Metallic, 0.0, 1.0);
 				float ao = clamp(u_HasAOMap != 0
 					? SampleChannel(u_AOMap, v_TexCoord, u_AOMapChannel) : u_AO, 0.0, 1.0);
+				float alpha = u_ObjectOpacity * (u_HasAlbedoMap != 0 ? texture(u_AlbedoMap, v_TexCoord).a : 1.0);
+				if (alpha <= 0.001)
+					discard;
 				vec3 n = GetNormal();
 				gPosition = vec4(v_Position, 1.0);
 				gNormal = vec4(n, 1.0);
 				if (u_pbrDebugMode == 1)
 				{
-					color = vec4(pow(max(albedo, vec3(0.0)), vec3(1.0 / 2.2)), 1.0);
+					WriteFragment(pow(max(albedo, vec3(0.0)), vec3(1.0 / 2.2)), alpha);
 					return;
 				}
 				if (u_pbrDebugMode == 2)
 				{
-					color = vec4(n * 0.5 + 0.5, 1.0);
+					WriteFragment(n * 0.5 + 0.5, alpha);
 					return;
 				}
 				if (u_debugCascadeView != 0)
 				{
 					int cascade = SelectCascade(max(-(u_View * vec4(v_Position, 1.0)).z, 0.0));
-					color = vec4(CascadeColor(cascade) * 0.85 + vec3(0.05), 1.0);
+					WriteFragment(CascadeColor(cascade) * 0.85 + vec3(0.05), alpha);
 					return;
 				}
 				vec3 v = normalize(u_viewPos - v_Position);
@@ -785,7 +822,7 @@ void ShaderLibrary::LoadDefault()
 				{
 					vec3 debugIBL = u_pbrDebugMode == 3 ? diffuseIBL : specularIBL;
 					debugIBL = debugIBL / (debugIBL + vec3(1.0));
-					color = vec4(pow(debugIBL, vec3(1.0 / 2.2)), 1.0);
+					WriteFragment(pow(debugIBL, vec3(1.0 / 2.2)), alpha);
 					return;
 				}
 				vec3 ambient = (diffuseIBL + specularIBL) * ao;
@@ -793,13 +830,13 @@ void ShaderLibrary::LoadDefault()
 				if (u_giDebugMode == 1)
 				{
 					vec3 debugIndirect = indirect / (indirect + vec3(1.0));
-					color = vec4(pow(debugIndirect, vec3(1.0 / 2.2)), 1.0);
+					WriteFragment(pow(debugIndirect, vec3(1.0 / 2.2)), alpha);
 					return;
 				}
 				vec3 result = ambient + indirect + direct * ShadowFactor(v_Position, n);
 				result = result / (result + vec3(1.0));
 				result = pow(result, vec3(1.0 / 2.2));
-				color = vec4(result, 1.0);
+				WriteFragment(result, alpha);
 			}
 		)";
 		Load("DefaultPBR", vSource, fSource);

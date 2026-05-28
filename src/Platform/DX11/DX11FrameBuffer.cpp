@@ -32,7 +32,7 @@ DX11FrameBuffer::DX11FrameBuffer(const FrameBufferSpecification& spec)
 	Invalidate();
 }
 
-void DX11FrameBuffer::Bind()
+void DX11FrameBuffer::Bind(bool clearDepth)
 {
 	std::vector<ID3D11RenderTargetView*> rtvs;
 	for (auto& rtv : m_ColorRTVs)
@@ -45,7 +45,7 @@ void DX11FrameBuffer::Bind()
 	viewport.MinDepth = 0.0f;
 	viewport.MaxDepth = 1.0f;
 	DX11Context::GetDeviceContext()->RSSetViewports(1, &viewport);
-	if (m_DepthDSV)
+	if (clearDepth && m_DepthDSV)
 		DX11Context::GetDeviceContext()->ClearDepthStencilView(m_DepthDSV.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 }
 
@@ -92,6 +92,20 @@ uint64_t DX11FrameBuffer::GetColorAttachmentRendererID(uint32_t index) const
 	if (index < m_ColorSRVs.size())
 		return (uint64_t)m_ColorSRVs[index].Get();
 	return 0;
+}
+
+uint64_t DX11FrameBuffer::GetDepthAttachmentRendererID() const
+{
+	return (uint64_t)m_DepthTexture.Get();
+}
+
+void DX11FrameBuffer::ResolveTo(const Ref<FrameBuffer>& target, const std::vector<uint32_t>& attachmentIndices,
+	bool resolveDepth)
+{
+	(void)target;
+	(void)attachmentIndices;
+	(void)resolveDepth;
+	WARN("DX11FrameBuffer::ResolveTo is not implemented yet");
 }
 
 void DX11FrameBuffer::Invalidate()

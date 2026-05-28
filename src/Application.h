@@ -18,6 +18,7 @@
 #include <Renderer/SSAO.h>
 #include <Renderer/FXAA.h>
 #include <Renderer/PathTracer.h>
+#include <Renderer/SVGF.h>
 #include <memory>
 #include <Renderer/Shader.h>
 #include <Renderer/FrameBuffer.h>
@@ -62,6 +63,9 @@ public:
 	uint64_t GetViewportColorTextureID() const;
 	ViewportRenderMode GetViewportRenderMode() const { return m_ViewportRenderMode; }
 	void SetViewportRenderMode(ViewportRenderMode mode);
+	int GetMSAASamples() const { return m_MSAASamples; }
+	void SetMSAASamples(int samples);
+	bool IsMSAAEnabled() const { return m_MSAASamples > 1; }
 	const glm::vec2& GetViewportSize() const { return m_ViewportSize; }
 	void SetViewportSize(const glm::vec2& size);
 	glm::vec2& GetViewportMousePos() { return m_ViewportMousePos; }
@@ -91,6 +95,7 @@ public:
 	SSAO& GetSSAO() { return *m_SSAO; }
 	FXAA& GetFXAA() { return *m_FXAA; }
 	PathTracer& GetPathTracer() { return *m_PathTracer; }
+	SVGF& GetSVGF() { return *m_SVGF; }
 	int& GetBackgroundMode() { return m_BackgroundMode; }
 	bool GetDebugCascadeView() const { return m_DebugCascadeView; }
 	void SetDebugCascadeView(bool enabled) { m_DebugCascadeView = enabled; }
@@ -103,6 +108,16 @@ public:
 	void SetAppMode(AppMode mode) { m_AppMode = mode; }
 
 private:
+	void CreateViewportFrameBuffers();
+	void InitializeWeightedBlendedOIT();
+	void ResizeWeightedBlendedOIT(uint32_t width, uint32_t height);
+	uint64_t CompositeWeightedBlendedOIT(uint64_t opaqueTexture, uint64_t accumulationTexture,
+		uint64_t revealageTexture);
+	void InitializeTransparentStepEdgeResources();
+	void ResizeTransparentStepEdgeResources(uint32_t width, uint32_t height);
+	void RenderTransparentDepthPrepass();
+	void RenderTransparentStepEdges(uint64_t sceneDepthTexture);
+
     WindowInterface* m_WindowInterface = nullptr;
     LayerStack m_LayerStack;
 	bool m_Running = true;
@@ -120,10 +135,21 @@ private:
 
 	// Viewport
 	Ref<FrameBuffer> m_ViewportFBO;
+	Ref<FrameBuffer> m_ViewportResolvedFBO;
 	Ref<SSAO> m_SSAO;
 	Ref<FXAA> m_FXAA;
 	Ref<PathTracer> m_PathTracer;
+	Ref<SVGF> m_SVGF;
+	Ref<Shader> m_OITCompositeShader;
+	uint32_t m_OITCompositeFBO = 0;
+	uint32_t m_OITCompositeTexture = 0;
+	uint32_t m_OITQuadVAO = 0;
+	Ref<Shader> m_TransparentDepthShader;
+	Ref<Shader> m_TransparentStepEdgeShader;
+	uint32_t m_TransparentDepthFBO = 0;
+	uint32_t m_TransparentDepthTexture = 0;
 	ViewportRenderMode m_ViewportRenderMode = ViewportRenderMode::Editor;
+	int m_MSAASamples = 1;
 	glm::vec2 m_ViewportSize = { 1280.0f, 720.0f };
 	glm::vec2 m_ViewportMousePos = { 0.0f, 0.0f };
 	glm::vec2 m_ViewportOrigin = { 0.0f, 0.0f };
