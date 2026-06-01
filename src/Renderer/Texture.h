@@ -1,8 +1,10 @@
 #pragma once
 
 #include <Image.h>
+#include <Renderer/ResourceHandle.h>
 #include <unordered_map>
 #include <string>
+#include <vector>
 
 #include <memory>
 #include <base.h>
@@ -30,8 +32,27 @@ public:
 
 class TextureLibrary
 {
-    static std::unordered_map<std::string, Ref<Texture>> s_Textures;
+    struct TextureSlot
+    {
+        Ref<Texture> Resource;
+        Ref<Image> SourceImage;
+        std::string Name;
+        uint32_t Generation = 1;
+        bool Alive = false;
+    };
+
+    static std::unordered_map<std::string, TextureHandle> s_TextureHandles;
+    static std::vector<TextureSlot> s_TextureSlots;
+    static std::vector<uint32_t> s_FreeTextureSlots;
+
 public:
+    static TextureHandle LoadTexture(const std::string& name);
+    static TextureHandle LoadTexture(const std::string& name, const Ref<Image>& image);
+    static Ref<Texture> Resolve(TextureHandle handle);
+    static bool IsValid(TextureHandle handle);
+    static bool Release(TextureHandle handle);
+    static bool Release(const std::string& name);
+
     static Ref<Texture> GetTexture(const std::string& name);
     static Ref<Texture> GetTexture(const std::string& name, const Ref<Image>& image);
 };

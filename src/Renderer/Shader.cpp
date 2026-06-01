@@ -8,7 +8,9 @@
 #endif
 
 
-std::unordered_map<std::string, Ref<Shader>> ShaderLibrary::m_Shaders;
+std::unordered_map<std::string, ShaderHandle> ShaderLibrary::m_ShaderHandles;
+std::vector<ShaderLibrary::ShaderSlot> ShaderLibrary::m_ShaderSlots;
+std::vector<uint32_t> ShaderLibrary::m_FreeShaderSlots;
 ShaderLibrary* ShaderLibrary::s_Instance;
 
 Ref<Shader> Shader::Create(const std::string& filepath)
@@ -58,9 +60,9 @@ Ref<Shader> Shader::Create(const std::string& name, const std::string& source, S
 
 void ShaderLibrary::Add(const std::string& name, const Ref<Shader>& shader)
 {
-	if(Exists(name))
+	if (Exists(name))
         TRACE("Shader already exists!");
-	m_Shaders[name] = shader;
+	AddHandle(name, shader);
 }
 
 void ShaderLibrary::Add(const Ref<Shader>& shader)
@@ -71,29 +73,58 @@ void ShaderLibrary::Add(const Ref<Shader>& shader)
 
 Ref<Shader> ShaderLibrary::Load(const std::string& filepath)
 {
-	auto shader = Shader::Create(filepath);
-	Add(shader);
-	return shader;
+	return Resolve(LoadHandle(filepath));
 }
 
 Ref<Shader> ShaderLibrary::Load(const std::string& name, const std::string& filepath)
 {
-	assert(name.size());
-	auto shader = Shader::Create(filepath);
-	Add(name, shader);
-	return shader;
+	return Resolve(LoadHandle(name, filepath));
 }
 
 Ref<Shader> ShaderLibrary::Load(const std::string& name, const std::string& vSource,const std::string& fSource)
 {
-	assert(name.size());
-
-	auto shader = Shader::Create(name,vSource,fSource);
-	Add(name, shader);
-	return shader;
+	return Resolve(LoadHandle(name, vSource, fSource));
 }
 
 Ref<Shader> ShaderLibrary::Load(const std::string name,const std::string& source, ShaderType type)
+{
+	return Resolve(LoadHandle(name, source, type));
+}
+
+Ref<Shader> ShaderLibrary::Get(const std::string& name)
+{
+	if(!Exists(name))TRACE("Shader [{}] not found!", name);
+	return Resolve(GetHandle(name));
+}
+
+ShaderHandle ShaderLibrary::LoadHandle(const std::string& filepath)
+{
+	auto shader = Shader::Create(filepath);
+	if (!shader)
+		return {};
+	return AddHandle(shader->GetName(), shader);
+}
+
+ShaderHandle ShaderLibrary::LoadHandle(const std::string& name, const std::string& filepath)
+{
+	assert(name.size());
+	auto shader = Shader::Create(filepath);
+	if (!shader)
+		return {};
+	return AddHandle(name, shader);
+}
+
+ShaderHandle ShaderLibrary::LoadHandle(const std::string& name, const std::string& vSource,const std::string& fSource)
+{
+	assert(name.size());
+
+	auto shader = Shader::Create(name,vSource,fSource);
+	if (!shader)
+		return {};
+	return AddHandle(name, shader);
+}
+
+ShaderHandle ShaderLibrary::LoadHandle(const std::string name,const std::string& source, ShaderType type)
 {
 	assert(name.size());
 	std::string vSource, fSource;
@@ -107,22 +138,118 @@ Ref<Shader> ShaderLibrary::Load(const std::string name,const std::string& source
 		break;
 	default:
 		ERROR("Unsupported shader type!");
-		return nullptr;
+		return {};
 	}
 	auto shader = Shader::Create(name, vSource, fSource);
-	Add(name, shader);
-	return shader;
+	if (!shader)
+		return {};
+	return AddHandle(name, shader);
 }
 
-Ref<Shader> ShaderLibrary::Get(const std::string& name)
+ShaderHandle ShaderLibrary::GetHandle(const std::string& name)
 {
 	if(!Exists(name))TRACE("Shader [{}] not found!", name);
-	return m_Shaders[name];
+	auto it = m_ShaderHandles.find(name);
+	return it != m_ShaderHandles.end() ? it->second : ShaderHandle{};
+}
+
+Ref<Shader> ShaderLibrary::Resolve(ShaderHandle handle) const
+{
+	if (!handle.IsValid() || handle.Index >= m_ShaderSlots.size())
+		return nullptr;
+
+	const ShaderSlot& slot = m_ShaderSlots[handle.Index];
+	if (!slot.Alive || slot.Generation != handle.Generation)
+		return nullptr;
+
+	return slot.Resource;
+}
+
+bool ShaderLibrary::IsValid(ShaderHandle handle) const
+{
+	return Resolve(handle) != nullptr;
+}
+
+bool ShaderLibrary::Release(ShaderHandle handle)
+{
+	if (!handle.IsValid() || handle.Index >= m_ShaderSlots.size())
+		return false;
+
+	ShaderSlot& slot = m_ShaderSlots[handle.Index];
+	if (!slot.Alive || slot.Generation != handle.Generation)
+		return false;
+
+	if (!slot.Name.empty())
+	{
+		auto it = m_ShaderHandles.find(slot.Name);
+		if (it != m_ShaderHandles.end() && it->second == handle)
+			m_ShaderHandles.erase(it);
+	}
+
+	slot.Resource.reset();
+	slot.Name.clear();
+	slot.Alive = false;
+	++slot.Generation;
+	if (slot.Generation == 0)
+		slot.Generation = 1;
+	m_FreeShaderSlots.push_back(handle.Index);
+	return true;
+}
+
+bool ShaderLibrary::Release(const std::string& name)
+{
+	auto it = m_ShaderHandles.find(name);
+	if (it == m_ShaderHandles.end())
+		return false;
+
+	return Release(it->second);
 }
 
 bool ShaderLibrary::Exists(const std::string& name)
 {
-	return m_Shaders.find(name) != m_Shaders.end();
+	auto it = m_ShaderHandles.find(name);
+	return it != m_ShaderHandles.end() && IsValid(it->second);
+}
+
+ShaderHandle ShaderLibrary::AddHandle(const std::string& name, const Ref<Shader>& shader)
+{
+	if (!shader)
+		return {};
+
+	auto existing = m_ShaderHandles.find(name);
+	if (existing != m_ShaderHandles.end() && IsValid(existing->second))
+	{
+		ShaderSlot& slot = m_ShaderSlots[existing->second.Index];
+		slot.Resource = shader;
+		slot.Name = name;
+		slot.Alive = true;
+		return existing->second;
+	}
+
+	uint32_t index = 0;
+	if (!m_FreeShaderSlots.empty())
+	{
+		index = m_FreeShaderSlots.back();
+		m_FreeShaderSlots.pop_back();
+	}
+	else
+	{
+		index = static_cast<uint32_t>(m_ShaderSlots.size());
+		m_ShaderSlots.emplace_back();
+	}
+
+	ShaderSlot& slot = m_ShaderSlots[index];
+	if (slot.Generation == 0)
+		slot.Generation = 1;
+	slot.Resource = shader;
+	slot.Name = name;
+	slot.Alive = true;
+
+	ShaderHandle handle;
+	handle.Index = index;
+	handle.Generation = slot.Generation;
+	m_ShaderHandles[name] = handle;
+	return handle;
 }
 
 void ShaderLibrary::LoadDefault()

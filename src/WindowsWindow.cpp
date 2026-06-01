@@ -141,6 +141,21 @@ void WindowsWindow::Create(int width, int height, const std::string& title)
 			MouseMovedEvent event((float)xPos, (float)yPos);
 			data.EventCallback(event);
 		});
+
+	glfwSetDropCallback(window, [](GLFWwindow* window, int pathCount, const char** paths)
+		{
+			WindowData& data = *(WindowData*)glfwGetWindowUserPointer(window);
+			std::vector<std::string> droppedPaths;
+			droppedPaths.reserve(pathCount);
+			for (int i = 0; i < pathCount; ++i)
+			{
+				if (paths[i])
+					droppedPaths.emplace_back(paths[i]);
+			}
+
+			FileDropEvent event(std::move(droppedPaths));
+			data.EventCallback(event);
+		});
 }
 void WindowsWindow::DestroyWindow()
 {

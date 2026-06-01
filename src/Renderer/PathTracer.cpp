@@ -213,9 +213,9 @@ struct PathTracer::Impl
     Ref<Texture> GetDiffuseTexture(const Ref<Material>& material) const
     {
         if (Ref<MaterialPBR> pbr = std::dynamic_pointer_cast<MaterialPBR>(material))
-            return pbr->AlbedoMap;
+            return TextureLibrary::Resolve(pbr->AlbedoMap);
         if (Ref<ToonMaterial> toon = std::dynamic_pointer_cast<ToonMaterial>(material))
-            return toon->MainTexture;
+            return TextureLibrary::Resolve(toon->MainTexture);
         return nullptr;
     }
 

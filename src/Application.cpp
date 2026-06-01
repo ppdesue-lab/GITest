@@ -3,6 +3,7 @@
 #include "ImGuiLayer.h"
 #include <ApplicationEvent.h>
 #include <array>
+#include <algorithm>
 #include <filesystem>
 #include <chrono>
 #ifdef G_OPENGL
@@ -198,8 +199,11 @@ void Application::Run()
                     depthShader->SetMat4("u_LightViewProj", lightViewProj[i]);
                     for (auto& mesh : entry.Object->Meshes)
                     {
+                        Ref<VertexArray> vertexObject = mesh ? GeometryLibrary::Resolve(mesh->VertexObject) : nullptr;
+                        if (!vertexObject)
+                            continue;
                         depthShader->SetMat4("u_Model", entry.Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
-                        RenderCommand::DrawIndexed(mesh->VertexObject);
+                        RenderCommand::DrawIndexed(vertexObject);
                     }
                 }
                 m_CSM->EndShadowPass();
@@ -496,6 +500,7 @@ void Application::OnEvent(Event& e)
     EventDispatcher dispatcher(e);
     dispatcher.Dispatch<WindowCloseEvent>(BIND_EVENT_FN(Application::OnWindowClose));
     dispatcher.Dispatch<WindowResizeEvent>(BIND_EVENT_FN(Application::OnWindowResize));
+    dispatcher.Dispatch<FileDropEvent>(BIND_EVENT_FN(Application::OnFileDrop));
 
 
     // Dispatch event to layers in reverse order (overlays first)
@@ -570,6 +575,23 @@ bool Application::OnWindowResize(WindowResizeEvent& e)
     return false;
 }
 
+bool Application::OnFileDrop(FileDropEvent& e)
+{
+    bool loadedAny = false;
+    for (const std::string& path : e.GetPaths())
+    {
+        std::filesystem::path filepath = std::filesystem::u8path(path);
+        if (!std::filesystem::exists(filepath))
+        {
+            WARN("Dropped file does not exist: {}", path);
+            continue;
+        }
+
+        loadedAny |= LoadFileByExtension(filepath);
+    }
+    return loadedAny;
+}
+
 
 void Application::PushLayer(std::shared_ptr<Layer> layer)
 {
@@ -627,6 +649,25 @@ Ref<Object3D> Application::LoadGCode(const std::filesystem::path& filepath)
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
     m_SelectedOutlineValid = false;
     return object;
+}
+
+bool Application::LoadFileByExtension(const std::filesystem::path& filepath)
+{
+    std::string extension = filepath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (extension == ".gcode" || extension == ".nc" || extension == ".cnc" || extension == ".tap")
+        return LoadGCode(filepath) != nullptr;
+
+    if (extension == ".obj" || extension == ".stl" || extension == ".ply" ||
+        extension == ".gltf" || extension == ".glb" ||
+        extension == ".pmx" || extension == ".pmd" ||
+        extension == ".step" || extension == ".stp")
+        return LoadObject3D(filepath) != nullptr;
+
+    WARN("Unsupported dropped file: {}", filepath.u8string());
+    return false;
 }
 
 void Application::ClearObject3Ds()
@@ -983,10 +1024,11 @@ void Application::RenderTransparentDepthPrepass()
             continue;
         for (const auto& mesh : entry.Object->Meshes)
         {
-            if (!mesh || !mesh->VertexObject)
+            Ref<VertexArray> vertexObject = mesh ? GeometryLibrary::Resolve(mesh->VertexObject) : nullptr;
+            if (!vertexObject)
                 continue;
             m_TransparentDepthShader->SetMat4("u_Model", entry.Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
-            RenderCommand::DrawIndexed(mesh->VertexObject);
+            RenderCommand::DrawIndexed(vertexObject);
         }
     }
 
@@ -1034,10 +1076,11 @@ void Application::RenderTransparentStepEdges(uint64_t sceneDepthTexture)
             continue;
         for (const auto& mesh : entry.Object->Meshes)
         {
-            if (!mesh || !mesh->ShowEdges || !mesh->EdgeVertexObject || mesh->EdgeVertexCount == 0)
+            Ref<VertexArray> edgeVertexObject = mesh ? GeometryLibrary::Resolve(mesh->EdgeVertexObject) : nullptr;
+            if (!mesh || !mesh->ShowEdges || !edgeVertexObject || mesh->EdgeVertexCount == 0)
                 continue;
             m_TransparentStepEdgeShader->SetMat4("u_Model", entry.Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
-            RenderCommand::DrawLines(mesh->EdgeVertexObject, mesh->EdgeVertexCount);
+            RenderCommand::DrawLines(edgeVertexObject, mesh->EdgeVertexCount);
         }
     }
 
@@ -1084,10 +1127,11 @@ void Application::RenderPickupPass()
         m_PickupShader->SetInt("u_ObjectID", i + 1);
         for (const auto& mesh : entry.Object->Meshes)
         {
-            if (!mesh || !mesh->VertexObject)
+            Ref<VertexArray> vertexObject = mesh ? GeometryLibrary::Resolve(mesh->VertexObject) : nullptr;
+            if (!vertexObject)
                 continue;
             m_PickupShader->SetMat4("u_Model", entry.Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
-            RenderCommand::DrawIndexed(mesh->VertexObject);
+            RenderCommand::DrawIndexed(vertexObject);
         }
     }
 
@@ -1135,10 +1179,11 @@ void Application::RenderSelectedMaskPass()
 
         for (const auto& mesh : entry->Object->Meshes)
         {
-            if (!mesh || !mesh->VertexObject)
+            Ref<VertexArray> vertexObject = mesh ? GeometryLibrary::Resolve(mesh->VertexObject) : nullptr;
+            if (!vertexObject)
                 continue;
             m_SelectedMaskShader->SetMat4("u_Model", entry->Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
-            RenderCommand::DrawIndexed(mesh->VertexObject);
+            RenderCommand::DrawIndexed(vertexObject);
         }
     }
 

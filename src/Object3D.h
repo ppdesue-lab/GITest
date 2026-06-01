@@ -18,7 +18,7 @@ struct BoundingSphere
 class Mesh
 {
 public:
-    ~Mesh() = default;
+    ~Mesh();
 
     virtual void Draw(const glm::mat4& view, const glm::mat4 proj,
         const glm::mat4& parentTransform = glm::mat4(1.0f),
@@ -27,8 +27,8 @@ public:
     
     Ref<Material> Mat;
     Transform Transfm;
-    Ref<VertexArray> VertexObject = nullptr;
-    Ref<VertexArray> EdgeVertexObject = nullptr;
+    GeometryHandle VertexObject;
+    GeometryHandle EdgeVertexObject;
     uint32_t EdgeVertexCount = 0;
     std::vector<VertexNormalTexture> TraceVertices;
     std::vector<uint32_t> TraceIndices;

@@ -242,7 +242,7 @@ Ref<Mesh> GCodeObject::CreateToolMesh(const gcode::ToolInfo& tool) const
     }
 
     Ref<Mesh> mesh = CreateRef<Mesh>();
-    mesh->VertexObject = VertexArray::Create();
+    Ref<VertexArray> vertexObject = VertexArray::Create();
     auto vertexBuffer = VertexBuffer::Create(reinterpret_cast<float*>(vertices.data()),
         (uint32_t)(vertices.size() * sizeof(VertexNormalTexture)));
     vertexBuffer->SetLayout({
@@ -250,9 +250,10 @@ Ref<Mesh> GCodeObject::CreateToolMesh(const gcode::ToolInfo& tool) const
         BufferElement(ShaderDataType::Float3, "a_Normal", false),
         BufferElement(ShaderDataType::Float2, "a_TexCoord", false)
     });
-    mesh->VertexObject->AddVertexBuffer(vertexBuffer);
-    mesh->VertexObject->SetIndexBuffer(IndexBuffer::Create(indices.data(), (uint32_t)indices.size()));
-    mesh->VertexObject->Unbind();
+    vertexObject->AddVertexBuffer(vertexBuffer);
+    vertexObject->SetIndexBuffer(IndexBuffer::Create(indices.data(), (uint32_t)indices.size()));
+    vertexObject->Unbind();
+    mesh->VertexObject = GeometryLibrary::Register(vertexObject);
     Ref<MaterialPBR> material = CreateRef<MaterialPBR>();
     material->Albedo = glm::vec3(0.95f, 0.82f, 0.12f);
     material->Metallic = 0.2f;

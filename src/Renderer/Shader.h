@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <glm/glm.hpp>
 #include <base.h>
+#include <Renderer/ResourceHandle.h>
 
 enum class ShaderType
 {
@@ -44,6 +45,14 @@ public:
 
 class ShaderLibrary
 {
+    struct ShaderSlot
+    {
+        Ref<Shader> Resource;
+        std::string Name;
+        uint32_t Generation = 1;
+        bool Alive = false;
+    };
+
 public:
     ShaderLibrary()
     {
@@ -56,12 +65,25 @@ public:
     Ref<Shader> Load(const std::string name,const std::string& source, ShaderType type);
     Ref<Shader> Load(const std::string& path);
     Ref<Shader> Get(const std::string& name="DefaultColor");
+    ShaderHandle LoadHandle(const std::string& name, const std::string& vSource,const std::string& fSource);
+    ShaderHandle LoadHandle(const std::string& name, const std::string& path);
+    ShaderHandle LoadHandle(const std::string name,const std::string& source, ShaderType type);
+    ShaderHandle LoadHandle(const std::string& path);
+    ShaderHandle GetHandle(const std::string& name="DefaultColor");
+    Ref<Shader> Resolve(ShaderHandle handle) const;
+    bool IsValid(ShaderHandle handle) const;
+    bool Release(ShaderHandle handle);
+    bool Release(const std::string& name);
 
     bool Exists(const std::string& name);
 
     void LoadDefault();
     static ShaderLibrary* Instance() { return s_Instance; };
 private:
-    static std::unordered_map<std::string, Ref<Shader>> m_Shaders;
+    ShaderHandle AddHandle(const std::string& name, const Ref<Shader>& shader);
+
+    static std::unordered_map<std::string, ShaderHandle> m_ShaderHandles;
+    static std::vector<ShaderSlot> m_ShaderSlots;
+    static std::vector<uint32_t> m_FreeShaderSlots;
 	static ShaderLibrary* s_Instance;
 };

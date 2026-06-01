@@ -10,12 +10,10 @@ class Material
 public:
     virtual ~Material() = default;
 
-    virtual void Bind() {
-        assert(MatShader);
-        MatShader->Bind(); 
-    };
+    virtual void Bind();
+    Ref<Shader> GetShader() const;
 
-	Ref<Shader> MatShader;
+	ShaderHandle MatShader;
 };
 
 class MaterialColor : public Material
@@ -48,11 +46,11 @@ public:
     float Metallic = 0.0f;
     float Roughness = 0.35f;
     float AmbientOcclusion = 1.0f;
-    Ref<Texture> AlbedoMap;
-    Ref<Texture> NormalMap;
-    Ref<Texture> MetallicMap;
-    Ref<Texture> RoughnessMap;
-    Ref<Texture> AOMap;
+    TextureHandle AlbedoMap;
+    TextureHandle NormalMap;
+    TextureHandle MetallicMap;
+    TextureHandle RoughnessMap;
+    TextureHandle AOMap;
     int MetallicMapChannel = 0;
     int RoughnessMapChannel = 0;
     int AOMapChannel = 0;
@@ -72,9 +70,9 @@ public:
     glm::vec3 Specular = glm::vec3(0.0f);
     float SpecularPower = 1.0f;
     float Alpha = 1.0f;
-    Ref<Texture> MainTexture;
-    Ref<Texture> SphereTexture;
-    Ref<Texture> ToonTexture;
+    TextureHandle MainTexture;
+    TextureHandle SphereTexture;
+    TextureHandle ToonTexture;
     int SphereMode = 0; // 0: disabled, 1: multiply, 2: add
     bool TwoSided = false;
     bool EdgeEnabled = true;
@@ -82,7 +80,7 @@ public:
     float EdgeSize = 1.0f;
 
 private:
-    Ref<Shader> m_EdgeShader;
+    ShaderHandle m_EdgeShader;
 };
 
 class MaterialMatcap : public Material
@@ -90,13 +88,9 @@ class MaterialMatcap : public Material
 public:
     MaterialMatcap(const std::string& texpath=GetFilePath("../data/images/matcap.png"),const glm::vec3& color = glm::vec3(1, 0, 1));
 
-    void Bind() {
-        assert(MatShader);
-        MatShader->Bind();
-        MatcapTex->Bind();
-        MatShader->SetInt("u_matcapTex", MatcapTex->m_RendererID);
-    }
+    void Bind() override;
+
     glm::vec3 Color;
     std::string TexFilePath;
-    Ref<Texture> MatcapTex;
+    TextureHandle MatcapTex;
 };

@@ -56,6 +56,12 @@ void MergeBoundingSphere(BoundingSphere& aggregate, const BoundingSphere& sphere
 }
 }
 
+Mesh::~Mesh()
+{
+	GeometryLibrary::Release(VertexObject);
+	GeometryLibrary::Release(EdgeVertexObject);
+}
+
 void Mesh::UpdateBoundingSphere()
 {
 	Bounds = {};
@@ -82,18 +88,24 @@ void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& pa
 {
 	const glm::mat4 model = parentTransform * Transfm.GetMatrix();
 	Mat->Bind();
-	Mat->MatShader->SetMat4("u_View", view);
-	Mat->MatShader->SetMat4("u_Projection", proj);
-	Mat->MatShader->SetMat4("u_Model", model);
-	Mat->MatShader->SetFloat("u_ObjectOpacity", glm::clamp(opacity, 0.0f, 1.0f));
-	Mat->MatShader->SetInt("u_TransparentPass", transparentPass ? 1 : 0);
+	Ref<Shader> shader = Mat->GetShader();
+	if (!shader)
+		return;
+	Ref<VertexArray> vertexObject = GeometryLibrary::Resolve(VertexObject);
+	if (!vertexObject)
+		return;
+	shader->SetMat4("u_View", view);
+	shader->SetMat4("u_Projection", proj);
+	shader->SetMat4("u_Model", model);
+	shader->SetFloat("u_ObjectOpacity", glm::clamp(opacity, 0.0f, 1.0f));
+	shader->SetInt("u_TransparentPass", transparentPass ? 1 : 0);
 	{
 		//phong stuff
 		glm::vec3 viewpos = glm::vec3(glm::inverse(view)[3]);
-		Mat->MatShader->SetFloat3("u_lightPos", glm::vec3(0,10,0));
-		Mat->MatShader->SetFloat3("u_viewPos", viewpos);
-		Mat->MatShader->SetFloat3("u_lightColor", glm::vec3(0, 1, 0));
-		Mat->MatShader->SetFloat3("u_objectColor", glm::vec3(1, 1, 1));
+		shader->SetFloat3("u_lightPos", glm::vec3(0,10,0));
+		shader->SetFloat3("u_viewPos", viewpos);
+		shader->SetFloat3("u_lightColor", glm::vec3(0, 1, 0));
+		shader->SetFloat3("u_objectColor", glm::vec3(1, 1, 1));
 
 		// CSM shadow uniforms (set when shader supports them)
 		Application& app = Application::Get();
@@ -103,25 +115,25 @@ void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& pa
 		uint32_t cascadeCount = csm.Enabled() ? csm.GetCascadeCount() : 0;
 		auto lightDir = csm.GetLight().Direction;
 
-		Mat->MatShader->SetFloat3("u_lightPos", -glm::normalize(lightDir) * 1000.0f);
-		Mat->MatShader->SetFloat3("u_lightColor", csm.GetLight().Color * csm.GetLight().Intensity);
-		Mat->MatShader->SetInt("u_cascadeCount", (int)cascadeCount);
-		Mat->MatShader->SetFloat("u_shadowMapSize", (float)csm.GetShadowMapSize());
-		Mat->MatShader->SetFloat("u_shadowConstantBias", csm.ConstantBias());
-		Mat->MatShader->SetFloat("u_shadowSlopeBias", csm.SlopeBias());
-		Mat->MatShader->SetFloat3("u_lightDir", lightDir);
-		Mat->MatShader->SetInt("u_debugCascadeView", Application::Get().GetDebugCascadeView() ? 1 : 0);
+		shader->SetFloat3("u_lightPos", -glm::normalize(lightDir) * 1000.0f);
+		shader->SetFloat3("u_lightColor", csm.GetLight().Color * csm.GetLight().Intensity);
+		shader->SetInt("u_cascadeCount", (int)cascadeCount);
+		shader->SetFloat("u_shadowMapSize", (float)csm.GetShadowMapSize());
+		shader->SetFloat("u_shadowConstantBias", csm.ConstantBias());
+		shader->SetFloat("u_shadowSlopeBias", csm.SlopeBias());
+		shader->SetFloat3("u_lightDir", lightDir);
+		shader->SetInt("u_debugCascadeView", Application::Get().GetDebugCascadeView() ? 1 : 0);
 		for (uint32_t i = 0; i <= cascadeCount && i < 4; i++)
 		{
-			Mat->MatShader->SetFloat("u_cascadeDistances[" + std::to_string(i) + "]", cascadeDists[i]);
+			shader->SetFloat("u_cascadeDistances[" + std::to_string(i) + "]", cascadeDists[i]);
 			if (i < cascadeCount)
-				Mat->MatShader->SetMat4("u_lightViewProj[" + std::to_string(i) + "]", lightViewProj[i]);
+				shader->SetMat4("u_lightViewProj[" + std::to_string(i) + "]", lightViewProj[i]);
 		}
 
 		csm.BindShadowTexture(2);
-		Mat->MatShader->SetInt("u_shadowMap", 2);
-		app.GetProbeGI().Bind(Mat->MatShader);
-		app.GetPBRIBL().Bind(Mat->MatShader);
+		shader->SetInt("u_shadowMap", 2);
+		app.GetProbeGI().Bind(shader);
+		app.GetPBRIBL().Bind(shader);
 	}
 #ifdef G_OPENGL
 	Ref<ToonMaterial> toon = std::dynamic_pointer_cast<ToonMaterial>(Mat);
@@ -131,19 +143,20 @@ void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& pa
 		RenderCommand::Cull("Back");
 	}
 #endif
-    RenderCommand::DrawIndexed(VertexObject);
+    RenderCommand::DrawIndexed(vertexObject);
 #ifdef G_OPENGL
 	if (!transparentPass && toon && toon->EdgeEnabled && toon->Alpha > 0.0f)
 	{
 		RenderCommand::Enable("CULL_FACE");
 		RenderCommand::Cull("Front");
 		toon->BindEdge(view, proj, model, Application::Get().GetViewportSize());
-		RenderCommand::DrawIndexed(VertexObject);
+		RenderCommand::DrawIndexed(vertexObject);
 	}
 	if (toon)
 		RenderCommand::Disable("CULL_FACE");
 #endif
-	if (!transparentPass && ShowEdges && EdgeVertexObject && EdgeVertexCount > 0)
+	Ref<VertexArray> edgeVertexObject = GeometryLibrary::Resolve(EdgeVertexObject);
+	if (!transparentPass && ShowEdges && edgeVertexObject && EdgeVertexCount > 0)
 	{
 		auto edgeShader = Application::Get().GetShaderLibrary()->Get("DefaultLineColor");
 		edgeShader->Bind();
@@ -152,7 +165,7 @@ void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& pa
 		edgeShader->SetMat4("u_Model", model);
 		RenderCommand::EnableDepthTest(true);
 		RenderCommand::SetLineWidth(2.0f);
-		RenderCommand::DrawLines(EdgeVertexObject, EdgeVertexCount);
+		RenderCommand::DrawLines(edgeVertexObject, EdgeVertexCount);
 	}
 };
 
@@ -229,7 +242,7 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 
 			Meshes.clear();
 			Ref<Mesh> mesh = CreateRef<Mesh>();
-			mesh->VertexObject = VertexArray::Create();
+			Ref<VertexArray> vertexObject = VertexArray::Create();
 			auto vbuffer = VertexBuffer::Create(reinterpret_cast<float*>(stepMesh.Vertices.data()),
 				stepMesh.Vertices.size() * sizeof(VertexNormalTexture));
 			vbuffer->SetLayout({
@@ -237,9 +250,10 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 				BufferElement(ShaderDataType::Float3, "a_Normal", false),
 				BufferElement(ShaderDataType::Float2, "a_TexCoord", false)
 			});
-			mesh->VertexObject->AddVertexBuffer(vbuffer);
-			mesh->VertexObject->SetIndexBuffer(IndexBuffer::Create(stepMesh.Indices.data(), stepMesh.Indices.size()));
-			mesh->VertexObject->Unbind();
+			vertexObject->AddVertexBuffer(vbuffer);
+			vertexObject->SetIndexBuffer(IndexBuffer::Create(stepMesh.Indices.data(), stepMesh.Indices.size()));
+			vertexObject->Unbind();
+			mesh->VertexObject = GeometryLibrary::Register(vertexObject);
 			mesh->Mat = CreateRef<MaterialPBR>();
 			mesh->TraceVertices = std::move(stepMesh.Vertices);
 			mesh->TraceIndices = std::move(stepMesh.Indices);
@@ -252,15 +266,16 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 				for (const glm::vec3& position : mesh->EdgeVertices)
 					edgeVertices.push_back({ position, glm::vec4(0.02f, 0.02f, 0.02f, 1.0f) });
 
-				mesh->EdgeVertexObject = VertexArray::Create();
+				Ref<VertexArray> edgeVertexObject = VertexArray::Create();
 				auto edgeBuffer = VertexBuffer::Create(reinterpret_cast<float*>(edgeVertices.data()),
 					edgeVertices.size() * sizeof(LineVertex));
 				edgeBuffer->SetLayout({
 					BufferElement(ShaderDataType::Float3, "a_Position", false),
 					BufferElement(ShaderDataType::Float4, "a_Color", false)
 				});
-				mesh->EdgeVertexObject->AddVertexBuffer(edgeBuffer);
-				mesh->EdgeVertexObject->Unbind();
+				edgeVertexObject->AddVertexBuffer(edgeBuffer);
+				edgeVertexObject->Unbind();
+				mesh->EdgeVertexObject = GeometryLibrary::Register(edgeVertexObject);
 				mesh->EdgeVertexCount = static_cast<uint32_t>(edgeVertices.size());
 			}
 			Meshes.push_back(mesh);
@@ -339,7 +354,7 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 
 	Meshes.clear();
 
-	auto loadEmbeddedTexture = [&](const aiTexture* texture, const std::string& key) -> Ref<Texture>
+	auto loadEmbeddedTexture = [&](const aiTexture* texture, const std::string& key) -> TextureHandle
 	{
 		Ref<Image> image;
 		if (texture->mHeight == 0)
@@ -364,10 +379,10 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 			}
 			image = CreateRef<Image>(texture->mWidth, texture->mHeight, 4, pixels);
 		}
-		return TextureLibrary::GetTexture(key, image);
+		return TextureLibrary::LoadTexture(key, image);
 	};
 
-	auto loadMaterialTexture = [&](aiMaterial* material, std::initializer_list<aiTextureType> textureTypes) -> Ref<Texture>
+	auto loadMaterialTexture = [&](aiMaterial* material, std::initializer_list<aiTextureType> textureTypes) -> TextureHandle
 	{
 		for (aiTextureType textureType : textureTypes)
 		{
@@ -379,7 +394,7 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 			const aiTexture* embeddedTexture = scene->GetEmbeddedTexture(name.c_str());
 			if (embeddedTexture)
 			{
-				Ref<Texture> texture = loadEmbeddedTexture(embeddedTexture, filepath.u8string() + "#" + name);
+				TextureHandle texture = loadEmbeddedTexture(embeddedTexture, filepath.u8string() + "#" + name);
 				if (texture)
 					INFO("Loaded embedded model texture: {}", name);
 				else
@@ -390,9 +405,9 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 			std::filesystem::path texturePath = std::filesystem::u8path(name);
 			if (texturePath.is_relative())
 				texturePath = filepath.parent_path() / texturePath;
-			return TextureLibrary::GetTexture(texturePath.u8string());
+			return TextureLibrary::LoadTexture(texturePath.u8string());
 		}
-		return nullptr;
+		return {};
 	};
 
 	auto createMaterial = [&](aiMesh* sourceMesh) -> Ref<Material>
@@ -507,12 +522,13 @@ bool Object3D::LoadFromPath(const std::filesystem::path& filepath) {
 				indices.push_back(sourceMesh->mFaces[i].mIndices[j]);
 
 		Ref<Mesh> mesh = CreateRef<Mesh>();
-		mesh->VertexObject = VertexArray::Create();
+		Ref<VertexArray> vertexObject = VertexArray::Create();
 		auto vbuffer = VertexBuffer::Create(reinterpret_cast<float*>(vertices.data()), vertices.size() * sizeof(T));
 		vbuffer->SetLayout(layout);
-		mesh->VertexObject->AddVertexBuffer(vbuffer);
-		mesh->VertexObject->SetIndexBuffer(IndexBuffer::Create(indices.data(), indices.size()));
-		mesh->VertexObject->Unbind();
+		vertexObject->AddVertexBuffer(vbuffer);
+		vertexObject->SetIndexBuffer(IndexBuffer::Create(indices.data(), indices.size()));
+		vertexObject->Unbind();
+		mesh->VertexObject = GeometryLibrary::Register(vertexObject);
 		mesh->Mat = createMaterial(sourceMesh);
 		if constexpr (std::is_same_v<T, VertexNormalTexture>)
 		{

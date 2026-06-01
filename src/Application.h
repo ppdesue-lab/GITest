@@ -46,6 +46,7 @@ public:
 
     bool OnWindowClose(WindowCloseEvent& e);
     bool OnWindowResize(WindowResizeEvent& e);
+	bool OnFileDrop(FileDropEvent& e);
     void Close();
 
 public:
@@ -56,6 +57,7 @@ public:
 	Scene& GetScene() { return m_Scene; }
 	Ref<Object3D> LoadObject3D(const std::filesystem::path& filepath);
 	Ref<Object3D> LoadGCode(const std::filesystem::path& filepath);
+	bool LoadFileByExtension(const std::filesystem::path& filepath);
 	void ClearObject3Ds();
 
 	// Viewport
