@@ -86,7 +86,7 @@ bool StepLoader::Load(const std::filesystem::path& filepath, StepMeshData& mesh)
     }
 
     // Absolute chordal deflection in model units and angular deflection in radians.
-    BRepMesh_IncrementalMesh tessellator(shape, 0.1, false, 0.35, true);
+    BRepMesh_IncrementalMesh tessellator(shape, 0.01, false, 0.35, true);
     if (!tessellator.IsDone())
     {
         mesh.Error = "OCCT triangulation failed";

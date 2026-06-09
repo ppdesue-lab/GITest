@@ -13,7 +13,7 @@ public:
     ~SSAO();
 
     void Resize(uint32_t width, uint32_t height);
-    void Render(uint64_t colorTexture, uint64_t positionTexture, uint64_t normalTexture,
+    void Render(uint64_t colorTexture, uint64_t depthTexture, uint64_t normalTexture,
         const glm::mat4& view, const glm::mat4& projection);
 
     bool& Enabled() { return m_Enabled; }

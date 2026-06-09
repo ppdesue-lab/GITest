@@ -53,6 +53,8 @@ namespace Utils
 			glTextureParameteri(id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 			glTextureParameteri(id, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 			glTextureParameteri(id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			if (internalFormat == GL_DEPTH24_STENCIL8)
+				glTextureParameteri(id, GL_DEPTH_STENCIL_TEXTURE_MODE, GL_DEPTH_COMPONENT);
 		}
 		glFramebufferTexture2D(GL_FRAMEBUFFER, attachmentType, TextureTarget(multisampled), id, 0);
 	}

@@ -25,26 +25,34 @@ SSAO::SSAO(uint32_t width, uint32_t height)
         #version 410 core
         in vec2 v_UV;
         layout(location = 0) out vec4 o_AO;
-        uniform sampler2D u_Position;
+        uniform sampler2D u_Depth;
         uniform sampler2D u_Normal;
         uniform sampler2D u_Noise;
         uniform mat4 u_View;
         uniform mat4 u_Projection;
+        uniform mat4 u_InverseProjection;
         uniform vec2 u_Resolution;
         uniform float u_Radius;
         uniform float u_Bias;
         uniform float u_Strength;
         uniform vec3 u_Samples[64];
 
+        vec3 reconstructViewPosition(vec2 uv, float depth)
+        {
+            vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+            vec4 view = u_InverseProjection * clip;
+            return view.xyz / view.w;
+        }
+
         void main()
         {
-            vec4 centerData = texture(u_Position, v_UV);
-            if (centerData.a < 0.5)
+            float centerDepth = texture(u_Depth, v_UV).r;
+            if (centerDepth >= 0.999999)
             {
                 o_AO = vec4(1.0);
                 return;
             }
-            vec3 center = (u_View * vec4(centerData.xyz, 1.0)).xyz;
+            vec3 center = reconstructViewPosition(v_UV, centerDepth);
             vec3 normal = normalize(mat3(u_View) * texture(u_Normal, v_UV).xyz);
             vec3 randomVector = normalize(texture(u_Noise, v_UV * u_Resolution / 4.0).xyz);
             vec3 tangent = normalize(randomVector - normal * dot(randomVector, normal));
@@ -57,10 +65,11 @@ SSAO::SSAO(uint32_t width, uint32_t height)
                 vec4 offset = u_Projection * vec4(samplePosition, 1.0);
                 offset.xyz /= offset.w;
                 offset.xyz = offset.xyz * 0.5 + 0.5;
-                vec4 sampleData = texture(u_Position, clamp(offset.xy, vec2(0.0), vec2(1.0)));
-                if (sampleData.a < 0.5)
+                vec2 sampleUV = clamp(offset.xy, vec2(0.0), vec2(1.0));
+                float sampleDepthValue = texture(u_Depth, sampleUV).r;
+                if (sampleDepthValue >= 0.999999)
                     continue;
-                float sampleDepth = (u_View * vec4(sampleData.xyz, 1.0)).z;
+                float sampleDepth = reconstructViewPosition(sampleUV, sampleDepthValue).z;
                 float rangeWeight = smoothstep(0.0, 1.0, u_Radius / max(abs(center.z - sampleDepth), 0.0001));
                 occlusion += (sampleDepth >= samplePosition.z + u_Bias ? 1.0 : 0.0) * rangeWeight;
             }
@@ -92,17 +101,26 @@ SSAO::SSAO(uint32_t width, uint32_t height)
         in vec2 v_UV;
         layout(location = 0) out float o_AO;
         uniform sampler2D u_AO;
-        uniform sampler2D u_Position;
+        uniform sampler2D u_Depth;
+        uniform mat4 u_InverseProjection;
         uniform vec2 u_Resolution;
+
+        vec3 reconstructViewPosition(vec2 uv, float depth)
+        {
+            vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+            vec4 view = u_InverseProjection * clip;
+            return view.xyz / view.w;
+        }
 
         void main()
         {
-            vec4 centerData = texture(u_Position, v_UV);
-            if (centerData.a < 0.5)
+            float centerDepth = texture(u_Depth, v_UV).r;
+            if (centerDepth >= 0.999999)
             {
                 o_AO = 1.0;
                 return;
             }
+            vec3 centerPosition = reconstructViewPosition(v_UV, centerDepth);
 
             vec2 texel = 1.0 / u_Resolution;
             float sum = 0.0;
@@ -112,12 +130,13 @@ SSAO::SSAO(uint32_t width, uint32_t height)
                 for (int x = -2; x <= 2; ++x)
                 {
                     vec2 uv = clamp(v_UV + vec2(x, y) * texel, vec2(0.0), vec2(1.0));
-                    vec4 sampleData = texture(u_Position, uv);
-                    if (sampleData.a < 0.5)
+                    float sampleDepth = texture(u_Depth, uv).r;
+                    if (sampleDepth >= 0.999999)
                         continue;
+                    vec3 samplePosition = reconstructViewPosition(uv, sampleDepth);
 
                     float spatialWeight = exp(-dot(vec2(x, y), vec2(x, y)) / 4.0);
-                    float geometryWeight = exp(-length(sampleData.xyz - centerData.xyz) * 0.4);
+                    float geometryWeight = exp(-length(samplePosition - centerPosition) * 0.4);
                     float weight = spatialWeight * geometryWeight;
                     sum += texture(u_AO, uv).r * weight;
                     weightSum += weight;
@@ -238,7 +257,7 @@ void SSAO::Invalidate()
 #endif
 }
 
-void SSAO::Render(uint64_t colorTexture, uint64_t positionTexture, uint64_t normalTexture,
+void SSAO::Render(uint64_t colorTexture, uint64_t depthTexture, uint64_t normalTexture,
     const glm::mat4& view, const glm::mat4& projection)
 {
 #ifdef G_OPENGL
@@ -252,17 +271,18 @@ void SSAO::Render(uint64_t colorTexture, uint64_t positionTexture, uint64_t norm
     glBindFramebuffer(GL_FRAMEBUFFER, m_AOFBO);
     glViewport(0, 0, m_Width, m_Height);
     m_AOShader->Bind();
-    m_AOShader->SetInt("u_Position", 0);
+    m_AOShader->SetInt("u_Depth", 0);
     m_AOShader->SetInt("u_Normal", 1);
     m_AOShader->SetInt("u_Noise", 2);
     m_AOShader->SetMat4("u_View", view);
     m_AOShader->SetMat4("u_Projection", projection);
+    m_AOShader->SetMat4("u_InverseProjection", glm::inverse(projection));
     m_AOShader->SetFloat2("u_Resolution", glm::vec2(m_Width, m_Height));
     m_AOShader->SetFloat("u_Radius", m_Radius);
     m_AOShader->SetFloat("u_Bias", m_Bias);
     m_AOShader->SetFloat("u_Strength", m_Strength);
     m_AOShader->SetVec3Array("u_Samples", &m_SampleKernel[0].x, (uint32_t)m_SampleKernel.size());
-    glBindTextureUnit(0, (uint32_t)positionTexture);
+    glBindTextureUnit(0, (uint32_t)depthTexture);
     glBindTextureUnit(1, (uint32_t)normalTexture);
     glBindTextureUnit(2, m_NoiseTexture);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -270,10 +290,11 @@ void SSAO::Render(uint64_t colorTexture, uint64_t positionTexture, uint64_t norm
     glBindFramebuffer(GL_FRAMEBUFFER, m_BlurFBO);
     m_BlurShader->Bind();
     m_BlurShader->SetInt("u_AO", 0);
-    m_BlurShader->SetInt("u_Position", 1);
+    m_BlurShader->SetInt("u_Depth", 1);
+    m_BlurShader->SetMat4("u_InverseProjection", glm::inverse(projection));
     m_BlurShader->SetFloat2("u_Resolution", glm::vec2(m_Width, m_Height));
     glBindTextureUnit(0, m_AOTexture);
-    glBindTextureUnit(1, (uint32_t)positionTexture);
+    glBindTextureUnit(1, (uint32_t)depthTexture);
     glDrawArrays(GL_TRIANGLES, 0, 3);
 
     glBindFramebuffer(GL_FRAMEBUFFER, m_OutputFBO);
@@ -291,7 +312,7 @@ void SSAO::Render(uint64_t colorTexture, uint64_t positionTexture, uint64_t norm
     glEnable(GL_DEPTH_TEST);
 #else
     (void)colorTexture;
-    (void)positionTexture;
+    (void)depthTexture;
     (void)normalTexture;
     (void)view;
     (void)projection;

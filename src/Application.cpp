@@ -15,6 +15,8 @@
 #include "Renderer/Renderer.h"
 #include "Renderer/RenderCommand.h"
 #include "Renderer/Buffer.h"
+#include "Renderer/VolumeObject.h"
+#include "Renderer/TerrainCDLOD.h"
 
 #include "Camera/FPSCamera.h"
 
@@ -395,7 +397,7 @@ void Application::Run()
             {
                 m_SSAO->Render(
                     opaqueColor,
-                    postProcessFBO->GetColorAttachmentRendererID(1),
+                    postProcessFBO->GetDepthAttachmentRendererID(),
                     postProcessFBO->GetColorAttachmentRendererID(2),
                     m_Camera->GetViewMatrix(),
                     m_Camera->GetProjectionMatrix());
@@ -646,6 +648,32 @@ Ref<Object3D> Application::LoadGCode(const std::filesystem::path& filepath)
     }
 
     m_Scene.AddObject(object, displayName, filepath.u8string());
+    m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    m_SelectedOutlineValid = false;
+    return object;
+}
+
+Ref<Object3D> Application::LoadManixVolume()
+{
+    const std::filesystem::path filepath = std::filesystem::u8path("D:/gitclones/VolumeRender/content/Textures/manix.dat");
+    Ref<VolumeObject> object = CreateRef<VolumeObject>(filepath);
+    if (!object->IsLoaded())
+        return nullptr;
+
+    m_Scene.AddObject(object, "Manix Volume", filepath.u8string());
+    m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    m_SelectedOutlineValid = false;
+    return object;
+}
+
+Ref<Object3D> Application::LoadDefaultTerrainCDLOD()
+{
+    const std::filesystem::path heightmapPath = TerrainCDLOD::DefaultHeightmapPath();
+    Ref<TerrainCDLOD> object = CreateRef<TerrainCDLOD>(heightmapPath);
+    if (!object->IsLoaded())
+        return nullptr;
+
+    m_Scene.AddObject(object, "CDLOD Hetch Terrain", heightmapPath.u8string());
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
     m_SelectedOutlineValid = false;
     return object;

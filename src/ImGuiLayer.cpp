@@ -494,6 +494,12 @@ void ImGuiLayer::DrawMenuBar()
                 TRACE("Created Plane: {}", plane ? "success" : "failed");
             }
 
+            if (ImGui::MenuItem("Manix Volume"))
+            {
+                auto volume = Application::Get().LoadManixVolume();
+                TRACE("Loaded Manix Volume: {}", volume ? "success" : "failed");
+            }
+
             ImGui::EndMenu();
         }
 

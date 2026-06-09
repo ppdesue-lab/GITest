@@ -41,13 +41,13 @@ class Object3D
 {
 public:
     Object3D() = default;
-    ~Object3D() = default;
+    virtual ~Object3D() = default;
     template<typename T>
     bool Load(const std::string& filepath);
     template<typename T>
     bool LoadFromPath(const std::filesystem::path& filepath);
     virtual void Draw(const glm::mat4& view, const glm::mat4 proj, bool transparentPass = false);
-    void UpdateBoundingSphere();
+    virtual void UpdateBoundingSphere();
     BoundingSphere GetWorldBoundingSphere() const;
 
     Transform Transfm;
