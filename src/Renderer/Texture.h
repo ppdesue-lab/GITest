@@ -26,7 +26,7 @@ public:
     }
     void Unload();
 
-    unsigned int m_RendererID;
+    unsigned int m_RendererID = 0;
     Ref<Image> SourceImage;
 };
 

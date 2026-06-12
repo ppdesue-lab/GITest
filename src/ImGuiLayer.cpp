@@ -7,9 +7,11 @@
 #include <glm/gtx/euler_angles.hpp>
 
 #include "Application.h"
-#include <Import/GCode/GCodeObject.h>
+#include <Camera/FPSCamera.h>
+#include <Editor/ObjectInspector.h>
 #include <Primitive/Gizmo.h>
 #include <Renderer/RenderCommand.h>
+#include <Renderer/Texture.h>
 
 #ifdef ERROR
 #undef ERROR
@@ -19,9 +21,28 @@
 #undef ERROR
 #endif
 
+#ifdef PLATFORM_WINDOWS
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#ifdef ERROR
+#undef ERROR
+#endif
+#endif
+
 #include <cctype>
+#include <cwctype>
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <filesystem>
+#include <limits>
 #include <mutex>
+#include <vector>
 
 #include <spdlog/sinks/base_sink.h>
 
@@ -31,6 +52,13 @@
 #include <Platform/DX11/DX11Context.h>
 #else
 #include <backends/imgui_impl_opengl3.h>
+#endif
+
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
 #endif
 
 // Console ring buffer
@@ -63,6 +91,268 @@ protected:
     void flush_() override {}
 };
 
+namespace
+{
+    struct FocusBounds
+    {
+        glm::vec3 Min = glm::vec3((std::numeric_limits<float>::max)());
+        glm::vec3 Max = glm::vec3(std::numeric_limits<float>::lowest());
+        bool Valid = false;
+    };
+
+    void AddFocusSphere(FocusBounds& focus, const BoundingSphere& sphere)
+    {
+        if (!sphere.Valid || sphere.Radius <= 0.0f)
+            return;
+
+        glm::vec3 extents(sphere.Radius);
+        glm::vec3 minPoint = sphere.Center - extents;
+        glm::vec3 maxPoint = sphere.Center + extents;
+
+        if (!focus.Valid)
+        {
+            focus.Min = minPoint;
+            focus.Max = maxPoint;
+            focus.Valid = true;
+            return;
+        }
+
+        focus.Min = glm::min(focus.Min, minPoint);
+        focus.Max = glm::max(focus.Max, maxPoint);
+    }
+
+    BoundingSphere ComputeViewportFocusSphere(Application& app)
+    {
+        Scene& scene = app.GetScene();
+        FocusBounds focus;
+
+        for (int selectedIndex : app.GetSelectedObjectIndices())
+        {
+            Scene::Entry* entry = scene.GetEntry(selectedIndex);
+            if (entry && entry->Object)
+                AddFocusSphere(focus, entry->Object->GetWorldBoundingSphere());
+        }
+
+        if (!focus.Valid)
+        {
+            const auto& objects = scene.GetObjects();
+            for (const auto& entry : objects)
+            {
+                if (entry.Visible && entry.Object)
+                    AddFocusSphere(focus, entry.Object->GetWorldBoundingSphere());
+            }
+        }
+
+        if (!focus.Valid)
+            return { glm::vec3(0.0f), 100.0f, true };
+
+        BoundingSphere sphere;
+        sphere.Center = (focus.Min + focus.Max) * 0.5f;
+        sphere.Radius = glm::length(focus.Max - sphere.Center);
+        sphere.Radius = std::max(sphere.Radius, 1.0f);
+        sphere.Valid = true;
+        return sphere;
+    }
+
+    void SetAxisCameraView(Application& app, const glm::vec3& viewDirection)
+    {
+        Ref<FPSCamera> camera = std::dynamic_pointer_cast<FPSCamera>(app.GetCamera());
+        if (!camera)
+            return;
+
+        BoundingSphere focus = ComputeViewportFocusSphere(app);
+        const float fovRadians = glm::radians(std::max(camera->getFOV(), 1.0f));
+        const float distance = std::max(focus.Radius / std::tan(fovRadians * 0.5f) * 1.35f, 10.0f);
+
+        glm::vec3 direction = glm::normalize(viewDirection);
+        if (std::abs(direction.y) > 0.99f)
+            direction = glm::normalize(direction + glm::vec3(0.0f, 0.0f, 0.02f));
+
+        camera->setInputEnabled(false);
+        camera->setPosition(focus.Center + direction * distance);
+        camera->lookAt(focus.Center);
+    }
+
+    ImVec2 ToImVec2(const glm::vec2& value)
+    {
+        return ImVec2(value.x, value.y);
+    }
+
+    ImU32 ApplyAlpha(ImU32 color, float alpha)
+    {
+        const int a = (color >> IM_COL32_A_SHIFT) & 0xff;
+        const int r = (color >> IM_COL32_R_SHIFT) & 0xff;
+        const int g = (color >> IM_COL32_G_SHIFT) & 0xff;
+        const int b = (color >> IM_COL32_B_SHIFT) & 0xff;
+        return IM_COL32(r, g, b, (int)glm::clamp(a * alpha, 0.0f, 255.0f));
+    }
+
+    bool DrawViewportAxisIndicator(Application& app, const ImVec2& viewportMin, const ImVec2& viewportMax)
+    {
+        Ref<FPSCamera> camera = std::dynamic_pointer_cast<FPSCamera>(app.GetCamera());
+        if (!camera)
+            return false;
+
+        const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
+        const ImVec2 panelSize(132.0f, 132.0f);
+        const ImVec2 panelMin(
+            std::max(viewportMin.x + 8.0f, viewportMax.x - panelSize.x - 12.0f),
+            viewportMin.y + 12.0f);
+        const ImVec2 panelMax(panelMin.x + panelSize.x, panelMin.y + panelSize.y);
+        const ImVec2 center(panelMin.x + panelSize.x * 0.5f, panelMin.y + panelSize.y * 0.5f);
+
+        ImGui::SetCursorScreenPos(panelMin);
+        ImGui::InvisibleButton("##ViewportGizmo", panelSize);
+        const bool overlayHovered = ImGui::IsItemHovered();
+        const bool overlayClicked = overlayHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+
+        struct AxisNode
+        {
+            const char* Label;
+            glm::vec3 Direction;
+            ImU32 Color;
+            glm::vec2 ScreenPos = glm::vec2(0.0f);
+            float Depth = 0.0f;
+            float Radius = 10.0f;
+            bool Hovered = false;
+        };
+
+        std::array<AxisNode, 6> axes = { {
+            { "X",  glm::vec3( 1.0f,  0.0f,  0.0f), IM_COL32(224, 72, 78, 255) },
+            { "-X", glm::vec3(-1.0f,  0.0f,  0.0f), IM_COL32(142, 50, 54, 255) },
+            { "Y",  glm::vec3( 0.0f,  1.0f,  0.0f), IM_COL32(73, 184, 88, 255) },
+            { "-Y", glm::vec3( 0.0f, -1.0f,  0.0f), IM_COL32(50, 126, 64, 255) },
+            { "Z",  glm::vec3( 0.0f,  0.0f,  1.0f), IM_COL32(79, 124, 244, 255) },
+            { "-Z", glm::vec3( 0.0f,  0.0f, -1.0f), IM_COL32(52, 78, 165, 255) },
+        } };
+
+        const glm::vec3 right = camera->getRight();
+        const glm::vec3 up = camera->getUp();
+        const glm::vec3 view = -camera->getForward();
+        const glm::vec2 center2(center.x, center.y);
+        const float axisLength = 42.0f;
+        const float hitRadius = 14.0f;
+        const glm::vec2 mouse(ImGui::GetMousePos().x, ImGui::GetMousePos().y);
+        int hoveredAxis = -1;
+        float bestHoverDepth = -2.0f;
+
+        for (int i = 0; i < (int)axes.size(); ++i)
+        {
+            AxisNode& axis = axes[i];
+            const float x = glm::dot(axis.Direction, right);
+            const float y = glm::dot(axis.Direction, up);
+            axis.Depth = glm::dot(axis.Direction, view);
+            axis.ScreenPos = center2 + glm::vec2(x, -y) * axisLength;
+            axis.Radius = axis.Depth > 0.0f ? 10.5f : 8.0f;
+
+            const float dist = glm::length(mouse - axis.ScreenPos);
+            if (overlayHovered && dist <= hitRadius && axis.Depth > bestHoverDepth)
+            {
+                hoveredAxis = i;
+                bestHoverDepth = axis.Depth;
+            }
+        }
+
+        if (hoveredAxis >= 0)
+        {
+            axes[hoveredAxis].Hovered = true;
+            axes[hoveredAxis].Radius += 3.0f;
+            ImGui::SetTooltip("View from %s", axes[hoveredAxis].Label);
+            if (overlayClicked)
+                SetAxisCameraView(app, axes[hoveredAxis].Direction);
+        }
+
+        std::array<int, 6> order = { 0, 1, 2, 3, 4, 5 };
+        std::sort(order.begin(), order.end(), [&](int a, int b) {
+            return axes[a].Depth < axes[b].Depth;
+        });
+
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        drawList->AddCircleFilled(center, 52.0f, overlayHovered ? IM_COL32(24, 27, 32, 186) : IM_COL32(18, 20, 24, 150), 48);
+        drawList->AddCircle(center, 52.0f, overlayHovered ? IM_COL32(255, 255, 255, 72) : IM_COL32(255, 255, 255, 42), 48, 1.0f);
+
+        for (int index : order)
+        {
+            const AxisNode& axis = axes[index];
+            const float alpha = axis.Depth > 0.0f ? 0.95f : 0.36f;
+            drawList->AddLine(center, ToImVec2(axis.ScreenPos), ApplyAlpha(axis.Color, alpha * 0.72f), axis.Depth > 0.0f ? 2.2f : 1.4f);
+        }
+
+        for (int index : order)
+        {
+            const AxisNode& axis = axes[index];
+            const float alpha = axis.Hovered ? 1.0f : (axis.Depth > 0.0f ? 0.98f : 0.48f);
+            const ImVec2 pos = ToImVec2(axis.ScreenPos);
+            drawList->AddCircleFilled(pos, axis.Radius, ApplyAlpha(axis.Color, alpha), 24);
+            drawList->AddCircle(pos, axis.Radius, axis.Hovered ? IM_COL32(255, 255, 255, 230) : ApplyAlpha(IM_COL32(255, 255, 255, 150), alpha), 24, 1.4f);
+
+            const ImVec2 textSize = ImGui::CalcTextSize(axis.Label);
+            drawList->AddText(ImVec2(pos.x - textSize.x * 0.5f, pos.y - textSize.y * 0.5f),
+                ApplyAlpha(IM_COL32(255, 255, 255, 255), alpha), axis.Label);
+        }
+
+        ImGui::SetCursorScreenPos(savedCursor);
+        ImGui::Dummy(ImVec2(0.0f, 0.0f));
+        return overlayHovered;
+    }
+
+    bool IsDriveRootPath(const std::filesystem::path& path)
+    {
+        return path.has_root_name() && path.has_root_directory() && path.relative_path().empty();
+    }
+
+    bool IsDriveRootAvailable(const std::filesystem::path& path)
+    {
+        if (!IsDriveRootPath(path))
+            return false;
+
+#ifdef PLATFORM_WINDOWS
+        const UINT driveType = GetDriveTypeW(path.wstring().c_str());
+        return driveType != DRIVE_NO_ROOT_DIR && driveType != DRIVE_UNKNOWN;
+#else
+        std::error_code ec;
+        return std::filesystem::exists(path, ec) && std::filesystem::is_directory(path, ec);
+#endif
+    }
+
+    bool ContentPathLess(const std::filesystem::path& a, const std::filesystem::path& b)
+    {
+        std::wstring an = a.filename().wstring();
+        std::wstring bn = b.filename().wstring();
+        std::transform(an.begin(), an.end(), an.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+        std::transform(bn.begin(), bn.end(), bn.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+        return an < bn;
+    }
+
+    bool EnumerateContentDirectory(const std::filesystem::path& root,
+        std::vector<std::filesystem::path>& directories,
+        std::vector<std::filesystem::path>& files)
+    {
+        directories.clear();
+        files.clear();
+
+        std::error_code iterEc;
+        for (const auto& entry : std::filesystem::directory_iterator(root,
+            std::filesystem::directory_options::skip_permission_denied, iterEc))
+        {
+            std::error_code typeEc;
+            if (entry.is_directory(typeEc))
+                directories.push_back(entry.path());
+            else if (!typeEc && entry.is_regular_file(typeEc))
+                files.push_back(entry.path());
+        }
+        if (iterEc)
+        {
+            WARN("Unable to fully browse directory {}: {}", root.u8string(), iterEc.message());
+            return false;
+        }
+
+        std::sort(directories.begin(), directories.end(), ContentPathLess);
+        std::sort(files.begin(), files.end(), ContentPathLess);
+        return true;
+    }
+}
+
 ImGuiLayer::ImGuiLayer()
     : Layer("ImGuiLayer")
 {
@@ -74,10 +364,10 @@ void ImGuiLayer::OnAttach()
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
     float fontSize = 18.0f;
     io.Fonts->AddFontFromFileTTF(GetFilePath("../data/fonts/CangErYuYangTiW03-2.ttf").c_str(), fontSize, nullptr, io.Fonts->GetGlyphRangesChineseFull());
-    io.Fonts->Build();
 
     ImGui::StyleColorsDark();
     SetDarkThemeColors();
@@ -101,7 +391,7 @@ void ImGuiLayer::OnAttach()
     Log::GetCoreLogger()->sinks().push_back(consoleSink);
 
     // Initialize content browser path
-    m_CurrentDir = std::filesystem::current_path().string();
+    m_CurrentDir = std::filesystem::current_path().u8string();
 }
 
 void ImGuiLayer::OnDetach()
@@ -160,45 +450,67 @@ void ImGuiLayer::OnImGuiRender()
 
 void ImGuiLayer::DrawEditorLayout(ImVec2 pos, ImVec2 size, float menuBarHeight)
 {
-    float leftW = size.x * 0.18f;
-    float rightW = size.x * 0.22f;
-    float centerW = size.x - leftW - rightW;
-    float bottomH = (size.y - menuBarHeight) * 0.25f;
-    float topH = (size.y - menuBarHeight) - bottomH;
+    ImGuiWindowFlags dockspaceFlags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+        ImGuiWindowFlags_NoBackground;
 
-    ImGuiWindowFlags panelFlags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize;
-
-    // Project panel (left)
     ImGui::SetNextWindowPos(ImVec2(pos.x, pos.y + menuBarHeight));
-    ImGui::SetNextWindowSize(ImVec2(leftW, size.y - menuBarHeight));
+    ImGui::SetNextWindowSize(ImVec2(size.x, size.y - menuBarHeight));
+    ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::Begin("EditorDockSpace", nullptr, dockspaceFlags);
+    ImGui::PopStyleVar(3);
+
+    ImGuiID dockspaceID = ImGui::GetID("EditorDockSpaceID");
+    ImGuiDockNodeFlags nodeFlags = ImGuiDockNodeFlags_PassthruCentralNode;
+    const bool needsDefaultDockingLayout = ImGui::DockBuilderGetNode(dockspaceID) == nullptr;
+    ImGui::DockSpace(dockspaceID, ImVec2(0.0f, 0.0f), nodeFlags);
+
+    static bool dockspaceBuilt = false;
+    if (!dockspaceBuilt && needsDefaultDockingLayout)
+    {
+        dockspaceBuilt = true;
+        ImGui::DockBuilderRemoveNode(dockspaceID);
+        ImGui::DockBuilderAddNode(dockspaceID, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(dockspaceID, ImGui::GetWindowSize());
+
+        ImGuiID mainDock = dockspaceID;
+        ImGuiID leftDock = ImGui::DockBuilderSplitNode(mainDock, ImGuiDir_Left, 0.18f, nullptr, &mainDock);
+        ImGuiID rightDock = ImGui::DockBuilderSplitNode(mainDock, ImGuiDir_Right, 0.22f, nullptr, &mainDock);
+        ImGuiID bottomDock = ImGui::DockBuilderSplitNode(mainDock, ImGuiDir_Down, 0.25f, nullptr, &mainDock);
+        ImGuiID consoleDock = ImGui::DockBuilderSplitNode(bottomDock, ImGuiDir_Right, 0.50f, nullptr, &bottomDock);
+
+        ImGui::DockBuilderDockWindow("Project", leftDock);
+        ImGui::DockBuilderDockWindow("Properties", rightDock);
+        ImGui::DockBuilderDockWindow("Viewport", mainDock);
+        ImGui::DockBuilderDockWindow("Content Browser", bottomDock);
+        ImGui::DockBuilderDockWindow("Console", consoleDock);
+        ImGui::DockBuilderFinish(dockspaceID);
+    }
+
+    ImGui::End();
+
+    ImGuiWindowFlags panelFlags = ImGuiWindowFlags_NoCollapse;
+
     ImGui::Begin("Project", nullptr, panelFlags);
     DrawProjectPanel();
     ImGui::End();
 
-    // Properties panel (right)
-    ImGui::SetNextWindowPos(ImVec2(pos.x + leftW + centerW, pos.y + menuBarHeight));
-    ImGui::SetNextWindowSize(ImVec2(rightW, size.y - menuBarHeight));
     ImGui::Begin("Properties", nullptr, panelFlags);
     DrawPropertiesPanel();
     ImGui::End();
 
-    // Viewport panel (center top)
-    ImGui::SetNextWindowPos(ImVec2(pos.x + leftW, pos.y + menuBarHeight));
-    ImGui::SetNextWindowSize(ImVec2(centerW, topH));
-    ImGui::Begin("Viewport", nullptr, panelFlags | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoTitleBar);
+    ImGui::Begin("Viewport", nullptr, panelFlags | ImGuiWindowFlags_NoScrollbar);
     DrawViewportPanel();
     ImGui::End();
 
-    // Content Browser (bottom left)
-    ImGui::SetNextWindowPos(ImVec2(pos.x + leftW, pos.y + menuBarHeight + topH));
-    ImGui::SetNextWindowSize(ImVec2(centerW * 0.5f, bottomH));
     ImGui::Begin("Content Browser", nullptr, panelFlags);
     DrawContentBrowser();
     ImGui::End();
 
-    // Console (bottom right)
-    ImGui::SetNextWindowPos(ImVec2(pos.x + leftW + centerW * 0.5f, pos.y + menuBarHeight + topH));
-    ImGui::SetNextWindowSize(ImVec2(centerW * 0.5f, bottomH));
     ImGui::Begin("Console", nullptr, panelFlags);
     DrawConsolePanel();
     ImGui::End();
@@ -500,6 +812,12 @@ void ImGuiLayer::DrawMenuBar()
                 TRACE("Loaded Manix Volume: {}", volume ? "success" : "failed");
             }
 
+            if (ImGui::MenuItem("CDLOD Hetch Terrain"))
+            {
+                auto terrain = Application::Get().LoadDefaultTerrainCDLOD();
+                TRACE("Loaded CDLOD Hetch Terrain: {}", terrain ? "success" : "failed");
+            }
+
             ImGui::EndMenu();
         }
 
@@ -597,97 +915,8 @@ void ImGuiLayer::DrawPropertiesPanel()
             }
 
             Scene::Entry* selectedEntry = app.GetScene().GetSelectedEntry();
-            Ref<GCodeObject> gcodeObject = selectedEntry ? std::dynamic_pointer_cast<GCodeObject>(selectedEntry->Object) : nullptr;
-            if (gcodeObject)
-            {
-                ImGui::SeparatorText("GCode");
-                float progress = gcodeObject->GetProgress();
-                if (ImGui::SliderFloat("Progress", &progress, 0.0f, 1.0f, "%.3f"))
-                    gcodeObject->SetProgress(progress);
-                ImGui::TextDisabled("Line %d / %d | %.2f mm",
-                    gcodeObject->GetDisplayIndex(),
-                    gcodeObject->GetTotalSegmentCount(),
-                    gcodeObject->GetTotalDistance());
-
-                if (ImGui::Button(gcodeObject->IsPlaying() ? "Pause" : "Play"))
-                    gcodeObject->TogglePlaying();
-                ImGui::SameLine();
-                if (ImGui::Button("Reset##GCode"))
-                    gcodeObject->Reset();
-
-                bool showFastMoves = gcodeObject->ShowFastMoves();
-                if (ImGui::Checkbox("Show Fast Moves", &showFastMoves))
-                    gcodeObject->ShowFastMoves() = showFastMoves;
-                bool showTool = gcodeObject->ShowTool();
-                if (ImGui::Checkbox("Show Tool", &showTool))
-                    gcodeObject->ShowTool() = showTool;
-                float speed = gcodeObject->PlaybackSpeed();
-                if (ImGui::SliderFloat("Playback Speed", &speed, 1.0f, 1000.0f, "%.0f seg/s"))
-                    gcodeObject->PlaybackSpeed() = speed;
-            }
-            if (selectedEntry && selectedEntry->Object && !selectedEntry->Object->Meshes.empty())
-            {
-                ImGui::SeparatorText("Display");
-                ImGui::SliderFloat("Opacity", &selectedEntry->Object->Opacity, 0.0f, 1.0f, "%.2f");
-
-                Ref<MaterialPBR> pbr = std::dynamic_pointer_cast<MaterialPBR>(selectedEntry->Object->Meshes[0]->Mat);
-                if (pbr)
-                {
-                    ImGui::SeparatorText("PBR Material");
-                    ImGui::ColorEdit3("Albedo", &pbr->Albedo.x);
-                    ImGui::SliderFloat("Metallic", &pbr->Metallic, 0.0f, 1.0f, "%.2f");
-                    ImGui::SliderFloat("Roughness", &pbr->Roughness, 0.04f, 1.0f, "%.2f");
-                    ImGui::SliderFloat("Material AO", &pbr->AmbientOcclusion, 0.0f, 1.0f, "%.2f");
-                }
-                Ref<Mesh> edgeMesh;
-                for (const auto& mesh : selectedEntry->Object->Meshes)
-                {
-                    if (mesh && !mesh->EdgeVertices.empty())
-                    {
-                        edgeMesh = mesh;
-                        break;
-                    }
-                }
-                if (edgeMesh)
-                {
-                    ImGui::SeparatorText("STEP Display");
-                    const bool showEdges = edgeMesh->ShowEdges;
-                    if (ImGui::Button(showEdges ? "Hide Edges" : "Show Edges"))
-                    {
-                        for (const auto& mesh : selectedEntry->Object->Meshes)
-                        {
-                            if (mesh && !mesh->EdgeVertices.empty())
-                                mesh->ShowEdges = !showEdges;
-                        }
-                    }
-                }
-                Ref<ToonMaterial> toon = std::dynamic_pointer_cast<ToonMaterial>(selectedEntry->Object->Meshes[0]->Mat);
-                if (toon)
-                {
-                    ImGui::SeparatorText("Toon Material");
-                    ImGui::ColorEdit3("Diffuse", &toon->Diffuse.x);
-                    ImGui::ColorEdit3("Ambient", &toon->Ambient.x);
-                    ImGui::ColorEdit3("Specular", &toon->Specular.x);
-                    ImGui::SliderFloat("Shininess", &toon->SpecularPower, 1.0f, 128.0f, "%.1f");
-                    ImGui::SliderFloat("Alpha", &toon->Alpha, 0.0f, 1.0f, "%.2f");
-                    ImGui::Checkbox("Two Sided", &toon->TwoSided);
-                    ImGui::Checkbox("Edge", &toon->EdgeEnabled);
-                    if (toon->EdgeEnabled)
-                    {
-                        ImGui::ColorEdit4("Edge Color", &toon->EdgeColor.x);
-                        float edgeSize = toon->EdgeSize;
-                        if (ImGui::SliderFloat("Edge Size", &edgeSize, 0.0f, 8.0f, "%.2f px"))
-                        {
-                            for (const auto& mesh : selectedEntry->Object->Meshes)
-                            {
-                                Ref<ToonMaterial> meshToon = std::dynamic_pointer_cast<ToonMaterial>(mesh->Mat);
-                                if (meshToon)
-                                    meshToon->EdgeSize = edgeSize;
-                            }
-                        }
-                    }
-                }
-            }
+            if (selectedEntry && selectedEntry->Object)
+                ObjectInspectorRegistry::DrawInspector(*selectedEntry->Object);
         }
 
         ImGui::SeparatorText("Gizmo");
@@ -771,94 +1000,319 @@ void ImGuiLayer::DrawPropertiesPanel()
 
 void ImGuiLayer::DrawContentBrowser()
 {
-    std::filesystem::path currentPath(m_CurrentDir);
+    std::filesystem::path currentPath = std::filesystem::u8path(m_CurrentDir);
+    std::error_code pathEc;
+    const bool currentDriveRoot = IsDriveRootPath(currentPath);
+    if ((currentDriveRoot && !IsDriveRootAvailable(currentPath)) ||
+        (!currentDriveRoot && (!std::filesystem::exists(currentPath, pathEc) || !std::filesystem::is_directory(currentPath, pathEc))))
+    {
+        currentPath = std::filesystem::current_path();
+        m_CurrentDir = currentPath.u8string();
+        m_ContentBrowserNeedsRefresh = true;
+        pathEc.clear();
+    }
+    if (m_ContentBrowserPath.empty())
+        m_ContentBrowserPath = currentPath.u8string();
+
+    auto refreshContentDirectory = [&]() {
+        if (EnumerateContentDirectory(currentPath, m_ContentBrowserDirectories, m_ContentBrowserFiles))
+        {
+            m_ContentBrowserCachedDir = currentPath.u8string();
+            m_ContentBrowserNeedsRefresh = false;
+        }
+        else
+        {
+            m_ContentBrowserCachedDir.clear();
+            m_ContentBrowserDirectories.clear();
+            m_ContentBrowserFiles.clear();
+            m_ContentBrowserNeedsRefresh = false;
+        }
+    };
+
+    if (m_ContentBrowserNeedsRefresh || m_ContentBrowserCachedDir != currentPath.u8string())
+        refreshContentDirectory();
+
+    auto setCurrentDirectory = [&](const std::filesystem::path& path) {
+        std::error_code ec;
+        const bool driveRoot = IsDriveRootPath(path);
+        if (driveRoot && !IsDriveRootAvailable(path))
+            return false;
+        if (!driveRoot && (!std::filesystem::exists(path, ec) || !std::filesystem::is_directory(path, ec)))
+            return false;
+
+        std::filesystem::path displayPath = path;
+        if (!driveRoot)
+        {
+            displayPath = std::filesystem::weakly_canonical(path, ec);
+            if (ec)
+            {
+                ec.clear();
+                displayPath = path;
+            }
+        }
+
+        m_CurrentDir = displayPath.u8string();
+        m_ContentBrowserPath = m_CurrentDir;
+        currentPath = displayPath;
+        m_ContentBrowserNeedsRefresh = true;
+        return true;
+    };
+
+    auto navigateToTypedPath = [&]() {
+        std::error_code ec;
+        std::filesystem::path typedPath = std::filesystem::u8path(m_ContentBrowserPath);
+        const bool driveRoot = IsDriveRootPath(typedPath);
+        if (driveRoot && !IsDriveRootAvailable(typedPath))
+            return false;
+        if (!driveRoot && (!std::filesystem::exists(typedPath, ec) || !std::filesystem::is_directory(typedPath, ec)))
+            return false;
+        return setCurrentDirectory(typedPath);
+    };
+
+    auto toLowerExtension = [](const std::filesystem::path& path) {
+        std::string extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return extension;
+    };
+
+    auto makeEllipsis = [](const std::string& text, float maxWidth) {
+        if (ImGui::CalcTextSize(text.c_str()).x <= maxWidth)
+            return text;
+
+        const char* ellipsis = "...";
+        std::string clipped = text;
+        while (!clipped.empty())
+        {
+            clipped.pop_back();
+            std::string candidate = clipped + ellipsis;
+            if (ImGui::CalcTextSize(candidate.c_str()).x <= maxWidth)
+                return candidate;
+        }
+        return std::string(ellipsis);
+    };
+
+    auto isTextFile = [&](const std::filesystem::path& path) {
+        return toLowerExtension(path) == ".txt";
+    };
+
+    auto isModelIconFile = [&](const std::filesystem::path& path) {
+        const std::string extension = toLowerExtension(path);
+        return extension == ".obj" || extension == ".ply" || extension == ".mmd" ||
+            extension == ".pmx" || extension == ".pmd" || extension == ".stl" ||
+            extension == ".gltf" || extension == ".glb" || extension == ".step" ||
+            extension == ".stp";
+    };
+
+    auto loadIconTexture = [](const char* name, const char* relativePath) -> Ref<Texture> {
+        const std::string path = GetFilePath(relativePath);
+        Ref<Texture> texture = TextureLibrary::GetTexture(path);
+        if (!texture)
+            WARN("Content Browser icon texture failed: {} -> {}", name, path);
+        return texture;
+    };
+
+    static Ref<Texture> txtIcon = loadIconTexture("content_browser_icon_txt", "../data/images/content_browser/icon_txt.png");
+    static Ref<Texture> modelIcon = loadIconTexture("content_browser_icon_model", "../data/images/content_browser/icon_model.png");
+    static Ref<Texture> ncIcon = loadIconTexture("content_browser_icon_nc", "../data/images/content_browser/icon_nc.png");
+    static Ref<Texture> unknownIcon = loadIconTexture("content_browser_icon_unknown", "../data/images/content_browser/icon_unknown.png");
+    static Ref<Texture> driveCIcon = loadIconTexture("content_browser_icon_drive_c", "../data/images/content_browser/icon_drive_c.png");
+    static Ref<Texture> driveDIcon = loadIconTexture("content_browser_icon_drive_d", "../data/images/content_browser/icon_drive_d.png");
+    static Ref<Texture> driveEIcon = loadIconTexture("content_browser_icon_drive_e", "../data/images/content_browser/icon_drive_e.png");
+    static Ref<Texture> driveFIcon = loadIconTexture("content_browser_icon_drive_f", "../data/images/content_browser/icon_drive_f.png");
+
+    auto iconForFile = [&](const std::filesystem::path& path) -> Ref<Texture> {
+        if (isTextFile(path) && txtIcon)
+            return txtIcon;
+        if (isModelIconFile(path) && modelIcon)
+            return modelIcon;
+        if (IsSupportedGCodeFile(path) && ncIcon)
+            return ncIcon;
+        return unknownIcon;
+    };
+
+    auto drawFallbackIcon = [](ImDrawList* drawList, const ImVec2& min, const ImVec2& max, const char* label, ImU32 color) {
+        drawList->AddRectFilled(min, max, IM_COL32(38, 43, 51, 255), 5.0f);
+        drawList->AddRect(min, max, IM_COL32(220, 224, 232, 210), 5.0f);
+        ImVec2 textSize = ImGui::CalcTextSize(label);
+        drawList->AddText(ImVec2(min.x + (max.x - min.x - textSize.x) * 0.5f, min.y + (max.y - min.y - textSize.y) * 0.5f),
+            color, label);
+    };
+
+    auto drawTextureIcon = [](ImDrawList* drawList, const Ref<Texture>& texture, const ImVec2& min, const ImVec2& max) {
+        if (!texture)
+            return;
+        drawList->AddImage((ImTextureID)(uint64_t)texture->m_RendererID, min, max, ImVec2(0, 1), ImVec2(1, 0));
+    };
 
     // Path navigation
     char pathBuf[512];
-    std::string pathStr = currentPath.string();
+    std::string pathStr = m_ContentBrowserPath;
     strncpy_s(pathBuf, pathStr.c_str(), sizeof(pathBuf));
-    if (ImGui::InputText("Path", pathBuf, sizeof(pathBuf), ImGuiInputTextFlags_EnterReturnsTrue))
-    {
-        std::filesystem::path newPath(pathBuf);
-        if (std::filesystem::exists(newPath))
-            m_CurrentDir = newPath.string();
-    }
-
+    ImGui::TextUnformatted("Path");
     ImGui::SameLine();
-    if (ImGui::Button("Up"))
+    ImGui::SetNextItemWidth(-34.0f);
+    if (ImGui::InputText("##ContentBrowserPath", pathBuf, sizeof(pathBuf), ImGuiInputTextFlags_EnterReturnsTrue))
     {
-        if (currentPath.has_parent_path())
-            m_CurrentDir = currentPath.parent_path().string();
+        m_ContentBrowserPath = pathBuf;
+        navigateToTypedPath();
     }
+    if (ImGui::IsItemDeactivatedAfterEdit())
+        m_ContentBrowserPath = pathBuf;
+    ImGui::SameLine();
+    if (ImGui::ArrowButton("##GoContentBrowserPath", ImGuiDir_Right))
+        navigateToTypedPath();
 
-    ImGui::BeginChild("ContentBrowserScroll");
+    ImGui::BeginChild("ContentBrowserDrives", ImVec2(0.0f, 82.0f), false, ImGuiWindowFlags_NoScrollbar);
+    struct DriveShortcut
+    {
+        char Letter;
+        Ref<Texture> Icon;
+    };
+    const DriveShortcut drives[] = {
+        { 'C', driveCIcon },
+        { 'D', driveDIcon },
+        { 'E', driveEIcon },
+        { 'F', driveFIcon },
+    };
+    for (const DriveShortcut& drive : drives)
+    {
+        std::filesystem::path drivePath(std::string(1, drive.Letter) + ":\\");
+        const bool driveAvailable = IsDriveRootAvailable(drivePath);
+        ImGui::PushID(drive.Letter);
+        if (!driveAvailable)
+            ImGui::BeginDisabled();
+        if (drive.Icon)
+        {
+            ImGui::ImageButton("##Drive", (ImTextureID)(uint64_t)drive.Icon->m_RendererID,
+                ImVec2(64.0f, 64.0f), ImVec2(0, 1), ImVec2(1, 0));
+        }
+        else
+        {
+            ImGui::Button((std::string(1, drive.Letter) + ":").c_str(), ImVec2(64.0f, 64.0f));
+        }
+        if (ImGui::IsItemClicked() && driveAvailable)
+            setCurrentDirectory(drivePath);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(driveAvailable ? "%c:\\" : "%c:\\ not available", drive.Letter);
+        if (!driveAvailable)
+            ImGui::EndDisabled();
+        ImGui::PopID();
+        ImGui::SameLine();
+    }
+    ImGui::NewLine();
+    ImGui::EndChild();
 
     try
     {
-        // List directories
-        for (const auto& entry : std::filesystem::directory_iterator(currentPath))
-        {
-            const auto& path = entry.path();
-            std::string filename = path.filename().string();
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        const float leftWidth = glm::clamp(avail.x * 0.28f, 170.0f, 320.0f);
 
-            if (entry.is_directory())
-            {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 0.2f, 1.0f));
-                if (ImGui::Selectable(filename.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick))
-                {
-                    if (ImGui::IsMouseDoubleClicked(0))
-                    {
-                        m_CurrentDir = path.string();
-                    }
-                }
-                ImGui::PopStyleColor();
-            }
+        ImGui::BeginChild("ContentBrowserDirectories", ImVec2(leftWidth, 0.0f), true);
+        ImGui::TextDisabled("Directories");
+        ImGui::Separator();
+        if (ImGui::Selectable("\xE4\xB8\x8A\xE4\xB8\x80\xE7\xBA\xA7", false))
+        {
+            std::filesystem::path parentPath = currentPath.parent_path();
+            if (!parentPath.empty() && parentPath != currentPath)
+                setCurrentDirectory(parentPath);
         }
-
-        // List files
-        for (const auto& entry : std::filesystem::directory_iterator(currentPath))
+        for (const auto& entry : m_ContentBrowserDirectories)
         {
-            const auto& path = entry.path();
-            if (!entry.is_regular_file())
-                continue;
+            const std::filesystem::path path = entry;
+            const std::string filename = path.filename().u8string();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.86f, 0.78f, 0.36f, 1.0f));
+            if (ImGui::Selectable(filename.c_str(), false))
+                setCurrentDirectory(path);
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndChild();
 
-            std::string filename = path.filename().string();
-            std::string extension = path.extension().string();
-            std::transform(extension.begin(), extension.end(), extension.begin(),
-                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        ImGui::SameLine();
+        ImGui::BeginChild("ContentBrowserFiles", ImVec2(0.0f, 0.0f), true);
+        ImGui::TextDisabled("%zu files", m_ContentBrowserFiles.size());
+        ImGui::Separator();
 
-            bool isModel = IsSupportedModelFile(path);
-            bool isGCode = IsSupportedGCodeFile(path);
-            if (isModel)
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 1.0f, 1.0f));
+        const float tileWidth = 104.0f;
+        const float tileHeight = 112.0f;
+        const float iconSize = 64.0f;
+        const float spacing = 12.0f;
+        const float contentWidth = ImGui::GetContentRegionAvail().x;
+        const int columns = std::max(1, (int)((contentWidth + spacing) / (tileWidth + spacing)));
+
+        for (int i = 0; i < (int)m_ContentBrowserFiles.size(); i++)
+        {
+            const std::filesystem::path path = m_ContentBrowserFiles[i];
+            const std::string filename = path.filename().u8string();
+            const std::string selectedKey = path.u8string();
+            const bool selected = m_SelectedFile == selectedKey;
+            const bool isModel = IsSupportedModelFile(path);
+            const bool isGCode = IsSupportedGCodeFile(path);
+            Ref<Texture> icon = iconForFile(path);
+
+            if (i > 0 && (i % columns) != 0)
+                ImGui::SameLine(0.0f, spacing);
+
+            ImGui::PushID(selectedKey.c_str());
+            ImVec2 tileMin = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##FileTile", ImVec2(tileWidth, tileHeight), ImGuiButtonFlags_MouseButtonLeft);
+            const bool hovered = ImGui::IsItemHovered();
+            const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+            const bool doubleClicked = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+
+            if (clicked)
+                m_SelectedFile = selectedKey;
+            if (doubleClicked && isModel)
+            {
+                if (!Application::Get().LoadObject3D(path.u8string()))
+                    WARN("Failed to load: {}", path.u8string());
+            }
+            if (doubleClicked && isGCode)
+            {
+                if (!Application::Get().LoadGCode(path))
+                    WARN("Failed to load GCode: {}", path.u8string());
+            }
+
+            ImVec2 tileMax(tileMin.x + tileWidth, tileMin.y + tileHeight);
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            if (selected || hovered)
+            {
+                ImU32 bg = selected ? IM_COL32(58, 88, 130, 170) : IM_COL32(255, 255, 255, 36);
+                drawList->AddRectFilled(tileMin, tileMax, bg, 6.0f);
+                drawList->AddRect(tileMin, tileMax, selected ? IM_COL32(103, 154, 222, 210) : IM_COL32(255, 255, 255, 50), 6.0f);
+            }
+
+            ImVec2 iconMin(tileMin.x + (tileWidth - iconSize) * 0.5f, tileMin.y + 10.0f);
+            ImVec2 iconMax(iconMin.x + iconSize, iconMin.y + iconSize);
+            if (icon)
+                drawTextureIcon(drawList, icon, iconMin, iconMax);
+            else if (isModel)
+                drawFallbackIcon(drawList, iconMin, iconMax, "3D", IM_COL32(241, 164, 61, 255));
             else if (isGCode)
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.9f, 0.35f, 1.0f));
+                drawFallbackIcon(drawList, iconMin, iconMax, "NC", IM_COL32(88, 220, 145, 255));
+            else if (isTextFile(path))
+                drawFallbackIcon(drawList, iconMin, iconMax, "TXT", IM_COL32(88, 166, 255, 255));
+            else
+                drawFallbackIcon(drawList, iconMin, iconMax, "FILE", IM_COL32(154, 164, 178, 255));
 
-            if (ImGui::Selectable(filename.c_str(), m_SelectedFile == filename, ImGuiSelectableFlags_AllowDoubleClick))
-            {
-                m_SelectedFile = filename;
-                if (ImGui::IsMouseDoubleClicked(0) && isModel)
-                {
-                    if (!Application::Get().LoadObject3D(path.u8string()))
-                        WARN("Failed to load: {}", path.u8string());
-                }
-                if (ImGui::IsMouseDoubleClicked(0) && isGCode)
-                {
-                    if (!Application::Get().LoadGCode(path))
-                        WARN("Failed to load GCode: {}", path.u8string());
-                }
-            }
+            std::string visibleName = makeEllipsis(filename, tileWidth - 10.0f);
+            ImVec2 textSize = ImGui::CalcTextSize(visibleName.c_str());
+            ImVec2 textPos(tileMin.x + (tileWidth - textSize.x) * 0.5f, tileMin.y + 80.0f);
+            ImU32 textColor = isModel ? IM_COL32(150, 204, 255, 255) :
+                (isGCode ? IM_COL32(128, 230, 150, 255) : IM_COL32(225, 228, 235, 255));
+            drawList->AddText(textPos, textColor, visibleName.c_str());
 
-            if (isModel || isGCode)
-                ImGui::PopStyleColor();
+            if (hovered)
+                ImGui::SetTooltip("%s", path.u8string().c_str());
+
+            ImGui::PopID();
         }
+        ImGui::EndChild();
     }
     catch (const std::exception&)
     {
         ImGui::TextDisabled("Unable to browse directory");
     }
-
-    ImGui::EndChild();
 }
 
 void ImGuiLayer::DrawConsolePanel()
@@ -932,12 +1386,15 @@ void ImGuiLayer::DrawViewportPanel()
         {
             ImGui::Image((ImTextureID)textureID, viewportSize, ImVec2(0, 1), ImVec2(1, 0));
 
-            bool hovered = ImGui::IsItemHovered();
-            app.SetViewportHovered(hovered);
+            const bool imageHovered = ImGui::IsItemHovered();
+            ImVec2 itemMin = ImGui::GetItemRectMin();
+            ImVec2 itemMax = ImGui::GetItemRectMax();
+            const bool axisIndicatorHovered = DrawViewportAxisIndicator(app, itemMin, itemMax);
+            const bool viewportHovered = imageHovered && !axisIndicatorHovered;
+            app.SetViewportHovered(viewportHovered);
 
-            if (hovered)
+            if (viewportHovered)
             {
-                ImVec2 itemMin = ImGui::GetItemRectMin();
                 app.SetViewportOrigin(glm::vec2(itemMin.x, itemMin.y));
                 ImVec2 mousePos = ImGui::GetMousePos();
                 app.GetViewportMousePos() = glm::vec2(mousePos.x - itemMin.x, mousePos.y - itemMin.y);
@@ -1028,7 +1485,7 @@ bool ImGuiLayer::IsSupportedModelFile(const std::filesystem::path& filepath) con
 
     return extension == ".obj" || extension == ".stl" || extension == ".ply" ||
            extension == ".gltf" || extension == ".glb" ||
-           extension == ".pmx" || extension == ".pmd" ||
+           extension == ".mmd" || extension == ".pmx" || extension == ".pmd" ||
            extension == ".step" || extension == ".stp";
 }
 

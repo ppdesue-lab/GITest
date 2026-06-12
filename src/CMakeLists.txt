@@ -114,7 +114,7 @@ FetchContent_MakeAvailable(spdlog)
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG v1.90.6  # 指定版本标签
+    GIT_TAG docking
 )
 
 # 获取并构建 imgui

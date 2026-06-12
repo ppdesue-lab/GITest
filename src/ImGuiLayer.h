@@ -10,6 +10,7 @@
 #include <deque>
 #include <string>
 #include <filesystem>
+#include <vector>
 
 struct ConsoleMessage
 {
@@ -74,6 +75,10 @@ private:
     std::string m_ContentBrowserPath;
     std::string m_SelectedFile;
     std::string m_CurrentDir;
+    std::string m_ContentBrowserCachedDir;
+    std::vector<std::filesystem::path> m_ContentBrowserDirectories;
+    std::vector<std::filesystem::path> m_ContentBrowserFiles;
+    bool m_ContentBrowserNeedsRefresh = true;
 
     // Console
     static std::deque<ConsoleMessage> s_ConsoleMessages;

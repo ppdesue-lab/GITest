@@ -14,6 +14,9 @@ public:
 
     bool IsLoaded() const { return m_Loaded; }
     const glm::uvec3& GetDimensions() const { return m_Dimensions; }
+    int& StepCount() { return m_StepCount; }
+    float& Density() { return m_Density; }
+    float& Exposure() { return m_Exposure; }
 
 private:
     bool LoadManixDat(const std::filesystem::path& filepath);

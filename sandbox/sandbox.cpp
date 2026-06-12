@@ -2,18 +2,27 @@
 #include "kengine.h"
 #include <imgui.h>
 #include <Primitive/AxisHelper.h>
+#include <Camera/FPSCamera.h>
 
 class ExampleLayer : public Layer
 {
 public:
     AxisHelper axis;
-    Ref<FrameBuffer> fbo;
+    //Ref<FrameBuffer> fbo;
 
     ExampleLayer()
         : axis(glm::vec3(100, 100, 100))
     {
-        // Ground managed by Scene
-        Application::Get().GetScene().CreatePlane("Ground");
+        Application& app = Application::Get();
+        auto plane = app.GetScene().CreatePlane("XZ Plane", 100.0f);
+        app.SetSelectedObjectIndex(app.GetScene().GetCount() - 1);
+        if (auto camera = std::dynamic_pointer_cast<FPSCamera>(Application::Get().GetCamera()))
+        {
+            //camera->setPosition(glm::vec3(0.0f, 180.0f, 260.0f));
+            //camera->lookAt(glm::vec3(0.0f, 0.0f, 0.0f));
+            camera->setFarPlane(1000.0f);
+            camera->setMovementSpeed(50.0f);
+        }
 
         //auto rustedIron = Application::Get().GetScene().CreateSphere("Rusted Iron PBR",10.f);
         //if (rustedIron && !rustedIron->Meshes.empty())
@@ -33,13 +42,7 @@ public:
         //        mesh->Transfm.translation = glm::vec3(-20.0f, 0.0f, 0.0f);
         //}
 
-        // Load first object at natural scale
-        auto obj = Application::Get().LoadObject3D("D:/Untitled.obj");
-        if (obj && !obj->Meshes.empty())
-        {
-            auto& t = obj->Meshes[0]->Transfm;
-            t.translation = glm::vec3(30.0f, 0.0f, 0.0f);
-        }
+        //auto obj = Application::Get().LoadObject3D("D:/Untitled.obj");
 
         // Load second object at origin
         //auto monkey = Application::Get().LoadObject3D("D:/Untitled.obj");
@@ -49,9 +52,9 @@ public:
         //    t.translation = glm::vec3(0.0f, 0.0f, 0.0f);
         //}
 
-        Application& app = Application::Get();
-        fbo = FrameBuffer::Create(FrameBufferSpecification{ app.GetWindow().GetWidth(),app.GetWindow().GetHeight(),
-            { FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA8), FrameBufferTextureSpecification(FrameBufferTextureFormat::Depth) } });
+        //Application& app = Application::Get();
+        //fbo = FrameBuffer::Create(FrameBufferSpecification{ app.GetWindow().GetWidth(),app.GetWindow().GetHeight(),
+        //    { FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA8), FrameBufferTextureSpecification(FrameBufferTextureFormat::Depth) } });
     }
 
     void OnAttach() override {}
@@ -72,9 +75,9 @@ public:
 
     void OnImGuiRender() override
     {
-        ImGui::Begin(u8"中文");
-        ImGui::Text(u8"你好,imgui!");
-        ImGui::End();
+        //ImGui::Begin(u8"中文");
+        //ImGui::Text(u8"你好,imgui!");
+        //ImGui::End();
 	}
 
     void OnEvent(Event& event) override

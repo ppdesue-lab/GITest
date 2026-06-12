@@ -15,6 +15,6 @@ public:
     virtual void Unbind() const override;
 
 private:
-    uint32_t m_Width, m_Height;
-    uint32_t m_RendererID=0;
+    uint32_t m_Width = 0;
+    uint32_t m_Height = 0;
 };

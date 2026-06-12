@@ -35,15 +35,6 @@ float ClampDistance(float value)
     return std::max(value, 0.0f);
 }
 
-#ifdef G_OPENGL
-void CheckTerrainGLError(const char* label)
-{
-    for (GLenum error = glGetError(); error != GL_NO_ERROR; error = glGetError())
-        std::cerr << "TerrainCDLOD OpenGL error after " << label << ": 0x"
-            << std::hex << error << std::dec << std::endl;
-}
-#endif
-
 const char* TerrainVertexShader()
 {
     return R"(
@@ -394,7 +385,6 @@ void TerrainCDLOD::CreateHeightTexture()
     glTextureParameteri(m_HeightTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTextureParameteri(m_HeightTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTextureParameteri(m_HeightTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    CheckTerrainGLError("CreateHeightTexture");
 #endif
 }
 
@@ -427,7 +417,6 @@ bool TerrainCDLOD::CreateOverlayTexture(const std::filesystem::path& overlayPath
     glTextureParameteri(m_OverlayTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTextureParameteri(m_OverlayTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTextureParameteri(m_OverlayTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    CheckTerrainGLError("CreateOverlayTexture");
     return m_OverlayTexture != 0;
 #else
     (void)overlayPath;
@@ -468,9 +457,6 @@ void TerrainCDLOD::CreateGridGeometry()
     vertexArray->SetIndexBuffer(IndexBuffer::Create(indices.data(), (uint32_t)indices.size()));
     vertexArray->Unbind();
     m_GridGeometry = GeometryLibrary::Register(vertexArray, "TerrainCDLODGrid");
-#ifdef G_OPENGL
-    CheckTerrainGLError("CreateGridGeometry");
-#endif
 }
 
 void TerrainCDLOD::CreateShader()
@@ -514,9 +500,6 @@ void TerrainCDLOD::Draw(const glm::mat4& view, const glm::mat4 proj, bool transp
         m_Shader->SetFloat4("u_Node", glm::vec4((float)node.X, (float)node.Y, (float)node.Size, (float)node.LODLevel));
         m_Shader->SetFloat4("u_MorphConsts", glm::vec4(morph[0], morph[1], morph[2], morph[3]));
         RenderCommand::DrawIndexed(grid, m_GridIndexCount);
-#ifdef G_OPENGL
-        CheckTerrainGLError("Draw selected node");
-#endif
     }
 }
 

@@ -37,6 +37,9 @@ public:
     bool Load(const std::filesystem::path& heightmapPath);
     bool Load(const std::filesystem::path& heightmapPath, const std::filesystem::path& overlayPath);
     bool IsLoaded() const { return m_Loaded; }
+    const Config& GetConfig() const { return m_Config; }
+    glm::ivec2 GetHeightmapSize() const { return glm::ivec2(m_Heightmap.Width, m_Heightmap.Height); }
+    size_t GetSelectedNodeCount() const { return m_SelectedNodes.size(); }
 
     void Draw(const glm::mat4& view, const glm::mat4 proj, bool transparentPass = false) override;
     void UpdateBoundingSphere() override;
