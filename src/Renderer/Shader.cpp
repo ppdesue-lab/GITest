@@ -323,9 +323,12 @@ void ShaderLibrary::LoadDefault()
 			uniform mat4 u_View;
 			uniform mat4 u_Projection;
 			uniform mat4 u_Model;
+			uniform int u_XZInput;
+			uniform float u_XZInputY;
 			void main()
 			{
-				gl_Position = u_Projection * u_View * u_Model * vec4(a_Position, 1.0);
+				vec3 position = u_XZInput != 0 ? vec3(a_Position.x, u_XZInputY, a_Position.y) : a_Position;
+				gl_Position = u_Projection * u_View * u_Model * vec4(position, 1.0);
 			}
 		)";
 		auto fSource = R"(
@@ -349,9 +352,12 @@ void ShaderLibrary::LoadDefault()
 			uniform mat4 u_View;
 			uniform mat4 u_Projection;
 			uniform mat4 u_Model;
+			uniform int u_XZInput;
+			uniform float u_XZInputY;
 			void main()
 			{
-				gl_Position = u_Projection * u_View * u_Model * vec4(a_Position, 1.0);
+				vec3 position = u_XZInput != 0 ? vec3(a_Position.x, u_XZInputY, a_Position.y) : a_Position;
+				gl_Position = u_Projection * u_View * u_Model * vec4(position, 1.0);
 			}
 		)";
 		auto fSource = R"(

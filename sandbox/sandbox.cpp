@@ -2,7 +2,6 @@
 #include "kengine.h"
 #include <imgui.h>
 #include <Primitive/AxisHelper.h>
-#include <Camera/FPSCamera.h>
 
 class ExampleLayer : public Layer
 {
@@ -13,17 +12,6 @@ public:
     ExampleLayer()
         : axis(glm::vec3(100, 100, 100))
     {
-        Application& app = Application::Get();
-        auto plane = app.GetScene().CreatePlane("XZ Plane", 100.0f);
-        app.SetSelectedObjectIndex(app.GetScene().GetCount() - 1);
-        if (auto camera = std::dynamic_pointer_cast<FPSCamera>(Application::Get().GetCamera()))
-        {
-            //camera->setPosition(glm::vec3(0.0f, 180.0f, 260.0f));
-            //camera->lookAt(glm::vec3(0.0f, 0.0f, 0.0f));
-            camera->setFarPlane(1000.0f);
-            camera->setMovementSpeed(50.0f);
-        }
-
         //auto rustedIron = Application::Get().GetScene().CreateSphere("Rusted Iron PBR",10.f);
         //if (rustedIron && !rustedIron->Meshes.empty())
         //{

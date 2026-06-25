@@ -238,7 +238,7 @@ Transform* Scene::GetTransform(int index)
     {
         // A single-mesh asset has no separate hierarchy node exposed in the editor.
         // Bind its visible mesh transform so programmatic mesh placement and the gizmo agree.
-        if (entry->Object->Meshes.size() == 1 && entry->Object->Meshes[0])
+        if (entry->Object->Meshes.size() == 1 && entry->Object->Meshes[0] && entry->Object->Meshes[0]->Mat)
             return &entry->Object->Meshes[0]->Transfm;
         return &entry->Object->Transfm;
     }

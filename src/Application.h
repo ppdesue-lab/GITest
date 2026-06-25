@@ -59,7 +59,10 @@ public:
 	Ref<Object3D> LoadGCode(const std::filesystem::path& filepath);
 	Ref<Object3D> LoadManixVolume();
 	Ref<Object3D> LoadDefaultTerrainCDLOD();
+	Ref<Object3D> LoadTerrainHeightMap();
+	Ref<Object3D> LoadWaterNode();
 	bool LoadFileByExtension(const std::filesystem::path& filepath);
+	void NewProject();
 	void ClearObject3Ds();
 
 	// Viewport

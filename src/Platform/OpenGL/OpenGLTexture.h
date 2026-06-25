@@ -6,6 +6,7 @@ class OpenGLTexture : public Texture
 {
 public:
     OpenGLTexture(Ref<Image> img=nullptr);
+    explicit OpenGLTexture(const std::string& filepath, bool srgb = false);
     virtual ~OpenGLTexture();
 
     virtual uint32_t GetWidth() const override { return m_Width; }

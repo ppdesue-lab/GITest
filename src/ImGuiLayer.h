@@ -46,6 +46,7 @@ private:
     void DrawContentBrowser();
     void DrawConsolePanel();
     void DrawViewportPanel();
+    void DrawNodeEditorWindow();
     void DrawShadowDebugWindow();
     void DrawProbeGIDebugWindow();
     void DrawSSAODebugWindow();
@@ -79,6 +80,7 @@ private:
     std::vector<std::filesystem::path> m_ContentBrowserDirectories;
     std::vector<std::filesystem::path> m_ContentBrowserFiles;
     bool m_ContentBrowserNeedsRefresh = true;
+    bool m_ShowNodeEditor = false;
 
     // Console
     static std::deque<ConsoleMessage> s_ConsoleMessages;

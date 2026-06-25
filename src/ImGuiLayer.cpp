@@ -3,6 +3,7 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <ImNodesEz.h>
 
 #include <glm/gtx/euler_angles.hpp>
 
@@ -39,8 +40,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -514,6 +517,192 @@ void ImGuiLayer::DrawEditorLayout(ImVec2 pos, ImVec2 size, float menuBarHeight)
     ImGui::Begin("Console", nullptr, panelFlags);
     DrawConsolePanel();
     ImGui::End();
+
+    if (m_ShowNodeEditor)
+    {
+        ImGui::Begin("NodeEditor", &m_ShowNodeEditor,
+            panelFlags | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        DrawNodeEditorWindow();
+        ImGui::End();
+    }
+}
+
+void ImGuiLayer::DrawNodeEditorWindow()
+{
+    enum NodeSlotType
+    {
+        NodeSlotValue = 1,
+        NodeSlotColor,
+        NodeSlotSurface,
+    };
+
+    struct NodeEditorNode;
+    struct NodeEditorConnection
+    {
+        NodeEditorNode* InputNode = nullptr;
+        const char* InputSlot = nullptr;
+        NodeEditorNode* OutputNode = nullptr;
+        const char* OutputSlot = nullptr;
+    };
+
+    struct NodeEditorNode
+    {
+        const char* Title = nullptr;
+        ImVec2 Pos = {};
+        bool Selected = false;
+        std::vector<ImNodes::Ez::SlotInfo> Inputs;
+        std::vector<ImNodes::Ez::SlotInfo> Outputs;
+    };
+
+    auto makeNode = [](const char* title, ImVec2 pos,
+        std::vector<ImNodes::Ez::SlotInfo> inputs,
+        std::vector<ImNodes::Ez::SlotInfo> outputs) -> std::unique_ptr<NodeEditorNode> {
+        auto node = std::make_unique<NodeEditorNode>();
+        node->Title = title;
+        node->Pos = pos;
+        node->Inputs = std::move(inputs);
+        node->Outputs = std::move(outputs);
+        return node;
+    };
+
+    static ImNodes::Ez::Context* context = ImNodes::Ez::CreateContext();
+    IM_UNUSED(context);
+
+    static std::vector<std::unique_ptr<NodeEditorNode>> nodes;
+    static std::vector<NodeEditorConnection> connections;
+    static bool initialized = false;
+    if (!initialized)
+    {
+        initialized = true;
+        nodes.push_back(makeNode("Texture", ImVec2(60.0f, 80.0f), {},
+            { { "Color", NodeSlotColor } }));
+        nodes.push_back(makeNode("Multiply", ImVec2(280.0f, 70.0f),
+            { { "A", NodeSlotColor }, { "B", NodeSlotColor } },
+            { { "Result", NodeSlotColor } }));
+        nodes.push_back(makeNode("Material", ImVec2(520.0f, 100.0f),
+            { { "BaseColor", NodeSlotColor }, { "Roughness", NodeSlotValue } },
+            { { "Surface", NodeSlotSurface } }));
+        connections.push_back({ nodes[1].get(), "A", nodes[0].get(), "Color" });
+        connections.push_back({ nodes[2].get(), "BaseColor", nodes[1].get(), "Result" });
+    }
+
+    auto createNode = [&](const char* title) {
+        if (strcmp(title, "Float") == 0)
+            nodes.push_back(makeNode("Float", ImVec2(0.0f, 0.0f), {}, { { "Value", NodeSlotValue } }));
+        else if (strcmp(title, "Texture") == 0)
+            nodes.push_back(makeNode("Texture", ImVec2(0.0f, 0.0f), {}, { { "Color", NodeSlotColor } }));
+        else if (strcmp(title, "Multiply") == 0)
+            nodes.push_back(makeNode("Multiply", ImVec2(0.0f, 0.0f),
+                { { "A", NodeSlotColor }, { "B", NodeSlotColor } }, { { "Result", NodeSlotColor } }));
+        else if (strcmp(title, "Material") == 0)
+            nodes.push_back(makeNode("Material", ImVec2(0.0f, 0.0f),
+                { { "BaseColor", NodeSlotColor }, { "Roughness", NodeSlotValue } }, { { "Surface", NodeSlotSurface } }));
+        ImNodes::AutoPositionNode(nodes.back().get());
+    };
+
+    auto removeConnection = [&](const NodeEditorConnection& target) {
+        connections.erase(std::remove_if(connections.begin(), connections.end(),
+            [&](const NodeEditorConnection& connection) {
+                return connection.InputNode == target.InputNode &&
+                    connection.InputSlot == target.InputSlot &&
+                    connection.OutputNode == target.OutputNode &&
+                    connection.OutputSlot == target.OutputSlot;
+            }), connections.end());
+    };
+
+    auto removeNode = [&](NodeEditorNode* target) {
+        connections.erase(std::remove_if(connections.begin(), connections.end(),
+            [&](const NodeEditorConnection& connection) {
+                return connection.InputNode == target || connection.OutputNode == target;
+            }), connections.end());
+        nodes.erase(std::remove_if(nodes.begin(), nodes.end(),
+            [&](const std::unique_ptr<NodeEditorNode>& node) { return node.get() == target; }), nodes.end());
+    };
+
+    ImNodes::Ez::BeginCanvas();
+
+    NodeEditorNode* nodeToDelete = nullptr;
+    for (const auto& nodePtr : nodes)
+    {
+        NodeEditorNode* node = nodePtr.get();
+        if (ImNodes::Ez::BeginNode(node, node->Title, &node->Pos, &node->Selected))
+        {
+            ImNodes::Ez::InputSlots(node->Inputs.empty() ? nullptr : node->Inputs.data(), (int)node->Inputs.size());
+
+            if (strcmp(node->Title, "Float") == 0)
+            {
+                static float value = 0.5f;
+                ImGui::SetNextItemWidth(90.0f);
+                ImGui::SliderFloat("##Value", &value, 0.0f, 1.0f, "%.2f");
+            }
+            else if (strcmp(node->Title, "Texture") == 0)
+            {
+                ImGui::TextUnformatted("Albedo");
+            }
+            else if (strcmp(node->Title, "Multiply") == 0)
+            {
+                ImGui::TextUnformatted("Blend");
+            }
+            else if (strcmp(node->Title, "Material") == 0)
+            {
+                ImGui::TextUnformatted("Preview");
+            }
+
+            ImNodes::Ez::OutputSlots(node->Outputs.empty() ? nullptr : node->Outputs.data(), (int)node->Outputs.size());
+
+            NodeEditorConnection newConnection;
+            void* inputNode = nullptr;
+            void* outputNode = nullptr;
+            if (ImNodes::GetNewConnection(&inputNode, &newConnection.InputSlot, &outputNode, &newConnection.OutputSlot))
+            {
+                newConnection.InputNode = static_cast<NodeEditorNode*>(inputNode);
+                newConnection.OutputNode = static_cast<NodeEditorNode*>(outputNode);
+                const bool duplicate = std::any_of(connections.begin(), connections.end(),
+                    [&](const NodeEditorConnection& connection) {
+                        return connection.InputNode == newConnection.InputNode &&
+                            connection.InputSlot == newConnection.InputSlot &&
+                            connection.OutputNode == newConnection.OutputNode &&
+                            connection.OutputSlot == newConnection.OutputSlot;
+                    });
+                if (!duplicate)
+                    connections.push_back(newConnection);
+            }
+        }
+        ImNodes::Ez::EndNode();
+
+        if (node->Selected && ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Delete))
+            nodeToDelete = node;
+    }
+
+    for (const NodeEditorConnection& connection : std::vector<NodeEditorConnection>(connections))
+    {
+        if (!ImNodes::Connection(connection.InputNode, connection.InputSlot, connection.OutputNode, connection.OutputSlot))
+            removeConnection(connection);
+    }
+
+    if (nodeToDelete)
+        removeNode(nodeToDelete);
+
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ImGui::IsWindowHovered() && !ImGui::IsMouseDragging(ImGuiMouseButton_Right))
+        ImGui::OpenPopup("NodeEditorContextMenu");
+
+    if (ImGui::BeginPopup("NodeEditorContextMenu"))
+    {
+        if (ImGui::MenuItem("Float"))
+            createNode("Float");
+        if (ImGui::MenuItem("Texture"))
+            createNode("Texture");
+        if (ImGui::MenuItem("Multiply"))
+            createNode("Multiply");
+        if (ImGui::MenuItem("Material"))
+            createNode("Material");
+        ImGui::Separator();
+        if (ImGui::MenuItem("Reset Zoom"))
+            ImNodes::GetCurrentCanvas()->Zoom = 1.0f;
+        ImGui::EndPopup();
+    }
+
+    ImNodes::Ez::EndCanvas();
 }
 
 void ImGuiLayer::DrawShadowDebugWindow()
@@ -624,12 +813,31 @@ void ImGuiLayer::DrawSSAODebugWindow()
         return;
     }
 
+    int algorithm = (int)ssao.CurrentAlgorithm();
+    const char* algorithms[] = { "Current SSAO", "SSAO11 HBAO" };
+    if (ImGui::Combo("Algorithm", &algorithm, algorithms, IM_ARRAYSIZE(algorithms)))
+        ssao.CurrentAlgorithm() = (SSAO::Algorithm)algorithm;
+
     ImGui::SliderFloat("Radius (view units)", &ssao.Radius(), 0.05f, 50.0f, "%.2f");
-    ImGui::SliderFloat("Bias", &ssao.Bias(), 0.0f, 0.3f, "%.3f");
     ImGui::SliderFloat("Strength", &ssao.Strength(), 0.0f, 3.0f, "%.2f");
+    if (ssao.CurrentAlgorithm() == SSAO::Algorithm::KernelSSAO)
+    {
+        ImGui::SliderFloat("Bias", &ssao.Bias(), 0.0f, 0.3f, "%.3f");
+    }
+    else
+    {
+        ImGui::SliderInt("Step Size", &ssao.StepSize(), 1, 16);
+        ImGui::SliderFloat("Angle Bias", &ssao.AngleBiasDegrees(), 0.0f, 45.0f, "%.0f");
+        ImGui::SliderFloat("Power Exponent", &ssao.PowerExponent(), 0.1f, 4.0f, "%.2f");
+        ImGui::SliderInt("Blur Radius", &ssao.BlurRadius(), 0, 16);
+        ImGui::SliderFloat("Blur Sharpness", &ssao.BlurSharpness(), 0.0f, 32.0f, "%.1f");
+        ImGui::SliderFloat("Max Radius Pixels", &ssao.MaxRadiusPixels(), 16.0f, 512.0f, "%.0f");
+    }
     const char* modes[] = { "Combined", "AO Only" };
     ImGui::Combo("View Mode", &ssao.DebugMode(), modes, IM_ARRAYSIZE(modes));
-    ImGui::TextDisabled("OpenGL editor viewport pass");
+    ImGui::TextDisabled(ssao.CurrentAlgorithm() == SSAO::Algorithm::SSAO11HBAO
+        ? "SSAO11 HBAO + cross-bilateral blur"
+        : "OpenGL editor viewport pass");
 
     uint64_t aoTexture = ssao.GetAOTexture();
     if (aoTexture)
@@ -746,6 +954,11 @@ void ImGuiLayer::DrawMenuBar()
     {
         if (ImGui::BeginMenu("File"))
         {
+            if (ImGui::MenuItem("New Project"))
+                Application::Get().NewProject();
+
+            ImGui::Separator();
+
             if (ImGui::MenuItem("Open Model"))
                 OpenModelFile();
             if (ImGui::MenuItem("Open GCode"))
@@ -783,6 +996,12 @@ void ImGuiLayer::DrawMenuBar()
             ImGui::EndMenu();
         }
 
+        if (ImGui::BeginMenu("Windows"))
+        {
+            ImGui::MenuItem("NodeEditor", nullptr, &m_ShowNodeEditor);
+            ImGui::EndMenu();
+        }
+
         if (ImGui::BeginMenu("GameObject"))
         {
             if (ImGui::MenuItem("Cube"))
@@ -816,6 +1035,18 @@ void ImGuiLayer::DrawMenuBar()
             {
                 auto terrain = Application::Get().LoadDefaultTerrainCDLOD();
                 TRACE("Loaded CDLOD Hetch Terrain: {}", terrain ? "success" : "failed");
+            }
+
+            if (ImGui::MenuItem("Terrain HeightMap"))
+            {
+                auto terrain = Application::Get().LoadTerrainHeightMap();
+                TRACE("Loaded Terrain HeightMap: {}", terrain ? "success" : "failed");
+            }
+
+            if (ImGui::MenuItem("Water Node"))
+            {
+                auto water = Application::Get().LoadWaterNode();
+                TRACE("Loaded Water Node: {}", water ? "success" : "failed");
             }
 
             ImGui::EndMenu();

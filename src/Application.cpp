@@ -17,6 +17,7 @@
 #include "Renderer/Buffer.h"
 #include "Renderer/VolumeObject.h"
 #include "Renderer/TerrainCDLOD.h"
+#include "Renderer/TerrainHeightMap.h"
 
 #include "Camera/FPSCamera.h"
 
@@ -128,6 +129,8 @@ Application::Application(int w,int h)
     m_PBRIBL = CreateRef<PBRIBL>(environmentPath);
     m_PathTracer = CreateRef<PathTracer>((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y, environmentPath);
     m_SVGF = CreateRef<SVGF>((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+
+    NewProject();
 }
 
 void Application::Run()
@@ -283,6 +286,13 @@ void Application::Run()
         // Draw visible objects intersecting the active camera frustum.
         const Frustum cameraFrustum(m_Camera->GetProjectionMatrix() * m_Camera->GetViewMatrix());
 #ifdef G_OPENGL
+        for (const auto& entry : m_Scene.GetObjects())
+        {
+            Ref<WaterNode> water = std::dynamic_pointer_cast<WaterNode>(entry.Object);
+            if (entry.Visible && water && water->Opacity > 0.001f)
+                water->PrepareSceneTextures(m_Scene, *m_Camera, m_ViewportSize);
+        }
+
         if (m_AppMode == AppMode::Editor)
         {
             for (const auto& entry : m_Scene.GetObjects())
@@ -393,7 +403,8 @@ void Application::Run()
             if (IsMSAAEnabled())
                 m_ViewportFBO->ResolveTo(m_ViewportResolvedFBO, { 0, 1, 2 }, true);
             uint64_t opaqueColor = postProcessFBO->GetColorAttachmentRendererID(0);
-            if (m_ViewportRenderMode == ViewportRenderMode::Editor && m_SSAO->Enabled())
+            const bool useSSAO = m_ViewportRenderMode == ViewportRenderMode::Editor && m_SSAO->Enabled();
+            if (useSSAO)
             {
                 m_SSAO->Render(
                     opaqueColor,
@@ -402,7 +413,7 @@ void Application::Run()
                     m_Camera->GetViewMatrix(),
                     m_Camera->GetProjectionMatrix());
             }
-            uint64_t shadedOpaqueColor = m_SSAO->Enabled() ? m_SSAO->GetOutputTexture() : opaqueColor;
+            uint64_t shadedOpaqueColor = useSSAO ? m_SSAO->GetOutputTexture() : opaqueColor;
 
 #ifdef G_OPENGL
             // Render transparent geometry after SSAO, reusing the opaque G-buffer depth attachment.
@@ -679,6 +690,51 @@ Ref<Object3D> Application::LoadDefaultTerrainCDLOD()
     return object;
 }
 
+Ref<Object3D> Application::LoadTerrainHeightMap()
+{
+    Ref<TerrainHeightMap> terrain = CreateRef<TerrainHeightMap>(512, 512.0f);
+    if (!terrain->IsLoaded())
+        return nullptr;
+
+    if (m_SSAO)
+        m_SSAO->Enabled() = false;
+
+    m_Scene.AddObject(terrain, "Terrain HeightMap", "procedural:island11-heightmap");
+    SetSelectedObjectIndex(m_Scene.GetCount() - 1);
+    return terrain;
+}
+
+Ref<Object3D> Application::LoadWaterNode()
+{
+    Ref<TerrainHeightMap> terrain;
+    if (auto* selected = m_Scene.GetSelectedEntry())
+        terrain = std::dynamic_pointer_cast<TerrainHeightMap>(selected->Object);
+
+    if (!terrain)
+    {
+        for (const auto& entry : m_Scene.GetObjects())
+        {
+            terrain = std::dynamic_pointer_cast<TerrainHeightMap>(entry.Object);
+            if (terrain)
+                break;
+        }
+    }
+
+    if (!terrain)
+    {
+        WARN("Water Node requires a Terrain HeightMap in the scene.");
+        return nullptr;
+    }
+
+    Ref<WaterNode> water = CreateRef<WaterNode>(terrain);
+    if (!water->IsLoaded())
+        return nullptr;
+
+    m_Scene.AddObject(water, "Water Node", "procedural:island11-water");
+    SetSelectedObjectIndex(m_Scene.GetCount() - 1);
+    return water;
+}
+
 bool Application::LoadFileByExtension(const std::filesystem::path& filepath)
 {
     std::string extension = filepath.extension().string();
@@ -696,6 +752,32 @@ bool Application::LoadFileByExtension(const std::filesystem::path& filepath)
 
     WARN("Unsupported dropped file: {}", filepath.u8string());
     return false;
+}
+
+void Application::NewProject()
+{
+    ClearObject3Ds();
+
+    Ref<ScenePlane> plane = m_Scene.CreatePlane("XZ Plane", 100.0f);
+    if (plane)
+    {
+        plane->Transfm.translation = glm::vec3(0.0f);
+        plane->UpdateBoundingSphere();
+    }
+
+    if (Ref<FPSCamera> camera = std::dynamic_pointer_cast<FPSCamera>(m_Camera))
+    {
+        camera->setPosition(glm::vec3(100.0f, 100.0f, 100.0f));
+        camera->lookAt(glm::vec3(0.0f));
+    }
+
+    m_Scene.ClearSelection();
+    m_GizmoTargetTransform = nullptr;
+    m_SelectedOutlineValid = false;
+    if (m_PathTracer)
+        m_PathTracer->ResetAccumulation();
+    if (m_SVGF)
+        m_SVGF->ResetHistory();
 }
 
 void Application::ClearObject3Ds()
@@ -1153,6 +1235,10 @@ void Application::RenderPickupPass()
             continue;
 
         m_PickupShader->SetInt("u_ObjectID", i + 1);
+        const bool isWaterNode = (bool)std::dynamic_pointer_cast<WaterNode>(entry.Object);
+        const bool xzInput = isWaterNode || std::dynamic_pointer_cast<TerrainHeightMap>(entry.Object);
+        m_PickupShader->SetInt("u_XZInput", xzInput ? 1 : 0);
+        m_PickupShader->SetFloat("u_XZInputY", isWaterNode ? -0.5f : 0.0f);
         for (const auto& mesh : entry.Object->Meshes)
         {
             Ref<VertexArray> vertexObject = mesh ? GeometryLibrary::Resolve(mesh->VertexObject) : nullptr;
@@ -1205,6 +1291,10 @@ void Application::RenderSelectedMaskPass()
             !cameraFrustum.Intersects(entry->Object->GetWorldBoundingSphere()))
             continue;
 
+        const bool isWaterNode = (bool)std::dynamic_pointer_cast<WaterNode>(entry->Object);
+        const bool xzInput = isWaterNode || std::dynamic_pointer_cast<TerrainHeightMap>(entry->Object);
+        m_SelectedMaskShader->SetInt("u_XZInput", xzInput ? 1 : 0);
+        m_SelectedMaskShader->SetFloat("u_XZInputY", isWaterNode ? -0.5f : 0.0f);
         for (const auto& mesh : entry->Object->Meshes)
         {
             Ref<VertexArray> vertexObject = mesh ? GeometryLibrary::Resolve(mesh->VertexObject) : nullptr;

@@ -7,6 +7,9 @@
 #include <Platform/DX11/DX11Texture.h>
 #endif
 
+#include <algorithm>
+#include <filesystem>
+
 std::unordered_map<std::string, TextureHandle> TextureLibrary::s_TextureHandles;
 std::vector<TextureLibrary::TextureSlot> TextureLibrary::s_TextureSlots;
 std::vector<uint32_t> TextureLibrary::s_FreeTextureSlots;
@@ -33,6 +36,35 @@ Ref<Texture> CreateTextureResource(const Ref<Image>& image)
 
 	return tex;
 }
+
+Ref<Texture> CreateTextureResourceFromFile(const std::string& filepath)
+{
+	std::string extension = std::filesystem::path(filepath).extension().string();
+	std::transform(extension.begin(), extension.end(), extension.begin(),
+		[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	if (extension != ".dds")
+		return nullptr;
+
+	std::string lowerPath = filepath;
+	std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(),
+		[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	const bool srgb = false;
+
+	switch (Renderer::GetAPI())
+	{
+	case Renderer::API::None:
+		throw std::string("not implement!");
+	case Renderer::API::OpenGL:
+		return CreateRef<OpenGLTexture>(filepath, srgb);
+#ifdef G_DX11
+	case Renderer::API::DX11:
+		ERROR("DDS TextureLibrary loading is only wired for OpenGL currently: {}", filepath);
+		return nullptr;
+#endif
+	}
+
+	return nullptr;
+}
 }
 
 TextureHandle TextureLibrary::LoadTexture(const std::string& filepath)
@@ -40,6 +72,38 @@ TextureHandle TextureLibrary::LoadTexture(const std::string& filepath)
 	auto it = s_TextureHandles.find(filepath);
 	if (it != s_TextureHandles.end() && IsValid(it->second))
 		return it->second;
+
+	if (Ref<Texture> ddsTexture = CreateTextureResourceFromFile(filepath))
+	{
+		if (ddsTexture->GetWidth() == 0 || ddsTexture->GetHeight() == 0)
+			return {};
+
+		uint32_t index = 0;
+		if (!s_FreeTextureSlots.empty())
+		{
+			index = s_FreeTextureSlots.back();
+			s_FreeTextureSlots.pop_back();
+		}
+		else
+		{
+			index = static_cast<uint32_t>(s_TextureSlots.size());
+			s_TextureSlots.emplace_back();
+		}
+
+		TextureSlot& slot = s_TextureSlots[index];
+		if (slot.Generation == 0)
+			slot.Generation = 1;
+		slot.Resource = ddsTexture;
+		slot.SourceImage.reset();
+		slot.Name = filepath;
+		slot.Alive = true;
+
+		TextureHandle handle;
+		handle.Index = index;
+		handle.Generation = slot.Generation;
+		s_TextureHandles[filepath] = handle;
+		return handle;
+	}
 
     //load from file
 	//1 create image from filepath

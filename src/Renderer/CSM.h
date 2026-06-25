@@ -6,7 +6,7 @@
 
 struct DirectionalLight
 {
-    glm::vec3 Direction = glm::vec3(0.5f, -1.0f, 0.3f);
+    glm::vec3 Direction = glm::vec3(0.6428f, -0.4178f, -0.6428f);
     glm::vec3 Color = glm::vec3(1.0f, 1.0f, 1.0f);
     float Intensity = 1.0f;
 };

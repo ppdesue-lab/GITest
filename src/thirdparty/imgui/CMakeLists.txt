@@ -18,8 +18,15 @@ set(IMGUI_SRC
         ${imgui_SOURCE_DIR}/imgui_tables.cpp
         ${imgui_SOURCE_DIR}/imgui_widgets.cpp
         ${imgui_SOURCE_DIR}/imgui_demo.cpp
+        ${CMAKE_SOURCE_DIR}/src/thirdparty/ImNodes/ImNodes.h
+        ${CMAKE_SOURCE_DIR}/src/thirdparty/ImNodes/ImNodes.cpp
+        ${CMAKE_SOURCE_DIR}/src/thirdparty/ImNodes/ImNodesEz.h
+        ${CMAKE_SOURCE_DIR}/src/thirdparty/ImNodes/ImNodesEz.cpp
         )
 
 add_library(libimgui STATIC ${IMGUI_SRC})
-target_include_directories(libimgui PRIVATE ${imgui_SOURCE_DIR})
+target_include_directories(libimgui PUBLIC
+        ${imgui_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/src/thirdparty/ImNodes
+        )
 target_link_libraries(libimgui PRIVATE glfw)

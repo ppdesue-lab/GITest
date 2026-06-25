@@ -30,6 +30,7 @@ set(KENGINE_OCCT_LIBRARIES
 )
 
 file(GLOB_RECURSE SRC_FILES *.cpp *.h)
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/ImNodes/.*")
 
 #------------------third party
 include(FetchContent)
