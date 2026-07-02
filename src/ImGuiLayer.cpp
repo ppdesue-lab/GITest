@@ -163,17 +163,15 @@ namespace
         if (!camera)
             return;
 
-        BoundingSphere focus = ComputeViewportFocusSphere(app);
-        const float fovRadians = glm::radians(std::max(camera->getFOV(), 1.0f));
-        const float distance = std::max(focus.Radius / std::tan(fovRadians * 0.5f) * 1.35f, 10.0f);
-
         glm::vec3 direction = glm::normalize(viewDirection);
         if (std::abs(direction.y) > 0.99f)
             direction = glm::normalize(direction + glm::vec3(0.0f, 0.0f, 0.02f));
 
+        const glm::vec3 target = glm::vec3(0.0f);
+        const float distance = 100.0f;
         camera->setInputEnabled(false);
-        camera->setPosition(focus.Center + direction * distance);
-        camera->lookAt(focus.Center);
+        camera->setPosition(target + direction * distance);
+        camera->lookAt(target);
     }
 
     ImVec2 ToImVec2(const glm::vec2& value)
@@ -395,6 +393,7 @@ void ImGuiLayer::OnAttach()
 
     // Initialize content browser path
     m_CurrentDir = std::filesystem::current_path().u8string();
+    Application::Get().GetTimelineAnimation().Initialize();
 }
 
 void ImGuiLayer::OnDetach()
@@ -448,6 +447,8 @@ void ImGuiLayer::OnImGuiRender()
     if (menuBarHeight < 1.0f) menuBarHeight = 20.0f;
 
     DrawEditorLayout(pos, size, menuBarHeight);
+    Application& app = Application::Get();
+    app.GetTimelineAnimation().OnImGuiRender(app.GetScene(), app.GetDeltaTime());
 
 }
 
@@ -999,6 +1000,9 @@ void ImGuiLayer::DrawMenuBar()
         if (ImGui::BeginMenu("Windows"))
         {
             ImGui::MenuItem("NodeEditor", nullptr, &m_ShowNodeEditor);
+            bool showTanim = Application::Get().GetTimelineAnimation().IsVisible();
+            if (ImGui::MenuItem("Tanim", nullptr, &showTanim))
+                Application::Get().GetTimelineAnimation().SetVisible(showTanim);
             ImGui::EndMenu();
         }
 
@@ -1147,7 +1151,71 @@ void ImGuiLayer::DrawPropertiesPanel()
 
             Scene::Entry* selectedEntry = app.GetScene().GetSelectedEntry();
             if (selectedEntry && selectedEntry->Object)
+            {
                 ObjectInspectorRegistry::DrawInspector(*selectedEntry->Object);
+
+                ImGui::SeparatorText("Keyframe Timeline");
+                TimelineAnimation& timeline = app.GetTimelineAnimation();
+                const int selectedIndex = app.GetSelectedObjectIndex();
+                const bool hasTimeline = timeline.HasTimeline(*selectedEntry);
+                if (!hasTimeline)
+                {
+                    if (ImGui::Button("Create Timeline"))
+                        timeline.EnsureTimeline(*selectedEntry, selectedIndex);
+                }
+                else
+                {
+                    const std::string timelineName = timeline.GetTimelineName(*selectedEntry);
+                    ImGui::TextDisabled("%s", timelineName.empty() ? "Timeline" : timelineName.c_str());
+
+                    if (ImGui::Button("Edit Timeline"))
+                        timeline.OpenEditor(*selectedEntry, selectedIndex);
+                    ImGui::SameLine();
+                    if (timeline.IsPlaying(*selectedEntry))
+                    {
+                        if (ImGui::Button("Pause"))
+                            timeline.Pause(*selectedEntry);
+                    }
+                    else
+                    {
+                        if (ImGui::Button("Play"))
+                            timeline.Play(*selectedEntry, selectedIndex);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Stop"))
+                        timeline.Stop(*selectedEntry);
+
+                    if (ImGui::Button("Load .tanim"))
+                    {
+                        auto files = pfd::open_file(
+                            "Load Timeline",
+                            "",
+                            { "Tanim Timeline", "*.tanim", "All Files", "*" }).result();
+                        if (!files.empty() && !timeline.Load(*selectedEntry, selectedIndex, std::filesystem::u8path(files[0])))
+                            ::Log::GetCoreLogger()->error("Failed to load timeline: {}", files[0]);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Save .tanim"))
+                    {
+                        std::string defaultPath;
+                        const std::filesystem::path currentPath = timeline.GetTimelinePath(*selectedEntry);
+                        if (!currentPath.empty())
+                            defaultPath = currentPath.u8string();
+                        auto filepath = pfd::save_file(
+                            "Save Timeline",
+                            defaultPath,
+                            { "Tanim Timeline", "*.tanim", "All Files", "*" }).result();
+                        if (!filepath.empty())
+                        {
+                            std::filesystem::path path = std::filesystem::u8path(filepath);
+                            if (path.extension().empty())
+                                path += ".tanim";
+                            if (!timeline.Save(*selectedEntry, path))
+                                ::Log::GetCoreLogger()->error("Failed to save timeline: {}", path.u8string());
+                        }
+                    }
+                }
+            }
         }
 
         ImGui::SeparatorText("Gizmo");

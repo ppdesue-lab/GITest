@@ -12,6 +12,7 @@ set(KENGINE_OPENCL_ROOT "D:/lib/opencl" CACHE PATH "OpenCL SDK root used by the 
 set(KENGINE_OPENCL_LIBRARY "${KENGINE_OPENCL_ROOT}/lib/x86_64/OpenCL.lib")
 set(KENGINE_OCCT_ROOT "D:/gitclones/CarveraCAM/thirdparty/occt" CACHE PATH "OpenCASCADE installation used by the STEP loader")
 set(KENGINE_OCCT_AUX_RUNTIME_DIR "D:/soft/Mayo-0.9.0-win64-binaries" CACHE PATH "Directory containing auxiliary DLLs required by this OCCT build")
+set(KENGINE_GLM_ROOT "D:/gitclones/CarveraCAM/thirdparty/glm" CACHE PATH "Project GLM include root")
 set(KENGINE_OCCT_LIB_DIR "${KENGINE_OCCT_ROOT}/win64/vc14/lib")
 set(KENGINE_OCCT_LIBRARIES
   "${KENGINE_OCCT_LIB_DIR}/TKernel.lib"
@@ -31,6 +32,9 @@ set(KENGINE_OCCT_LIBRARIES
 
 file(GLOB_RECURSE SRC_FILES *.cpp *.h)
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/ImNodes/.*")
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/tanim/.*")
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/entt/.*")
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/imgui_compat/.*")
 
 #------------------third party
 include(FetchContent)
@@ -102,6 +106,19 @@ if(NOT tinybvh_POPULATED)
   FetchContent_Populate(tinybvh)
 endif()
 
+# entt for timeline animation editing/playback
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/thirdparty/entt/CMakeLists.txt")
+  add_subdirectory(thirdparty/entt)
+  set(entt_SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/thirdparty/entt")
+else()
+  FetchContent_Declare(
+    entt
+    GIT_REPOSITORY https://github.com/skypjack/entt.git
+    GIT_TAG v3.15.0
+  )
+  FetchContent_MakeAvailable(entt)
+endif()
+
 
 #fetch spdlog
 FetchContent_Declare(
@@ -125,6 +142,24 @@ FetchContent_MakeAvailable(imgui)
 #make an imgui folder and put all of these files in the imgui folder
 add_subdirectory(thirdparty/imgui) #libimgui
 
+set(TANIM_ROOT ${CMAKE_SOURCE_DIR}/src/thirdparty/tanim)
+add_library(tanim STATIC
+  ${TANIM_ROOT}/src/bezier.cpp
+  ${TANIM_ROOT}/src/curve_functions.cpp
+  ${TANIM_ROOT}/src/sequencer.cpp
+  ${TANIM_ROOT}/src/tanim.cpp
+  ${TANIM_ROOT}/src/timeliner.cpp
+)
+target_include_directories(tanim PUBLIC
+  ${TANIM_ROOT}/include
+  ${KENGINE_GLM_ROOT}
+  ${TANIM_ROOT}/external/visit_struct/include
+  ${TANIM_ROOT}/external/magic_enum/include
+  ${TANIM_ROOT}/external/nlohmann/include
+  ${CMAKE_SOURCE_DIR}/src/thirdparty/imgui_compat
+)
+target_link_libraries(tanim PUBLIC libimgui EnTT::EnTT)
+
 #---------------------------
 #find_package(Vulkan REQUIRED)
 
@@ -135,6 +170,8 @@ set(third_party_libs
   glad
   spdlog
   libimgui
+  tanim
+  EnTT::EnTT
   ${KENGINE_OPENCL_LIBRARY}
   ${KENGINE_OCCT_LIBRARIES}
 #  Vulkan::Vulkan
@@ -147,11 +184,17 @@ set(third_party_libs
 #definitions and includes
 set(all_includes
     ${CMAKE_SOURCE_DIR}/src
-    D:/gitclones/CarveraCAM/thirdparty/glm
+    ${KENGINE_GLM_ROOT}
     ${Vulkan_INCLUDE_DIRS}
     ${imgui_SOURCE_DIR}
     ${stb_SOURCE_DIR}
     ${tinybvh_SOURCE_DIR}
+    ${entt_SOURCE_DIR}/src
+    ${TANIM_ROOT}/include
+    ${TANIM_ROOT}/external/visit_struct/include
+    ${TANIM_ROOT}/external/magic_enum/include
+    ${TANIM_ROOT}/external/nlohmann/include
+    ${CMAKE_SOURCE_DIR}/src/thirdparty/imgui_compat
     ${KENGINE_OPENCL_ROOT}/include
     ${KENGINE_OPENCL_ROOT}/include/CL
     ${KENGINE_OCCT_ROOT}/inc

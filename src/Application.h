@@ -25,6 +25,7 @@
 #include <Camera/Camera.h>
 #include <Transform.h>
 #include <Object3D.h>
+#include <Animation/TimelineAnimation.h>
 
 class Application
 {
@@ -118,7 +119,9 @@ public:
 	// App mode
 	enum class AppMode { Editor, Game };
 	AppMode GetAppMode() const { return m_AppMode; }
-	void SetAppMode(AppMode mode) { m_AppMode = mode; }
+	void SetAppMode(AppMode mode);
+	float GetDeltaTime() const { return m_DeltaTime; }
+	TimelineAnimation& GetTimelineAnimation() { return m_TimelineAnimation; }
 
 private:
 	void CreateViewportFrameBuffers();
@@ -205,6 +208,8 @@ private:
 	bool m_KeyE = false, m_KeyQ = false;
 
 	AppMode m_AppMode = AppMode::Editor;
+	float m_DeltaTime = 0.0f;
+	TimelineAnimation m_TimelineAnimation;
 
     static Application* s_Instance;
 };

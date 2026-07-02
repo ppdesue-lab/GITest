@@ -144,6 +144,7 @@ void Application::Run()
     {
         auto currentTime = clock::now();
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+        m_DeltaTime = deltaTime;
         lastTime = currentTime;
         titleElapsed += deltaTime;
         ++titleFrames;
@@ -166,6 +167,7 @@ void Application::Run()
             if (gcodeObject)
                 gcodeObject->Update(deltaTime);
         }
+        m_TimelineAnimation.Update(m_Scene, deltaTime);
         // --- RESIZE FBO IF VIEWPORT SIZE CHANGED SINCE LAST FRAME ---
         if (m_ViewportFBO && (m_ViewportFBO->GetSpecification().Width != (uint32_t)m_ViewportSize.x ||
                               m_ViewportFBO->GetSpecification().Height != (uint32_t)m_ViewportSize.y))
@@ -388,6 +390,7 @@ void Application::Run()
                     m_LeftDownGizmo, m_ViewportMousePos, gizmoFlags, targetTransform))
                 {
                     ApplyGizmoDeltaToSelection(beforeGizmo, *targetTransform);
+                    m_TimelineAnimation.RecordSelectedTransformChange(m_Scene);
                     m_SelectedOutlineValid = false;
                     if (m_Camera->isInputEnabled()) m_Camera->setInputEnabled(false);
                 }
@@ -541,10 +544,10 @@ void Application::OnEvent(Event& e)
 		case 'E': m_KeyE = true; break;
 		case 'Q': m_KeyQ = true; break;
 		case GLFW_KEY_F11:
-			m_AppMode = (m_AppMode == AppMode::Editor) ? AppMode::Game : AppMode::Editor;
+			SetAppMode((m_AppMode == AppMode::Editor) ? AppMode::Game : AppMode::Editor);
 			break;
 		case GLFW_KEY_ESCAPE:
-			if (m_AppMode == AppMode::Game) m_AppMode = AppMode::Editor;
+			if (m_AppMode == AppMode::Game) SetAppMode(AppMode::Editor);
 			break;
 		}
 	}
@@ -782,9 +785,22 @@ void Application::NewProject()
 
 void Application::ClearObject3Ds()
 {
+    m_TimelineAnimation.Clear();
     m_Scene.Clear();
     m_GizmoTargetTransform = nullptr;
     m_SelectedOutlineValid = false;
+}
+
+void Application::SetAppMode(AppMode mode)
+{
+    if (m_AppMode == mode)
+        return;
+
+    m_AppMode = mode;
+    if (m_AppMode == AppMode::Game)
+        m_TimelineAnimation.PlayAll(m_Scene);
+    else
+        m_TimelineAnimation.StopAll();
 }
 
 void Application::CreateViewportFrameBuffers()
