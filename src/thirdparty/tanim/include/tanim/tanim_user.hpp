@@ -3,6 +3,8 @@
 #include "tanim/registry.hpp"
 #include "tanim/user_data.hpp"
 
+#include <functional>
+
 namespace tanim
 {
 
@@ -13,6 +15,9 @@ void Init();
 /// Call once every frame, between your application's ImGui::NewFrame() & ImGui::EndFrame().
 /// Draws the Tanim editor window & its contents.
 void Draw();
+
+/// Optional UI hook drawn at the top of the editor's "timeline" panel.
+void SetTimelinePanelHeaderDrawCallback(std::function<void()> callback);
 
 /// Call once every frame, with your other ECS system updates.
 /// Updates the data in the Tanim editor window.

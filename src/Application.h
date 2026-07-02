@@ -25,6 +25,7 @@
 #include <Camera/Camera.h>
 #include <Transform.h>
 #include <Object3D.h>
+#include <Animation/CameraAnimation.h>
 #include <Animation/TimelineAnimation.h>
 
 class Application
@@ -122,6 +123,7 @@ public:
 	void SetAppMode(AppMode mode);
 	float GetDeltaTime() const { return m_DeltaTime; }
 	TimelineAnimation& GetTimelineAnimation() { return m_TimelineAnimation; }
+	CameraAnimation& GetCameraAnimation() { return m_CameraAnimation; }
 
 private:
 	void CreateViewportFrameBuffers();
@@ -210,6 +212,7 @@ private:
 	AppMode m_AppMode = AppMode::Editor;
 	float m_DeltaTime = 0.0f;
 	TimelineAnimation m_TimelineAnimation;
+	CameraAnimation m_CameraAnimation;
 
     static Application* s_Instance;
 };

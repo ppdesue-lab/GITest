@@ -394,6 +394,7 @@ void ImGuiLayer::OnAttach()
     // Initialize content browser path
     m_CurrentDir = std::filesystem::current_path().u8string();
     Application::Get().GetTimelineAnimation().Initialize();
+    Application::Get().GetCameraAnimation().Initialize();
 }
 
 void ImGuiLayer::OnDetach()
@@ -449,6 +450,7 @@ void ImGuiLayer::OnImGuiRender()
     DrawEditorLayout(pos, size, menuBarHeight);
     Application& app = Application::Get();
     app.GetTimelineAnimation().OnImGuiRender(app.GetScene(), app.GetDeltaTime());
+    app.GetCameraAnimation().OnImGuiRender(app.GetCamera(), app.GetDeltaTime());
 
 }
 
@@ -1002,7 +1004,18 @@ void ImGuiLayer::DrawMenuBar()
             ImGui::MenuItem("NodeEditor", nullptr, &m_ShowNodeEditor);
             bool showTanim = Application::Get().GetTimelineAnimation().IsVisible();
             if (ImGui::MenuItem("Tanim", nullptr, &showTanim))
+            {
                 Application::Get().GetTimelineAnimation().SetVisible(showTanim);
+                if (showTanim)
+                    Application::Get().GetCameraAnimation().SetVisible(false);
+            }
+            bool showCameraTimeline = Application::Get().GetCameraAnimation().IsVisible();
+            if (ImGui::MenuItem("Camera Timeline", nullptr, &showCameraTimeline))
+            {
+                Application::Get().GetCameraAnimation().SetVisible(showCameraTimeline);
+                if (showCameraTimeline)
+                    Application::Get().GetTimelineAnimation().SetVisible(false);
+            }
             ImGui::EndMenu();
         }
 

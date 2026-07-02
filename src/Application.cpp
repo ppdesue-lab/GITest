@@ -168,6 +168,7 @@ void Application::Run()
                 gcodeObject->Update(deltaTime);
         }
         m_TimelineAnimation.Update(m_Scene, deltaTime);
+        m_CameraAnimation.Update(m_Camera, deltaTime);
         // --- RESIZE FBO IF VIEWPORT SIZE CHANGED SINCE LAST FRAME ---
         if (m_ViewportFBO && (m_ViewportFBO->GetSpecification().Width != (uint32_t)m_ViewportSize.x ||
                               m_ViewportFBO->GetSpecification().Height != (uint32_t)m_ViewportSize.y))
@@ -759,6 +760,7 @@ bool Application::LoadFileByExtension(const std::filesystem::path& filepath)
 
 void Application::NewProject()
 {
+    m_CameraAnimation.Clear();
     ClearObject3Ds();
 
     Ref<ScenePlane> plane = m_Scene.CreatePlane("XZ Plane", 100.0f);
@@ -798,9 +800,16 @@ void Application::SetAppMode(AppMode mode)
 
     m_AppMode = mode;
     if (m_AppMode == AppMode::Game)
+    {
         m_TimelineAnimation.PlayAll(m_Scene);
+        if (m_CameraAnimation.HasTimeline())
+            m_CameraAnimation.Play(m_Camera);
+    }
     else
+    {
         m_TimelineAnimation.StopAll();
+        m_CameraAnimation.Stop(m_Camera);
+    }
 }
 
 void Application::CreateViewportFrameBuffers()

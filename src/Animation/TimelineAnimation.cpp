@@ -1,5 +1,6 @@
 #include "Animation/TimelineAnimation.h"
 
+#include "Animation/TanimEntityBinding.h"
 #include "Log.h"
 
 #include <tanim/registry.hpp>
@@ -14,18 +15,9 @@
 VISITABLE_STRUCT(Transform, translation, rotation, scale);
 TANIM_REFLECT(Transform, translation, rotation, scale);
 
-namespace
-{
-struct TanimObjectUserData
-{
-    entt::entity Entity = entt::null;
-    std::string UID;
-};
-}
-
 entt::entity tanim::FindEntityOfUID(const ComponentData& cdata, const std::string& uid_to_find)
 {
-    const auto* userData = std::any_cast<TanimObjectUserData>(&cdata.m_user_data);
+    const auto* userData = std::any_cast<TanimEntityBinding>(&cdata.m_user_data);
     if (!userData)
     {
         LogError("missing object user data for uid " + uid_to_find);
@@ -128,10 +120,6 @@ void TimelineAnimation::OnImGuiRender(Scene& scene, float deltaTime)
             if ((timelineSampled || tanim::IsPlaying(selectedTrack->Component)) && tanimChangedTransform)
                 SyncRegistryToObject(*selectedEntry, *selectedTrack);
         }
-    }
-    else
-    {
-        tanim::UpdateEditor(deltaTime);
     }
 }
 
@@ -296,7 +284,7 @@ TimelineAnimation::Track& TimelineAnimation::EnsureTrack(Scene::Entry& entry, in
     if (track.Entity == entt::null || !m_Registry.valid(track.Entity))
         track.Entity = m_Registry.create();
 
-    track.Component.m_user_data = TanimObjectUserData{ track.Entity, track.UID };
+    track.Component.m_user_data = TanimEntityBinding{ track.Entity, track.UID };
     SyncObjectToRegistry(entry, track);
     return track;
 }

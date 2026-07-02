@@ -34,6 +34,8 @@
 namespace tanim::internal
 {
 
+static constexpr int ALL_SEQUENCES_KEYFRAME = -2;
+
 static bool TimelinerAddDelButton(ImDrawList* draw_list, ImVec2 pos, bool add = true)
 {
     const ImGuiIO& io = ImGui::GetIO();
@@ -175,8 +177,28 @@ bool Timeliner(TimelineData& data,
         ImRect topRect(ImVec2(canvas_pos.x + legend_width, canvas_pos.y),
                        ImVec2(canvas_pos.x + canvas_size.x, canvas_pos.y + item_height));
 
+        if (!moving_current_frame && !moving_scroll_bar && moving_entry == -1 && current_frame &&
+            topRect.Contains(io.MousePos) && io.MouseDoubleClicked[0])
+        {
+            int clicked_frame = static_cast<int>((io.MousePos.x - topRect.Min.x) / frame_pixel_width) + first_frame_used;
+            clicked_frame = ImClamp(clicked_frame, Timeline::GetMinFrame(data), Timeline::GetMaxFrame(data));
+            for (Sequence& seq : data.m_sequences)
+            {
+                if (!seq.IsKeyframeInAllCurves(clicked_frame))
+                    seq.AddNewKeyframe(clicked_frame);
+            }
+
+            *current_frame = clicked_frame;
+            if (added_keyframe_sequence)
+                *added_keyframe_sequence = ALL_SEQUENCES_KEYFRAME;
+            if (added_keyframe_frame)
+                *added_keyframe_frame = clicked_frame;
+            ret = true;
+        }
+
         if (!moving_current_frame && !moving_scroll_bar && moving_entry == -1 && timeliner_flags & TIMELINER_CHANGE_FRAME &&
-            current_frame && *current_frame >= 0 && topRect.Contains(io.MousePos) && io.MouseDown[0])
+            current_frame && *current_frame >= 0 && topRect.Contains(io.MousePos) && io.MouseDown[0] &&
+            !io.MouseDoubleClicked[0])
         {
             moving_current_frame = true;
         }

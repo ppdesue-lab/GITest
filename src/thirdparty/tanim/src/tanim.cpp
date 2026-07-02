@@ -24,6 +24,7 @@ struct Impl
     bool m_force_editor_timeline_frame{false};
     int m_forced_editor_timeline_frame{-1};
     bool m_editor_timeline_sampled{false};
+    std::function<void()> m_timeline_panel_header_draw_callback{};
 };
 
 std::unique_ptr<Impl> g_impl{nullptr};
@@ -101,7 +102,17 @@ namespace tanim
 
 using namespace tanim::internal;
 
-void Init() { g_impl = std::make_unique<Impl>(); }
+void Init()
+{
+    if (!g_impl)
+        g_impl = std::make_unique<Impl>();
+}
+
+void SetTimelinePanelHeaderDrawCallback(std::function<void()> callback)
+{
+    if (g_impl)
+        g_impl->m_timeline_panel_header_draw_callback = std::move(callback);
+}
 
 void EnterPlayMode() { g_impl->m_is_engine_in_play_mode = true; }
 
@@ -370,7 +381,18 @@ void Draw()
                   flags,
                   &added_keyframe_sequence,
                   &added_keyframe_frame);
-        if (added_keyframe_sequence >= 0 && added_keyframe_sequence < static_cast<int>(tdata.m_sequences.size()))
+        if (added_keyframe_sequence == -2)
+        {
+            for (Sequence& sequence : tdata.m_sequences)
+            {
+                RecordSequenceKeyframe(*g_impl->m_editor_registry,
+                                       g_impl->m_editor_entity_datas,
+                                       cdata,
+                                       sequence,
+                                       added_keyframe_frame);
+            }
+        }
+        else if (added_keyframe_sequence >= 0 && added_keyframe_sequence < static_cast<int>(tdata.m_sequences.size()))
         {
             RecordSequenceKeyframe(*g_impl->m_editor_registry,
                                    g_impl->m_editor_entity_datas,
@@ -409,6 +431,12 @@ void Draw()
 #pragma region timeline
 
     ImGui::Begin("timeline", nullptr, ImGuiWindowFlags_NoMove);
+
+    if (g_impl->m_timeline_panel_header_draw_callback)
+    {
+        g_impl->m_timeline_panel_header_draw_callback();
+        ImGui::Separator();
+    }
 
     helpers::InspectEnum(tdata.m_playback_type);
 
