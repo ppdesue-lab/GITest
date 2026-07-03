@@ -232,6 +232,39 @@ bool Object2D::IsSubElementSelected(int index) const
     return std::find(m_SelectedSubElementIndices.begin(), m_SelectedSubElementIndices.end(), index) != m_SelectedSubElementIndices.end();
 }
 
+bool Object2D::GetSelectedSubElementBounds(glm::vec3& minimum, glm::vec3& maximum) const
+{
+    minimum = glm::vec3(std::numeric_limits<float>::max());
+    maximum = glm::vec3(std::numeric_limits<float>::lowest());
+    bool hasPoint = false;
+
+    for (int selectedIndex : m_SelectedSubElementIndices)
+    {
+        if (selectedIndex < 0 || selectedIndex >= (int)m_SubElements.size())
+            continue;
+
+        const Object2DElement& element = m_SubElements[(size_t)selectedIndex];
+        if (!element.Visible)
+            continue;
+
+        const glm::mat4 elementTransform = element.Transfm.GetMatrix();
+        for (uint32_t lineIndex : element.LineIndices)
+        {
+            if (lineIndex >= m_Lines.size())
+                continue;
+
+            const Vector2DLine& line = m_Lines[(size_t)lineIndex];
+            const glm::vec3 start = glm::vec3(elementTransform * glm::vec4(glm::vec3(line.Start - element.Center, 0.0f), 1.0f));
+            const glm::vec3 end = glm::vec3(elementTransform * glm::vec4(glm::vec3(line.End - element.Center, 0.0f), 1.0f));
+            minimum = glm::min(minimum, glm::min(start, end));
+            maximum = glm::max(maximum, glm::max(start, end));
+            hasPoint = true;
+        }
+    }
+
+    return hasPoint;
+}
+
 Object2D::Object2DElement* Object2D::GetSubElement(size_t index)
 {
     if (index >= m_SubElements.size())

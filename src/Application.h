@@ -89,6 +89,7 @@ public:
 	void ZoomViewport2D(float wheelDelta);
 	void ResetViewport2D();
 	int ReadPickupPixel(int x, int y);
+	void RefreshPickupPass() { RenderPickupPass(); }
 	int GetMSAASamples() const { return m_MSAASamples; }
 	void SetMSAASamples(int samples);
 	bool IsMSAAEnabled() const { return m_MSAASamples > 1; }
@@ -109,6 +110,9 @@ public:
 	void AddSelectedObjectIndex(int index);
 	Transform* GetGizmoTargetTransform() { return m_GizmoTargetTransform; }
 	void BindGizmoTargetTransform(Transform* transform) { m_GizmoTargetTransform = transform; }
+	bool HasMultiSelected2DSubElements() const;
+	int& GetViewport2DPivotIndex() { return m_Viewport2DPivotIndex; }
+	void SetViewport2DPivotIndex(int index);
 
 	// Gizmo state
 	int& GetGizmoMode() { return m_GizmoMode; }
@@ -158,6 +162,7 @@ private:
 	void DrawViewport2DGrid(const glm::mat4& view, const glm::mat4& projection);
 	void ApplyGizmoDeltaToSelection(const Transform& before, const Transform& after);
 	void ApplyGizmoDeltaToSelected2DSubElements(const Transform& before, const Transform& after);
+	void Update2DSubElementGizmoTarget(bool forceRecenter = false);
 
     WindowInterface* m_WindowInterface = nullptr;
     LayerStack m_LayerStack;
@@ -174,6 +179,8 @@ private:
 
     glm::vec2 m_MousePos;
 	Transform* m_GizmoTargetTransform = nullptr;
+	Transform m_Viewport2DPivotTransform;
+	int m_Viewport2DPivotIndex = 4;
 
 	// Viewport
 	Ref<FrameBuffer> m_ViewportFBO;

@@ -1190,28 +1190,30 @@ static void GizmoHandleInput(const GizmoData* data,bool leftdown,glm::vec2 mouse
 				break;
 			case GZ_ACTION_SCALE:
 				{
+					constexpr float scaleSensitivity = 0.15f;
+					const glm::vec3 scaleVec = pVec * scaleSensitivity;
 					GIZMO.activeTransform->scale = GIZMO.startTransform.scale;
 					if (GIZMO.activeAxis == GZ_ACTIVE_XYZ)
 					{
-						const float delta = glm::dot(pVec, GIZMO.axisCfg[GZ_AXIS_X].normal);
+						const float delta = glm::dot(scaleVec, GIZMO.axisCfg[GZ_AXIS_X].normal);
 						GIZMO.activeTransform->scale = (GIZMO.activeTransform->scale+ delta);
 					}
 					else
 					{
 						if (GIZMO.activeAxis & GZ_ACTIVE_X)
 						{
-							const glm::vec3 prj = Vector3Project(pVec, GIZMO.axisCfg[GZ_AXIS_X].normal);
+							const glm::vec3 prj = Vector3Project(scaleVec, GIZMO.axisCfg[GZ_AXIS_X].normal);
 							// data->axis[GIZMO_AXIS_X]);
 							GIZMO.activeTransform->scale = (GIZMO.activeTransform->scale+ prj);
 						}
 						if (GIZMO.activeAxis & GZ_ACTIVE_Y)
 						{
-							const glm::vec3 prj = Vector3Project(pVec, GIZMO.axisCfg[GZ_AXIS_Y].normal);
+							const glm::vec3 prj = Vector3Project(scaleVec, GIZMO.axisCfg[GZ_AXIS_Y].normal);
 							GIZMO.activeTransform->scale = (GIZMO.activeTransform->scale+ prj);
 						}
 						if (GIZMO.activeAxis & GZ_ACTIVE_Z)
 						{
-							const glm::vec3 prj = Vector3Project(pVec, GIZMO.axisCfg[GZ_AXIS_Z].normal);
+							const glm::vec3 prj = Vector3Project(scaleVec, GIZMO.axisCfg[GZ_AXIS_Z].normal);
 							GIZMO.activeTransform->scale = (GIZMO.activeTransform->scale+ prj);
 						}
 					}

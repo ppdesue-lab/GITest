@@ -29,6 +29,17 @@
 
 namespace
 {
+glm::vec3 PivotPointFromBounds(const glm::vec3& minimum, const glm::vec3& maximum, int pivotIndex)
+{
+    pivotIndex = std::clamp(pivotIndex, 0, 8);
+    const int column = pivotIndex % 3;
+    const int row = pivotIndex / 3;
+
+    const float x = column == 0 ? minimum.x : (column == 1 ? (minimum.x + maximum.x) * 0.5f : maximum.x);
+    const float y = row == 0 ? maximum.y : (row == 1 ? (minimum.y + maximum.y) * 0.5f : minimum.y);
+    return glm::vec3(x, y, 0.0f);
+}
+
 class Frustum
 {
 public:
@@ -398,6 +409,8 @@ void Application::Run()
                 // Draw gizmo
             if (!viewport2D)
                 m_ProbeGI->DrawDebug();
+            if (viewport2D && m_Viewport2DEditMode && !m_LeftDownGizmo)
+                Update2DSubElementGizmoTarget();
             Transform* targetTransform = m_GizmoTargetTransform;
             if (targetTransform)
             {
@@ -1566,12 +1579,10 @@ void Application::ApplyGizmoDeltaToSelected2DSubElements(const Transform& before
     if (!object2D)
         return;
 
-    const int activeIndex = object2D->GetSelectedSubElementIndex();
     const auto& selectedIndices = object2D->GetSelectedSubElementIndices();
-    if (activeIndex < 0 || selectedIndices.size() <= 1)
+    if (selectedIndices.size() <= 1)
         return;
 
-    const glm::vec3 translationDelta = after.translation - before.translation;
     const glm::quat rotationDelta = glm::normalize(after.rotation * glm::inverse(before.rotation));
     glm::vec3 scaleRatio(1.0f);
     for (int axis = 0; axis < 3; axis++)
@@ -1582,17 +1593,77 @@ void Application::ApplyGizmoDeltaToSelected2DSubElements(const Transform& before
 
     for (int selectedIndex : selectedIndices)
     {
-        if (selectedIndex == activeIndex)
-            continue;
-
         Transform* transform = object2D->GetSubElementTransform(selectedIndex);
         if (!transform)
             continue;
 
-        transform->translation += translationDelta;
+        const glm::vec3 relativeToPivot = transform->translation - before.translation;
+        transform->translation = after.translation + glm::rotate(rotationDelta, relativeToPivot * scaleRatio);
         transform->rotation = glm::normalize(rotationDelta * transform->rotation);
         transform->scale *= scaleRatio;
     }
+
+    m_Viewport2DPivotTransform = after;
+}
+
+bool Application::HasMultiSelected2DSubElements() const
+{
+    if (!IsViewport2D() || !m_Viewport2DEditMode)
+        return false;
+
+    const int selectedIndex = m_Scene.GetSelectedIndex();
+    const auto& objects = m_Scene.GetObjects();
+    if (selectedIndex < 0 || selectedIndex >= (int)objects.size())
+        return false;
+
+    Ref<Object2D> object2D = objects[(size_t)selectedIndex].Object ?
+        std::dynamic_pointer_cast<Object2D>(objects[(size_t)selectedIndex].Object) : nullptr;
+    return object2D && object2D->GetSelectedSubElementIndices().size() > 1;
+}
+
+void Application::SetViewport2DPivotIndex(int index)
+{
+    m_Viewport2DPivotIndex = std::clamp(index, 0, 8);
+    Update2DSubElementGizmoTarget(true);
+}
+
+void Application::Update2DSubElementGizmoTarget(bool forceRecenter)
+{
+    if (!IsViewport2DEditMode())
+        return;
+
+    Scene::Entry* entry = m_Scene.GetSelectedEntry();
+    Ref<Object2D> object2D = entry ? std::dynamic_pointer_cast<Object2D>(entry->Object) : nullptr;
+    if (!object2D)
+    {
+        m_GizmoTargetTransform = nullptr;
+        return;
+    }
+
+    const auto& selectedIndices = object2D->GetSelectedSubElementIndices();
+    if (selectedIndices.empty())
+    {
+        m_GizmoTargetTransform = nullptr;
+        return;
+    }
+
+    if (selectedIndices.size() == 1)
+    {
+        m_GizmoTargetTransform = object2D->GetSubElementTransform(object2D->GetSelectedSubElementIndex());
+        return;
+    }
+
+    if (forceRecenter || !m_LeftDownGizmo)
+    {
+        glm::vec3 minimum;
+        glm::vec3 maximum;
+        if (object2D->GetSelectedSubElementBounds(minimum, maximum))
+        {
+            m_Viewport2DPivotTransform = {};
+            m_Viewport2DPivotTransform.translation = PivotPointFromBounds(minimum, maximum, m_Viewport2DPivotIndex);
+        }
+    }
+    m_GizmoTargetTransform = &m_Viewport2DPivotTransform;
 }
 
 void Application::SetViewportRenderMode(ViewportRenderMode mode)
@@ -1636,6 +1707,7 @@ void Application::SetViewport2DEditMode(bool enabled)
         Scene::Entry* entry = m_Scene.GetSelectedEntry();
         Ref<Object2D> object2D = entry ? std::dynamic_pointer_cast<Object2D>(entry->Object) : nullptr;
         m_GizmoTargetTransform = object2D ? object2D->GetSubElementTransform(object2D->GetSelectedSubElementIndex()) : nullptr;
+        Update2DSubElementGizmoTarget(true);
     }
     m_SelectedOutlineValid = false;
 }
@@ -1653,7 +1725,7 @@ bool Application::SetSelected2DSubElementIndex(int index)
         return false;
 
     object2D->SetSelectedSubElementIndex(index);
-    m_GizmoTargetTransform = object2D->GetSubElementTransform(object2D->GetSelectedSubElementIndex());
+    Update2DSubElementGizmoTarget(true);
     m_SelectedOutlineValid = false;
     return true;
 }
@@ -1666,7 +1738,7 @@ bool Application::SetSelected2DSubElementIndices(const std::vector<int>& indices
         return false;
 
     object2D->SetSelectedSubElementIndices(indices);
-    m_GizmoTargetTransform = object2D->GetSubElementTransform(object2D->GetSelectedSubElementIndex());
+    Update2DSubElementGizmoTarget(true);
     m_SelectedOutlineValid = false;
     return true;
 }

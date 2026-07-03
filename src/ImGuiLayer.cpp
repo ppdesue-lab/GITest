@@ -1211,9 +1211,14 @@ void ImGuiLayer::DrawPropertiesPanel()
     }
     else
     {
+        const bool multi2DSubElements = app.HasMultiSelected2DSubElements();
         if (selectedCount > 1)
         {
             ImGui::TextDisabled("%d objects selected", selectedCount);
+        }
+        else if (multi2DSubElements)
+        {
+            ImGui::TextDisabled("Multiple 2D elements selected");
         }
         else
         {
@@ -1324,6 +1329,28 @@ void ImGuiLayer::DrawPropertiesPanel()
         bool view = app.GetGizmoView();
         if (ImGui::Checkbox("View", &view))
             app.GetGizmoView() = view;
+
+        if (multi2DSubElements)
+        {
+            ImGui::SeparatorText("2D Pivot");
+            int pivotIndex = app.GetViewport2DPivotIndex();
+            for (int row = 0; row < 3; ++row)
+            {
+                for (int column = 0; column < 3; ++column)
+                {
+                    const int index = row * 3 + column;
+                    if (column > 0)
+                        ImGui::SameLine();
+                    ImGui::PushID(index);
+                    if (ImGui::RadioButton("##pivot", pivotIndex == index))
+                    {
+                        pivotIndex = index;
+                        app.SetViewport2DPivotIndex(index);
+                    }
+                    ImGui::PopID();
+                }
+            }
+        }
 
         float gizmoSize = app.GetGizmoSize();
         if (ImGui::SliderFloat("Size", &gizmoSize, 0.1f, 5.0f))
@@ -2121,7 +2148,50 @@ bool ImGuiLayer::OnMouseButtonDown(MouseButtonPressedEvent& e)
                 false, app.GetViewportMousePos(), gizmoFlags, targetTransform);
         }
 
-        if (app.IsViewport2DEditMode() && app.IsViewportHovered() && !mouseOverGizmo)
+        if (io.KeyCtrl && app.IsViewport2D() && app.IsViewportHovered() && !mouseOverGizmo)
+        {
+            const glm::vec2& viewportMouse = app.GetViewportMousePos();
+            const glm::vec2& viewportSize = app.GetViewportSize();
+            const int x = (int)viewportMouse.x;
+            const int y = (int)(viewportSize.y - viewportMouse.y - 1.0f);
+
+            if (app.IsViewport2DEditMode())
+            {
+                const int subElementIndex = app.ReadPickupPixel(x, y) - 1;
+                if (subElementIndex >= 0)
+                    app.SetSelected2DSubElementIndex(subElementIndex);
+            }
+            else
+            {
+                const int objectID = app.ReadPickupPixel(x, y);
+                const int objectIndex = objectID - 1;
+                const bool hasPickedObject = objectIndex >= 0 && objectIndex < app.GetScene().GetCount();
+                Ref<Object2D> object2D;
+                if (hasPickedObject)
+                {
+                    Scene::Entry* pickedEntry = app.GetScene().GetEntry(objectIndex);
+                    object2D = pickedEntry && pickedEntry->Object ? std::dynamic_pointer_cast<Object2D>(pickedEntry->Object) : nullptr;
+                }
+
+                if (object2D)
+                {
+                    app.SetSelectedObjectIndex(objectIndex);
+                    app.SetViewport2DEditMode(true);
+                    app.RefreshPickupPass();
+                    const int subElementIndex = app.ReadPickupPixel(x, y) - 1;
+                    if (subElementIndex >= 0)
+                        app.SetSelected2DSubElementIndex(subElementIndex);
+                    else
+                        app.SetViewport2DEditMode(false);
+                }
+            }
+
+            m_ViewportSelectRectActive = false;
+            m_LeftDownGizmo = false;
+            app.GetLeftDownGizmo() = false;
+            return false;
+        }
+        else if (app.IsViewport2DEditMode() && app.IsViewportHovered() && !mouseOverGizmo)
         {
             const glm::vec2& viewportMouse = app.GetViewportMousePos();
             const glm::vec2& viewportSize = app.GetViewportSize();
@@ -2370,11 +2440,7 @@ void ImGuiLayer::Select2DSubElementsInViewportRect(const glm::vec2& start, const
     }
 
     if (pickedSubElements.empty())
-    {
-        if (!appendSelection)
-            app.ClearSelected2DSubElement();
         return;
-    }
 
     app.SetSelected2DSubElementIndices(pickedSubElements);
 }

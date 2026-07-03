@@ -13,7 +13,9 @@
 #include <dime/Model.h>
 #include <dime/State.h>
 #include <dime/entities/Entity.h>
+#include <dime/entities/Polyline.h>
 #include <dime/entities/Spline.h>
+#include <dime/entities/Vertex.h>
 #include <dime/util/Array.h>
 #include <dime/util/Linear.h>
 
@@ -109,6 +111,102 @@ void AddIndexedLines(Vector2DDocument& document, uint32_t elementIndex, const di
             AddLine(document, elementIndex, transform, vertices[previous], vertices[current], color);
         previous = current;
     }
+}
+
+double GetEntityDoubleRecord(const dimeEntity& entity, int groupCode, double fallback = 0.0)
+{
+    dimeParam param;
+    return entity.getRecord(groupCode, param) ? param.double_data : fallback;
+}
+
+void AddBulgeSegment(Vector2DDocument& document, uint32_t elementIndex, const dimeMatrix& transform,
+    const dimeVec3f& start, const dimeVec3f& end, double bulge, const glm::vec4& color)
+{
+    if (std::abs(bulge) < 0.000001)
+    {
+        AddLine(document, elementIndex, transform, start, end, color);
+        return;
+    }
+
+    const glm::dvec2 p0(start.x, start.y);
+    const glm::dvec2 p1(end.x, end.y);
+    const glm::dvec2 chord = p1 - p0;
+    const double chordLength = glm::length(chord);
+    if (chordLength < 0.000001)
+        return;
+
+    const double includedAngle = 4.0 * std::atan(bulge);
+    const double halfAngle = includedAngle * 0.5;
+    const double sinHalfAngle = std::sin(halfAngle);
+    if (std::abs(sinHalfAngle) < 0.000001)
+    {
+        AddLine(document, elementIndex, transform, start, end, color);
+        return;
+    }
+
+    const glm::dvec2 direction = chord / chordLength;
+    const glm::dvec2 normal(-direction.y, direction.x);
+    const glm::dvec2 midpoint = (p0 + p1) * 0.5;
+    const double centerOffset = chordLength * (1.0 - bulge * bulge) / (4.0 * bulge);
+    const glm::dvec2 center = midpoint + normal * centerOffset;
+    const double radius = glm::length(p0 - center);
+    if (radius < 0.000001)
+    {
+        AddLine(document, elementIndex, transform, start, end, color);
+        return;
+    }
+
+    const double startAngle = std::atan2(p0.y - center.y, p0.x - center.x);
+    const int sampleCount = std::max(4, std::min(96, (int)std::ceil(std::abs(includedAngle) / 0.08726646259971647)));
+    dimeVec3f previous = start;
+    for (int i = 1; i <= sampleCount; ++i)
+    {
+        const double t = (double)i / (double)sampleCount;
+        const double angle = startAngle + includedAngle * t;
+        dimeVec3f current(
+            (dxfdouble)(center.x + std::cos(angle) * radius),
+            (dxfdouble)(center.y + std::sin(angle) * radius),
+            start.z + (end.z - start.z) * (dxfdouble)t);
+        if (i == sampleCount)
+            current = end;
+        AddLine(document, elementIndex, transform, previous, current, color);
+        previous = current;
+    }
+}
+
+bool AddPolylineGeometry(Vector2DDocument& document, uint32_t elementIndex, const dimeState* state,
+    dimePolyline& polyline, const glm::vec4& color)
+{
+    if (polyline.getType() != dimePolyline::POLYLINE || polyline.getNumCoordVertices() < 2)
+        return false;
+
+    dimeMatrix transform = state ? state->getMatrix() : dimeMatrix::identity();
+    const dimeVec3f extrusionDir = polyline.getExtrusionDir();
+    const dxfdouble thickness = polyline.getThickness();
+    if (thickness == 0.0 && extrusionDir != dimeVec3f(0.0f, 0.0f, 1.0f))
+    {
+        dimeMatrix ucs;
+        dimeEntity::generateUCS(extrusionDir, ucs);
+        transform.multRight(ucs);
+    }
+
+    const int vertexCount = polyline.getNumCoordVertices();
+    const bool closed = (polyline.getFlags() & dimePolyline::CLOSED) != 0;
+    const int segmentCount = closed ? vertexCount : vertexCount - 1;
+    for (int i = 0; i < segmentCount; ++i)
+    {
+        const int nextIndex = (i + 1) % vertexCount;
+        const dimeVertex* startVertex = polyline.getCoordVertex(i);
+        const dimeVertex* endVertex = polyline.getCoordVertex(nextIndex);
+        if (!startVertex || !endVertex)
+            continue;
+
+        const double bulge = GetEntityDoubleRecord(*startVertex, 42, 0.0);
+        AddBulgeSegment(document, elementIndex, transform,
+            startVertex->getCoords(), endVertex->getCoords(), bulge, color);
+    }
+
+    return elementIndex < document.Elements.size() && !document.Elements[elementIndex].LineIndices.empty();
 }
 
 int FindKnotSpan(int controlPointCount, int degree, float parameter, const std::vector<float>& knots)
@@ -360,6 +458,14 @@ bool DxfEntityCallback(const dimeState* const state, dimeEntity* entity, void* d
     if (entity->typeId() == dimeBase::dimeSplineType)
     {
         AddSplineGeometry(*context->Document, elementIndex, state, *static_cast<dimeSpline*>(entity), color);
+        if (elementIndex < context->Document->Elements.size() &&
+            context->Document->Elements[elementIndex].LineIndices.empty())
+            context->Document->Elements.pop_back();
+        return true;
+    }
+    if (entity->typeId() == dimeBase::dimePolylineType)
+    {
+        AddPolylineGeometry(*context->Document, elementIndex, state, *static_cast<dimePolyline*>(entity), color);
         if (elementIndex < context->Document->Elements.size() &&
             context->Document->Elements[elementIndex].LineIndices.empty())
             context->Document->Elements.pop_back();
