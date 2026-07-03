@@ -175,6 +175,43 @@ void Object3D::Draw(const glm::mat4& view, const glm::mat4 proj, bool transparen
 		mesh->Draw(view, proj, Transfm.GetMatrix(), Opacity, transparentPass);
 }
 
+void Object3D::DrawPickup(const glm::mat4& view, const glm::mat4& proj,
+	const Ref<Shader>& shader, int objectID, bool xzInput, float xzInputY)
+{
+	if (!shader)
+		return;
+
+	shader->SetInt("u_ObjectID", objectID);
+	shader->SetInt("u_XZInput", xzInput ? 1 : 0);
+	shader->SetFloat("u_XZInputY", xzInputY);
+	for (const auto& mesh : Meshes)
+	{
+		Ref<VertexArray> vertexObject = mesh ? GeometryLibrary::Resolve(mesh->VertexObject) : nullptr;
+		if (!vertexObject)
+			continue;
+		shader->SetMat4("u_Model", Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
+		RenderCommand::DrawIndexed(vertexObject);
+	}
+}
+
+void Object3D::DrawSelectedMask(const glm::mat4& view, const glm::mat4& proj,
+	const Ref<Shader>& shader, bool xzInput, float xzInputY)
+{
+	if (!shader)
+		return;
+
+	shader->SetInt("u_XZInput", xzInput ? 1 : 0);
+	shader->SetFloat("u_XZInputY", xzInputY);
+	for (const auto& mesh : Meshes)
+	{
+		Ref<VertexArray> vertexObject = mesh ? GeometryLibrary::Resolve(mesh->VertexObject) : nullptr;
+		if (!vertexObject)
+			continue;
+		shader->SetMat4("u_Model", Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
+		RenderCommand::DrawIndexed(vertexObject);
+	}
+}
+
 void Object3D::UpdateBoundingSphere()
 {
 	Bounds = {};

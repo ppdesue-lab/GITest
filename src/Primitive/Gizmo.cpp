@@ -314,6 +314,10 @@ static bool CheckGizmoScreen(const GizmoData* data, glm::vec2 mousepos, int& out
  * @note This function may be modified in future iterations.
  */
 static void GizmoHandleInput(const GizmoData* data, bool leftdown, glm::vec2 mousepos);
+static bool IsGizmoAxisVisible(const GizmoData* data, int axis);
+static bool IsGizmoPlaneVisible(const GizmoData* data, int axis);
+static bool IsGizmoCircleVisible(const GizmoData* data, int axis);
+static float GetGizmoWorldSize(const glm::mat4& camProj, const glm::vec3& camPos, const Transform* transform, int flags);
 
 
 
@@ -405,9 +409,9 @@ bool isMouseOverGizmo(const glm::mat4& camView, const glm::mat4& camProj,
 		glm::vec3 fwd = transform->translation - data.camPos;
 		data.forward = (glm::length(fwd) > 0.001f) ? glm::normalize(fwd) : glm::vec3(0.0f, 0.0f, -1.0f);
 	}
-	data.curTransform = transform;
-	data.gizmoSize = GIZMO.gizmoSize * glm::distance(data.camPos, transform->translation) * 0.1f;
 	data.flags = flags;
+	data.curTransform = transform;
+	data.gizmoSize = GetGizmoWorldSize(matProj, data.camPos, transform, data.flags);
 	ComputeAxisOrientation(&data);
 
 	int screenAxis = 0, screenType = 0;
@@ -425,7 +429,8 @@ bool isMouseOverGizmo(const glm::mat4& camView, const glm::mat4& camProj,
 				return true;
 			for (int i = 0; i < GIZMO_AXIS_COUNT; ++i)
 			{
-				if (CheckGizmoAxis(&data, i, ray, gizmoFlag) || CheckGizmoPlane(&data, i, ray))
+				if ((IsGizmoAxisVisible(&data, i) && CheckGizmoAxis(&data, i, ray, gizmoFlag)) ||
+					(IsGizmoPlaneVisible(&data, i) && CheckGizmoPlane(&data, i, ray)))
 					return true;
 			}
 		}
@@ -435,7 +440,7 @@ bool isMouseOverGizmo(const glm::mat4& camView, const glm::mat4& camProj,
 	{
 		for (int i = 0; i < GIZMO_AXIS_COUNT; ++i)
 		{
-			if (CheckGizmoCircle(&data, i, ray))
+			if (IsGizmoCircleVisible(&data, i) && CheckGizmoCircle(&data, i, ray))
 				return true;
 		}
 	}
@@ -482,11 +487,9 @@ bool DrawGizmo3D(const glm::mat4& camView,const glm::mat4& camProj,
 		data.forward = (glm::length(fwd) > 0.001f) ? glm::normalize(fwd) : glm::vec3(0.0f, 0.0f, -1.0f);
 	}
 
-	data.curTransform = transform;
-
-	data.gizmoSize = GIZMO.gizmoSize * glm::distance(data.camPos, transform->translation) * 0.1f;
-
 	data.flags = flags;
+	data.curTransform = transform;
+	data.gizmoSize = GetGizmoWorldSize(matProj, data.camPos, transform, data.flags);
 
 	ComputeAxisOrientation(&data);
 
@@ -505,19 +508,23 @@ bool DrawGizmo3D(const glm::mat4& camView,const glm::mat4& camProj,
 	{
 		if (data.flags & GIZMO_TRANSLATE)
 		{
-			DrawGizmoArrow(&data, i);
+			if (IsGizmoAxisVisible(&data, i))
+				DrawGizmoArrow(&data, i);
 		}
 		if (data.flags & GIZMO_SCALE)
 		{
-			DrawGizmoCube(&data, i);
+			if (IsGizmoAxisVisible(&data, i))
+				DrawGizmoCube(&data, i);
 		}
 		if ((data.flags & (GIZMO_SCALE | GIZMO_TRANSLATE)) != 0)
 		{
-			DrawGizmoPlane(&data, i);
+			if (IsGizmoPlaneVisible(&data, i))
+				DrawGizmoPlane(&data, i);
 		}
 		if (data.flags & GIZMO_ROTATE)
 		{
-			DrawGizmoCircle(&data, i);
+			if (IsGizmoCircleVisible(&data, i))
+				DrawGizmoCircle(&data, i);
 		}		
 	}
 	if ((data.flags & (GIZMO_SCALE | GIZMO_TRANSLATE)) != 0) 
@@ -668,6 +675,29 @@ static bool IsGizmoAxisActive(int axis)
 	return (axis == GZ_AXIS_X && (GIZMO.activeAxis & GZ_ACTIVE_X)) ||
 		(axis == GZ_AXIS_Y && (GIZMO.activeAxis & GZ_ACTIVE_Y)) ||
 		(axis == GZ_AXIS_Z && (GIZMO.activeAxis & GZ_ACTIVE_Z));
+}
+
+static bool IsGizmoAxisVisible(const GizmoData* data, int axis)
+{
+	return !(data->flags & GIZMO_XY_PLANE) || axis != GZ_AXIS_Z;
+}
+
+static bool IsGizmoPlaneVisible(const GizmoData* data, int axis)
+{
+	return !(data->flags & GIZMO_XY_PLANE) || axis == GZ_AXIS_Z;
+}
+
+static bool IsGizmoCircleVisible(const GizmoData* data, int axis)
+{
+	return !(data->flags & GIZMO_XY_PLANE) || axis == GZ_AXIS_Z;
+}
+
+static float GetGizmoWorldSize(const glm::mat4& camProj, const glm::vec3& camPos, const Transform* transform, int flags)
+{
+	if ((flags & GIZMO_XY_PLANE) != 0)
+		return GIZMO.gizmoSize * calculateScaleForOrtho(camProj);
+
+	return GIZMO.gizmoSize * glm::distance(camPos, transform->translation) * 0.1f;
 }
 
 static bool CheckGizmoType(const GizmoData* data, int type)
@@ -1081,6 +1111,8 @@ static bool CheckGizmoScreen(const GizmoData* data, glm::vec2 mousepos, int& out
     // Check each axis endpoint (arrows / cubes)
     for (int i = 0; i < GIZMO_AXIS_COUNT; ++i)
     {
+		if (!IsGizmoAxisVisible(data, i))
+			continue;
         float gizmoSize = data->gizmoSize;
         if (data->flags & (GIZMO_TRANSLATE | GIZMO_SCALE))
             gizmoSize *= (1.0f - GIZMO.trArrowLengthFactor);
@@ -1252,13 +1284,13 @@ static void GizmoHandleInput(const GizmoData* data,bool leftdown,glm::vec2 mouse
 					}
 					for (int i = 0; i < GIZMO_AXIS_COUNT; ++i)
 					{
-						if (CheckGizmoAxis(data, i, mouseRay, gizmoFlag))
+						if (IsGizmoAxisVisible(data, i) && CheckGizmoAxis(data, i, mouseRay, gizmoFlag))
 						{
 							action = gizmoAction;
 							hit = i;
 							break;
 						}
-						if (CheckGizmoPlane(data, i, mouseRay))
+						if (IsGizmoPlaneVisible(data, i) && CheckGizmoPlane(data, i, mouseRay))
 						{
 							action = CheckGizmoType(data, GIZMO_SCALE | GIZMO_TRANSLATE)
 								         ? GIZMO_TRANSLATE
@@ -1274,7 +1306,7 @@ static void GizmoHandleInput(const GizmoData* data,bool leftdown,glm::vec2 mouse
 			{
 				for (int i = 0; i < GIZMO_AXIS_COUNT; ++i)
 				{
-					if (CheckGizmoCircle(data, i, mouseRay))
+					if (IsGizmoCircleVisible(data, i) && CheckGizmoCircle(data, i, mouseRay))
 					{
 						action = GZ_ACTION_ROTATE;
 						hit = i;
@@ -1308,7 +1340,7 @@ static void GizmoHandleInput(const GizmoData* data,bool leftdown,glm::vec2 mouse
 					GIZMO.activeAxis = GZ_ACTIVE_X | GZ_ACTIVE_Y;
 					break;
 				case 6:
-					GIZMO.activeAxis = GZ_ACTIVE_XYZ;
+					GIZMO.activeAxis = (data->flags & GIZMO_XY_PLANE) ? (GZ_ACTIVE_X | GZ_ACTIVE_Y) : GZ_ACTIVE_XYZ;
 					break;
 				}
 				GIZMO.activeTransform = data->curTransform;

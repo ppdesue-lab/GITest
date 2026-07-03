@@ -13,6 +13,8 @@
 #include <Primitive/Gizmo.h>
 #include <Renderer/RenderCommand.h>
 #include <Renderer/Texture.h>
+#include <Import/Vector2D/Object2D.h>
+#include <GLFW/glfw3.h>
 
 #ifdef ERROR
 #undef ERROR
@@ -1077,6 +1079,22 @@ void ImGuiLayer::DrawProjectPanel()
 {
     Application& app = Application::Get();
     const auto& entries = app.GetScene().GetObjects();
+    auto loadProjectIconTexture = [](const char* relativePath) -> Ref<Texture> {
+        return TextureLibrary::GetTexture(GetFilePath(relativePath));
+    };
+    static Ref<Texture> eyeOpenIcon = loadProjectIconTexture("../data/images/content_browser/icon_eye_open.png");
+    static Ref<Texture> eyeClosedIcon = loadProjectIconTexture("../data/images/content_browser/icon_eye_closed.png");
+    auto drawVisibilityButton = [&](const char* id, bool visible) {
+        Ref<Texture> icon = visible ? eyeOpenIcon : eyeClosedIcon;
+        if (icon)
+        {
+            const ImVec4 tint = visible ? ImVec4(0.88f, 0.92f, 1.0f, 1.0f) : ImVec4(0.55f, 0.58f, 0.64f, 1.0f);
+            return ImGui::ImageButton(id, (ImTextureID)(uint64_t)icon->m_RendererID,
+                ImVec2(18.0f, 18.0f), ImVec2(0, 1), ImVec2(1, 0),
+                ImVec4(0.0f, 0.0f, 0.0f, 0.0f), tint);
+        }
+        return ImGui::SmallButton((std::string(visible ? "V##" : "H##") + id).c_str());
+    };
 
     if (entries.empty())
     {
@@ -1088,8 +1106,12 @@ void ImGuiLayer::DrawProjectPanel()
         for (int i = 0; i < (int)entries.size(); i++)
         {
             const auto& entry = entries[i];
+            Ref<Object2D> object2D = entry.Object ? std::dynamic_pointer_cast<Object2D>(entry.Object) : nullptr;
+            const bool hasSubElements = object2D && object2D->GetSubElementCount() > 0;
+            const bool editingThis2DObject = app.IsViewport2DEditMode() && app.GetSelectedObjectIndex() == i;
 
-            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+            ImGuiTreeNodeFlags flags = hasSubElements ? 0 :
+                (ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
 
             bool selected = app.IsObjectSelected(i);
             if (selected)
@@ -1101,13 +1123,17 @@ void ImGuiLayer::DrawProjectPanel()
             // Visibility toggle
             Scene::Entry* e = scene.GetEntry(i);
             bool vis = e ? e->Visible : true;
-            if (ImGui::Checkbox(("##vis" + std::to_string(i)).c_str(), &vis))
+            if (drawVisibilityButton(("##vis" + std::to_string(i)).c_str(), vis))
             {
-                if (e) e->Visible = vis;
+                if (e) e->Visible = !vis;
             }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(vis ? "Hide" : "Show");
             ImGui::SameLine();
 
-            ImGui::TreeNodeEx((void*)(intptr_t)i, flags, "%s", entry.Name.c_str());
+            if (hasSubElements)
+                ImGui::SetNextItemOpen(editingThis2DObject, ImGuiCond_Always);
+            const bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)i, flags, "%s", entry.Name.c_str());
             if (ImGui::IsItemClicked())
             {
                 if (ImGui::GetIO().KeyShift)
@@ -1115,9 +1141,60 @@ void ImGuiLayer::DrawProjectPanel()
                 else
                     app.SetSelectedObjectIndex(i);
             }
+            if (hasSubElements && nodeOpen && !editingThis2DObject)
+            {
+                if (app.GetSelectedObjectIndex() != i)
+                    app.SetSelectedObjectIndex(i);
+                app.SetViewportViewMode(Application::ViewportViewMode::View2D);
+                app.SetViewportRenderMode(Application::ViewportRenderMode::Editor);
+                app.SetViewport2DEditMode(true);
+            }
+            else if (hasSubElements && !nodeOpen && editingThis2DObject)
+            {
+                app.SetViewport2DEditMode(false);
+            }
 
             if (selected)
                 ImGui::PopStyleColor();
+
+            if (hasSubElements && nodeOpen)
+            {
+                if (editingThis2DObject)
+                {
+                    for (int subIndex = 0; subIndex < (int)object2D->GetSubElementCount(); ++subIndex)
+                    {
+                        Object2D::Object2DElement* subElement = object2D->GetSubElement((size_t)subIndex);
+                        const std::string label = subElement && !subElement->Name.empty() ?
+                            subElement->Name + " " + std::to_string(subIndex + 1) :
+                            "Element " + std::to_string(subIndex + 1);
+                        const bool subSelected = object2D->IsSubElementSelected(subIndex);
+                        ImGui::PushID(subIndex);
+                        const bool subVisible = subElement ? subElement->Visible : true;
+                        if (drawVisibilityButton("##subvis", subVisible) && subElement)
+                        {
+                            subElement->Visible = !subElement->Visible;
+                            if (!subElement->Visible && subSelected)
+                                app.ClearSelected2DSubElement();
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip(subVisible ? "Hide" : "Show");
+                        ImGui::SameLine();
+                        if (ImGui::Selectable(label.c_str(), subSelected))
+                        {
+                            if (app.GetSelectedObjectIndex() != i)
+                                app.SetSelectedObjectIndex(i);
+                            app.SetViewportViewMode(Application::ViewportViewMode::View2D);
+                            app.SetViewportRenderMode(Application::ViewportRenderMode::Editor);
+                            app.SetViewport2DEditMode(true);
+                            app.SetSelected2DSubElementIndex(subIndex);
+                        }
+                        if (ImGui::IsItemHovered() && subElement)
+                            ImGui::SetTooltip("%zu line segments", subElement->LineIndices.size());
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::TreePop();
+            }
         }
     }
 }
@@ -1270,7 +1347,7 @@ void ImGuiLayer::DrawPropertiesPanel()
             ImGui::SameLine();
             if (ImGui::Button("Focus"))
             {
-                if (m_Camera) m_Camera->setInputEnabled(true);
+                if (app.GetViewportCamera()) app.GetViewportCamera()->setInputEnabled(true);
             }
         }
     }
@@ -1426,6 +1503,7 @@ void ImGuiLayer::DrawContentBrowser()
 
     static Ref<Texture> txtIcon = loadIconTexture("content_browser_icon_txt", "../data/images/content_browser/icon_txt.png");
     static Ref<Texture> modelIcon = loadIconTexture("content_browser_icon_model", "../data/images/content_browser/icon_model.png");
+    static Ref<Texture> dxfIcon = loadIconTexture("content_browser_icon_dxf", "../data/images/content_browser/icon_dxf.png");
     static Ref<Texture> ncIcon = loadIconTexture("content_browser_icon_nc", "../data/images/content_browser/icon_nc.png");
     static Ref<Texture> unknownIcon = loadIconTexture("content_browser_icon_unknown", "../data/images/content_browser/icon_unknown.png");
     static Ref<Texture> driveCIcon = loadIconTexture("content_browser_icon_drive_c", "../data/images/content_browser/icon_drive_c.png");
@@ -1438,6 +1516,8 @@ void ImGuiLayer::DrawContentBrowser()
             return txtIcon;
         if (isModelIconFile(path) && modelIcon)
             return modelIcon;
+        if (IsSupported2DFile(path) && dxfIcon)
+            return dxfIcon;
         if (IsSupportedGCodeFile(path) && ncIcon)
             return ncIcon;
         return unknownIcon;
@@ -1559,6 +1639,7 @@ void ImGuiLayer::DrawContentBrowser()
             const std::string selectedKey = path.u8string();
             const bool selected = m_SelectedFile == selectedKey;
             const bool isModel = IsSupportedModelFile(path);
+            const bool is2D = IsSupported2DFile(path);
             const bool isGCode = IsSupportedGCodeFile(path);
             Ref<Texture> icon = iconForFile(path);
 
@@ -1576,8 +1657,13 @@ void ImGuiLayer::DrawContentBrowser()
                 m_SelectedFile = selectedKey;
             if (doubleClicked && isModel)
             {
-                if (!Application::Get().LoadObject3D(path.u8string()))
+                if (!Application::Get().LoadFileByExtension(path))
                     WARN("Failed to load: {}", path.u8string());
+            }
+            if (doubleClicked && is2D)
+            {
+                if (!Application::Get().LoadFileByExtension(path))
+                    WARN("Failed to load 2D file: {}", path.u8string());
             }
             if (doubleClicked && isGCode)
             {
@@ -1600,6 +1686,8 @@ void ImGuiLayer::DrawContentBrowser()
                 drawTextureIcon(drawList, icon, iconMin, iconMax);
             else if (isModel)
                 drawFallbackIcon(drawList, iconMin, iconMax, "3D", IM_COL32(241, 164, 61, 255));
+            else if (is2D)
+                drawFallbackIcon(drawList, iconMin, iconMax, "2D", IM_COL32(76, 191, 255, 255));
             else if (isGCode)
                 drawFallbackIcon(drawList, iconMin, iconMax, "NC", IM_COL32(88, 220, 145, 255));
             else if (isTextFile(path))
@@ -1611,7 +1699,8 @@ void ImGuiLayer::DrawContentBrowser()
             ImVec2 textSize = ImGui::CalcTextSize(visibleName.c_str());
             ImVec2 textPos(tileMin.x + (tileWidth - textSize.x) * 0.5f, tileMin.y + 80.0f);
             ImU32 textColor = isModel ? IM_COL32(150, 204, 255, 255) :
-                (isGCode ? IM_COL32(128, 230, 150, 255) : IM_COL32(225, 228, 235, 255));
+                (is2D ? IM_COL32(143, 222, 255, 255) :
+                (isGCode ? IM_COL32(128, 230, 150, 255) : IM_COL32(225, 228, 235, 255)));
             drawList->AddText(textPos, textColor, visibleName.c_str());
 
             if (hovered)
@@ -1655,13 +1744,37 @@ void ImGuiLayer::DrawViewportPanel()
 {
     Application& app = Application::Get();
 
+    const bool is2D = app.IsViewport2D();
     bool editorMode = app.GetViewportRenderMode() == Application::ViewportRenderMode::Editor;
-    if (ImGui::Selectable("Editor", editorMode, 0, ImVec2(86.0f, 0.0f)))
+
+    if (ImGui::Selectable("2D", is2D, 0, ImVec2(62.0f, 0.0f)))
+    {
+        app.SetViewportViewMode(Application::ViewportViewMode::View2D);
         app.SetViewportRenderMode(Application::ViewportRenderMode::Editor);
+        editorMode = true;
+    }
     ImGui::SameLine();
-    if (ImGui::Selectable("Rendering", !editorMode, 0, ImVec2(96.0f, 0.0f)))
+    if (ImGui::Selectable("Editor", !is2D && editorMode, 0, ImVec2(86.0f, 0.0f)))
+    {
+        app.SetViewportViewMode(Application::ViewportViewMode::View3D);
+        app.SetViewportRenderMode(Application::ViewportRenderMode::Editor);
+        editorMode = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Selectable("Rendering", !is2D && !editorMode, 0, ImVec2(96.0f, 0.0f)))
+    {
+        app.SetViewportViewMode(Application::ViewportViewMode::View3D);
         app.SetViewportRenderMode(Application::ViewportRenderMode::Rendering);
-    if (!editorMode)
+        editorMode = false;
+    }
+    const bool active2D = app.IsViewport2D();
+    if (active2D)
+    {
+        editorMode = true;
+        ImGui::SameLine();
+        ImGui::TextDisabled("XY Orthographic");
+    }
+    if (!editorMode && !active2D)
     {
         ImGui::SameLine();
         PathTracer& tracer = app.GetPathTracer();
@@ -1701,15 +1814,34 @@ void ImGuiLayer::DrawViewportPanel()
             const bool imageHovered = ImGui::IsItemHovered();
             ImVec2 itemMin = ImGui::GetItemRectMin();
             ImVec2 itemMax = ImGui::GetItemRectMax();
-            const bool axisIndicatorHovered = DrawViewportAxisIndicator(app, itemMin, itemMax);
+            const bool axisIndicatorHovered = !is2D && DrawViewportAxisIndicator(app, itemMin, itemMax);
             const bool viewportHovered = imageHovered && !axisIndicatorHovered;
             app.SetViewportHovered(viewportHovered);
+
+            if (m_ViewportSelectRectActive && is2D)
+            {
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                ImVec2 rectMin(
+                    itemMin.x + (std::min)(m_ViewportSelectStart.x, m_ViewportSelectEnd.x),
+                    itemMin.y + (std::min)(m_ViewportSelectStart.y, m_ViewportSelectEnd.y));
+                ImVec2 rectMax(
+                    itemMin.x + (std::max)(m_ViewportSelectStart.x, m_ViewportSelectEnd.x),
+                    itemMin.y + (std::max)(m_ViewportSelectStart.y, m_ViewportSelectEnd.y));
+                drawList->AddRectFilled(rectMin, rectMax, IM_COL32(80, 150, 255, 36));
+                drawList->AddRect(rectMin, rectMax, IM_COL32(90, 180, 255, 210), 0.0f, 0, 1.5f);
+            }
 
             if (viewportHovered)
             {
                 app.SetViewportOrigin(glm::vec2(itemMin.x, itemMin.y));
                 ImVec2 mousePos = ImGui::GetMousePos();
                 app.GetViewportMousePos() = glm::vec2(mousePos.x - itemMin.x, mousePos.y - itemMin.y);
+
+                if (is2D && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && !ImGui::IsMouseDragging(ImGuiMouseButton_Right))
+                {
+                    m_ShowViewport2DProperties = true;
+                    m_Viewport2DPropertiesPos = mousePos;
+                }
             }
         }
     }
@@ -1721,6 +1853,28 @@ void ImGuiLayer::DrawViewportPanel()
             WARN("Viewport size is invalid: {}x{}", viewportSize.x, viewportSize.y);
         ImGui::TextColored(ImVec4(1, 0, 0, 1), "Viewport not initialized");
     }
+
+    if (m_ShowViewport2DProperties)
+    {
+        ImGui::SetNextWindowPos(m_Viewport2DPropertiesPos, ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize(ImVec2(280.0f, 0.0f), ImGuiCond_Appearing);
+        if (ImGui::Begin("2D Properties", &m_ShowViewport2DProperties, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::Text("Mouse: %.1f, %.1f", app.GetViewportMousePos().x, app.GetViewportMousePos().y);
+            const int selectedIndex = app.GetSelectedObjectIndex();
+            if (auto* entry = app.GetScene().GetSelectedEntry())
+            {
+                ImGui::Text("Selected: %s", entry->Name.c_str());
+                ImGui::TextDisabled("Index %d", selectedIndex);
+                ObjectInspectorRegistry::DrawInspector(*entry->Object);
+            }
+            else
+            {
+                ImGui::TextDisabled("No object selected");
+            }
+        }
+        ImGui::End();
+    }
 }
 
 // pfd returns UTF-8 on Windows; keep as UTF-8, use u8path for filesystem API
@@ -1729,10 +1883,11 @@ void ImGuiLayer::DrawViewportPanel()
 void ImGuiLayer::OpenModelFile()
 {
     auto selectedFiles = pfd::open_file(
-        "Open 3D Model",
+        "Open File",
         "",
         {
             "3D Model Files", "*.obj *.stl *.ply *.gltf *.glb *.pmx *.pmd *.step *.stp",
+            "2D Drawing Files", "*.dxf",
             "All Files", "*"
         }).result();
 
@@ -1743,21 +1898,21 @@ void ImGuiLayer::OpenModelFile()
     const std::string& utf8path = selectedFiles[0];
     auto fspath = std::filesystem::u8path(utf8path);
 
-    if (!IsSupportedModelFile(fspath))
+    if (!IsSupportedModelFile(fspath) && !IsSupported2DFile(fspath))
     {
-        WARN("Unsupported model file: {}", utf8path);
+        WARN("Unsupported file: {}", utf8path);
         return;
     }
 
-    TRACE("Opening model file: {}", utf8path);
+    TRACE("Opening file: {}", utf8path);
     if (!std::filesystem::exists(fspath))
     {
         ::Log::GetCoreLogger()->error("File does not exist: {}", utf8path);
         return;
     }
 
-    if (!Application::Get().LoadObject3D(fspath))
-        ::Log::GetCoreLogger()->error("Failed to load model file: {}", fspath.u8string());
+    if (!Application::Get().LoadFileByExtension(fspath))
+        ::Log::GetCoreLogger()->error("Failed to load file: {}", fspath.u8string());
 }
 
 void ImGuiLayer::OpenGCodeFile()
@@ -1801,6 +1956,15 @@ bool ImGuiLayer::IsSupportedModelFile(const std::filesystem::path& filepath) con
            extension == ".step" || extension == ".stp";
 }
 
+bool ImGuiLayer::IsSupported2DFile(const std::filesystem::path& filepath) const
+{
+    std::string extension = filepath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    return extension == ".dxf";
+}
+
 bool ImGuiLayer::IsSupportedGCodeFile(const std::filesystem::path& filepath) const
 {
     std::string extension = filepath.extension().string();
@@ -1813,9 +1977,11 @@ bool ImGuiLayer::IsSupportedGCodeFile(const std::filesystem::path& filepath) con
 void ImGuiLayer::OnEvent(Event& event)
 {
     EventDispatcher dispatcher(event);
+    dispatcher.Dispatch<KeyPressedEvent>(BIND_EVENT_FN(OnKeyPressed));
     dispatcher.Dispatch<MouseButtonPressedEvent>(BIND_EVENT_FN(OnMouseButtonDown));
     dispatcher.Dispatch<MouseButtonReleasedEvent>(BIND_EVENT_FN(OnMouseButtonUp));
     dispatcher.Dispatch<MouseMovedEvent>(BIND_EVENT_FN(OnMouseMove));
+    dispatcher.Dispatch<MouseScrolledEvent>(BIND_EVENT_FN(OnMouseScrolled));
 }
 
 void ImGuiLayer::Begin()
@@ -1882,14 +2048,52 @@ bool ImGuiLayer::OnMouseButtonDown(MouseButtonPressedEvent& e)
     if (io.WantCaptureMouse && !app.IsViewportHovered())
         return false;
 
+    Ref<Camera> viewportCamera = app.GetViewportCamera();
+    if (app.IsViewport2D())
+    {
+        if (e.GetMouseButton() == 2 && app.IsViewportHovered())
+        {
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Middle))
+            {
+                app.ResetViewport2D();
+                m_MiddleDownViewport2D = false;
+                viewportCamera->setInputEnabled(false);
+                return true;
+            }
+
+            ImVec2 mousePos = ImGui::GetMousePos();
+            m_MousePos = glm::vec2(mousePos.x, mousePos.y);
+            m_MiddleDownViewport2D = true;
+            viewportCamera->setInputEnabled(true);
+            return false;
+        }
+
+        if (e.GetMouseButton() == 1)
+            return false;
+    }
+
     if (e.GetMouseButton() == 1)
     {
-        m_Camera->setInputEnabled(true);
+        viewportCamera->setInputEnabled(true);
         m_LeftDownCamera = true;
         app.GetLeftDownCamera() = true;
     }
     else if (e.GetMouseButton() == 0)
     {
+        bool viewport2DLeftDoubleClick = false;
+        if (app.IsViewport2D() && app.IsViewportHovered())
+        {
+            const double now = ImGui::GetTime();
+            const glm::vec2 clickPos = app.GetViewportMousePos();
+            const float doubleClickMaxDist = ImGui::GetIO().MouseDoubleClickMaxDist;
+            viewport2DLeftDoubleClick =
+                m_LastViewport2DLeftClickTime >= 0.0 &&
+                now - m_LastViewport2DLeftClickTime <= ImGui::GetIO().MouseDoubleClickTime &&
+                glm::length(clickPos - m_LastViewport2DLeftClickPos) <= doubleClickMaxDist;
+            m_LastViewport2DLeftClickTime = now;
+            m_LastViewport2DLeftClickPos = clickPos;
+        }
+
         bool mouseOverGizmo = false;
         Transform* targetTransform = app.GetGizmoTargetTransform();
         if (app.IsViewportHovered() && targetTransform)
@@ -1905,14 +2109,67 @@ bool ImGuiLayer::OnMouseButtonDown(MouseButtonPressedEvent& e)
             }
             if (app.GetGizmoLocal()) gizmoFlags |= GIZMO_LOCAL;
             if (app.GetGizmoView())  gizmoFlags |= GIZMO_VIEW;
-            SetGizmoSize(app.GetGizmoSize());
+            if (app.IsViewport2D())
+            {
+                gizmoFlags &= ~(GIZMO_LOCAL | GIZMO_VIEW);
+                gizmoFlags |= GIZMO_XY_PLANE;
+            }
+            SetGizmoSize(app.IsViewport2D() ? app.GetGizmoSize() * 0.5f : app.GetGizmoSize());
             SetGizmoLineWidth(app.GetGizmoLineWidth());
             SetGizmoViewportSize((int)app.GetViewportSize().x, (int)app.GetViewportSize().y);
-            mouseOverGizmo = isMouseOverGizmo(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix(),
+            mouseOverGizmo = isMouseOverGizmo(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix(),
                 false, app.GetViewportMousePos(), gizmoFlags, targetTransform);
         }
 
-        if (app.IsViewportHovered() && !IsGizmoActivate() && !mouseOverGizmo)
+        if (app.IsViewport2DEditMode() && app.IsViewportHovered() && !mouseOverGizmo)
+        {
+            const glm::vec2& viewportMouse = app.GetViewportMousePos();
+            const glm::vec2& viewportSize = app.GetViewportSize();
+            const int x = (int)viewportMouse.x;
+            const int y = (int)(viewportSize.y - viewportMouse.y - 1.0f);
+            const int subElementIndex = app.ReadPickupPixel(x, y) - 1;
+            if (subElementIndex < 0 && viewport2DLeftDoubleClick)
+                app.SetViewport2DEditMode(false);
+            else if (viewport2DLeftDoubleClick)
+                app.SetSelected2DSubElementIndex(subElementIndex);
+            else
+            {
+                m_ViewportSelectRectActive = true;
+                m_ViewportSelectStart = app.GetViewportMousePos();
+                m_ViewportSelectEnd = m_ViewportSelectStart;
+            }
+        }
+        else if (app.IsViewport2D() && app.IsViewportHovered() && !mouseOverGizmo &&
+            viewport2DLeftDoubleClick)
+        {
+            const glm::vec2& viewportMouse = app.GetViewportMousePos();
+            const glm::vec2& viewportSize = app.GetViewportSize();
+            const int x = (int)viewportMouse.x;
+            const int y = (int)(viewportSize.y - viewportMouse.y - 1.0f);
+            const int objectID = app.ReadPickupPixel(x, y);
+            const int objectIndex = objectID - 1;
+            const bool hasPickedObject = objectIndex >= 0 && objectIndex < app.GetScene().GetCount();
+            Ref<Object2D> object2D;
+            if (hasPickedObject)
+            {
+                Scene::Entry* pickedEntry = app.GetScene().GetEntry(objectIndex);
+                object2D = pickedEntry && pickedEntry->Object ? std::dynamic_pointer_cast<Object2D>(pickedEntry->Object) : nullptr;
+            }
+
+            if (object2D)
+            {
+                app.SetSelectedObjectIndex(objectIndex);
+                app.SetViewport2DEditMode(true);
+                m_ViewportSelectRectActive = false;
+            }
+        }
+        else if (app.IsViewport2D() && app.IsViewportHovered() && !mouseOverGizmo)
+        {
+            m_ViewportSelectRectActive = true;
+            m_ViewportSelectStart = app.GetViewportMousePos();
+            m_ViewportSelectEnd = m_ViewportSelectStart;
+        }
+        else if (app.IsViewportHovered() && !IsGizmoActivate() && !mouseOverGizmo)
         {
             const glm::vec2& viewportMouse = app.GetViewportMousePos();
             const glm::vec2& viewportSize = app.GetViewportSize();
@@ -1931,8 +2188,9 @@ bool ImGuiLayer::OnMouseButtonDown(MouseButtonPressedEvent& e)
                 app.SetSelectedObjectIndex(hasPickedObject ? objectIndex : -1);
             }
         }
-        m_LeftDownGizmo = true;
-        app.GetLeftDownGizmo() = true;
+        const bool beginGizmoDrag = !app.IsViewport2D() || mouseOverGizmo;
+        m_LeftDownGizmo = beginGizmoDrag;
+        app.GetLeftDownGizmo() = beginGizmoDrag;
     }
 
     return false;
@@ -1941,30 +2199,182 @@ bool ImGuiLayer::OnMouseButtonDown(MouseButtonPressedEvent& e)
 bool ImGuiLayer::OnMouseButtonUp(MouseButtonReleasedEvent& e)
 {
     Application& app = Application::Get();
+    Ref<Camera> viewportCamera = app.GetViewportCamera();
+    if (app.IsViewport2D() && e.GetMouseButton() == 2)
+    {
+        m_MiddleDownViewport2D = false;
+        viewportCamera->setInputEnabled(false);
+        return false;
+    }
+
     if (e.GetMouseButton() == 1)
     {
-        m_Camera->setInputEnabled(false);
+        viewportCamera->setInputEnabled(false);
         m_LeftDownCamera = false;
         app.GetLeftDownCamera() = false;
     }
     else if (e.GetMouseButton() == 0)
     {
+        if (app.IsViewport2DEditMode() && m_ViewportSelectRectActive && app.IsViewportHovered())
+            Select2DSubElementsInViewportRect(m_ViewportSelectStart, app.GetViewportMousePos(), ImGui::GetIO().KeyShift);
+        else if (app.IsViewport2D() && !app.IsViewport2DEditMode() && m_ViewportSelectRectActive && app.IsViewportHovered())
+            SelectObjectsInViewportRect(m_ViewportSelectStart, app.GetViewportMousePos(), ImGui::GetIO().KeyShift);
+        m_ViewportSelectRectActive = false;
         m_LeftDownGizmo = false;
         app.GetLeftDownGizmo() = false;
     }
     return false;
 };
 
+bool ImGuiLayer::OnKeyPressed(KeyPressedEvent& e)
+{
+    Application& app = Application::Get();
+    if (app.IsViewport2DEditMode() && !e.IsRepeat() && e.GetKeyCode() == GLFW_KEY_ESCAPE)
+    {
+        app.SetViewport2DEditMode(false);
+        return true;
+    }
+
+    return false;
+}
+
 bool ImGuiLayer::OnMouseMove(MouseMovedEvent& e)
 {
-    if (m_Camera->isInputEnabled())
+    Application& app = Application::Get();
+    Ref<Camera> viewportCamera = app.GetViewportCamera();
+    if (viewportCamera->isInputEnabled())
         m_LeftDownGizmo = false;
+    const glm::vec2 previousMousePos = m_MousePos;
     m_MousePos = { e.GetX(),e.GetY() };
-    m_Camera->processMouseMovement(e.GetX(), e.GetY());
+    viewportCamera->processMouseMovement(e.GetX(), e.GetY());
 
     // Update viewport-relative mouse position for gizmo tracking
-    Application& app = Application::Get();
     const glm::vec2& origin = app.GetViewportOrigin();
     app.GetViewportMousePos() = glm::vec2(m_MousePos.x - origin.x, m_MousePos.y - origin.y);
+    if (app.IsViewport2D())
+    {
+        if (m_MiddleDownViewport2D)
+            app.PanViewport2D(m_MousePos - previousMousePos);
+        if (m_ViewportSelectRectActive)
+            m_ViewportSelectEnd = app.GetViewportMousePos();
+    }
     return false;
 };
+
+bool ImGuiLayer::OnMouseScrolled(MouseScrolledEvent& e)
+{
+    Application& app = Application::Get();
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse && !app.IsViewportHovered())
+        return false;
+
+    if (app.IsViewport2D() && app.IsViewportHovered())
+    {
+        app.ZoomViewport2D(e.GetYOffset());
+        return true;
+    }
+
+    return false;
+}
+
+void ImGuiLayer::SelectObjectsInViewportRect(const glm::vec2& start, const glm::vec2& end, bool appendSelection)
+{
+    Application& app = Application::Get();
+    const glm::vec2& viewportSize = app.GetViewportSize();
+    glm::vec2 minPoint((std::min)(start.x, end.x), (std::min)(start.y, end.y));
+    glm::vec2 maxPoint((std::max)(start.x, end.x), (std::max)(start.y, end.y));
+    minPoint = glm::clamp(minPoint, glm::vec2(0.0f), viewportSize);
+    maxPoint = glm::clamp(maxPoint, glm::vec2(0.0f), viewportSize);
+
+    if (glm::length(maxPoint - minPoint) < 4.0f)
+        maxPoint = minPoint + glm::vec2(1.0f);
+
+    std::vector<int> pickedObjects;
+    const int samplesX = (int)glm::clamp((maxPoint.x - minPoint.x) / 24.0f + 1.0f, 1.0f, 16.0f);
+    const int samplesY = (int)glm::clamp((maxPoint.y - minPoint.y) / 24.0f + 1.0f, 1.0f, 16.0f);
+    for (int y = 0; y < samplesY; ++y)
+    {
+        const float ty = samplesY == 1 ? 0.5f : (float)y / (float)(samplesY - 1);
+        for (int x = 0; x < samplesX; ++x)
+        {
+            const float tx = samplesX == 1 ? 0.5f : (float)x / (float)(samplesX - 1);
+            const glm::vec2 sample = glm::mix(minPoint, maxPoint, glm::vec2(tx, ty));
+            const int pickupX = (int)sample.x;
+            const int pickupY = (int)(viewportSize.y - sample.y - 1.0f);
+            const int objectIndex = app.ReadPickupPixel(pickupX, pickupY) - 1;
+            if (objectIndex >= 0 && objectIndex < app.GetScene().GetCount() &&
+                std::find(pickedObjects.begin(), pickedObjects.end(), objectIndex) == pickedObjects.end())
+            {
+                pickedObjects.push_back(objectIndex);
+            }
+        }
+    }
+
+    if (pickedObjects.empty())
+    {
+        if (!appendSelection)
+            app.SetSelectedObjectIndex(-1);
+        return;
+    }
+
+    if (!appendSelection)
+        app.SetSelectedObjectIndex(pickedObjects.front());
+    else
+        app.AddSelectedObjectIndex(pickedObjects.front());
+
+    for (size_t i = 1; i < pickedObjects.size(); ++i)
+        app.AddSelectedObjectIndex(pickedObjects[i]);
+}
+
+void ImGuiLayer::Select2DSubElementsInViewportRect(const glm::vec2& start, const glm::vec2& end, bool appendSelection)
+{
+    Application& app = Application::Get();
+    Scene::Entry* selectedEntry = app.GetScene().GetSelectedEntry();
+    Ref<Object2D> object2D = selectedEntry && selectedEntry->Object ?
+        std::dynamic_pointer_cast<Object2D>(selectedEntry->Object) : nullptr;
+    if (!object2D)
+        return;
+
+    const glm::vec2& viewportSize = app.GetViewportSize();
+    glm::vec2 minPoint((std::min)(start.x, end.x), (std::min)(start.y, end.y));
+    glm::vec2 maxPoint((std::max)(start.x, end.x), (std::max)(start.y, end.y));
+    minPoint = glm::clamp(minPoint, glm::vec2(0.0f), viewportSize);
+    maxPoint = glm::clamp(maxPoint, glm::vec2(0.0f), viewportSize);
+
+    const bool pointPick = glm::length(maxPoint - minPoint) < 4.0f;
+    if (pointPick)
+        maxPoint = minPoint + glm::vec2(1.0f);
+
+    std::vector<int> pickedSubElements;
+    if (appendSelection)
+        pickedSubElements = object2D->GetSelectedSubElementIndices();
+
+    const int samplesX = pointPick ? 1 : (int)glm::clamp((maxPoint.x - minPoint.x) / 10.0f + 1.0f, 2.0f, 64.0f);
+    const int samplesY = pointPick ? 1 : (int)glm::clamp((maxPoint.y - minPoint.y) / 10.0f + 1.0f, 2.0f, 64.0f);
+    for (int y = 0; y < samplesY; ++y)
+    {
+        const float ty = samplesY == 1 ? 0.5f : (float)y / (float)(samplesY - 1);
+        for (int x = 0; x < samplesX; ++x)
+        {
+            const float tx = samplesX == 1 ? 0.5f : (float)x / (float)(samplesX - 1);
+            const glm::vec2 sample = glm::mix(minPoint, maxPoint, glm::vec2(tx, ty));
+            const int pickupX = (int)sample.x;
+            const int pickupY = (int)(viewportSize.y - sample.y - 1.0f);
+            const int subElementIndex = app.ReadPickupPixel(pickupX, pickupY) - 1;
+            if (subElementIndex >= 0 && subElementIndex < (int)object2D->GetSubElementCount() &&
+                std::find(pickedSubElements.begin(), pickedSubElements.end(), subElementIndex) == pickedSubElements.end())
+            {
+                pickedSubElements.push_back(subElementIndex);
+            }
+        }
+    }
+
+    if (pickedSubElements.empty())
+    {
+        if (!appendSelection)
+            app.ClearSelected2DSubElement();
+        return;
+    }
+
+    app.SetSelected2DSubElementIndices(pickedSubElements);
+}

@@ -35,6 +35,7 @@ list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/ImNodes/.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/tanim/.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/entt/.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/imgui_compat/.*")
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/dime/.*")
 
 #------------------third party
 include(FetchContent)
@@ -106,6 +107,27 @@ if(NOT tinybvh_POPULATED)
   FetchContent_Populate(tinybvh)
 endif()
 
+# dime parses DXF files for the shared 2D vector import path.
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/thirdparty/dime/include/dime/Model.h")
+  set(dime_SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/thirdparty/dime")
+else()
+  FetchContent_Declare(
+    dime
+    GIT_REPOSITORY https://github.com/coin3d/dime.git
+    GIT_TAG master
+  )
+  FetchContent_GetProperties(dime)
+  if(NOT dime_POPULATED)
+    FetchContent_Populate(dime)
+  endif()
+endif()
+file(GLOB_RECURSE DIME_SRC "${dime_SOURCE_DIR}/src/*.cpp")
+list(FILTER DIME_SRC EXCLUDE REGEX ".*/convert/.*")
+add_library(dime STATIC ${DIME_SRC})
+target_include_directories(dime PUBLIC "${dime_SOURCE_DIR}/include")
+target_compile_definitions(dime PRIVATE DIME_INTERNAL)
+target_compile_definitions(dime INTERFACE DIME_NOT_DLL)
+
 # entt for timeline animation editing/playback
 if(EXISTS "${CMAKE_SOURCE_DIR}/src/thirdparty/entt/CMakeLists.txt")
   add_subdirectory(thirdparty/entt)
@@ -171,6 +193,7 @@ set(third_party_libs
   spdlog
   libimgui
   tanim
+  dime
   EnTT::EnTT
   ${KENGINE_OPENCL_LIBRARY}
   ${KENGINE_OCCT_LIBRARIES}

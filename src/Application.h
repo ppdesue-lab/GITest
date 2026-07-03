@@ -54,11 +54,13 @@ public:
 public:
 	Ref<ShaderLibrary> GetShaderLibrary() { return m_ShaderLibrary; }
 	Ref<Camera> GetCamera() { return m_Camera; }
+	Ref<Camera> GetViewportCamera() const;
 
 	// Scene management
 	Scene& GetScene() { return m_Scene; }
 	Ref<Object3D> LoadObject3D(const std::filesystem::path& filepath);
 	Ref<Object3D> LoadGCode(const std::filesystem::path& filepath);
+	Ref<Object3D> LoadVector2D(const std::filesystem::path& filepath);
 	Ref<Object3D> LoadManixVolume();
 	Ref<Object3D> LoadDefaultTerrainCDLOD();
 	Ref<Object3D> LoadTerrainHeightMap();
@@ -69,10 +71,23 @@ public:
 
 	// Viewport
 	enum class ViewportRenderMode { Editor, Rendering };
+	enum class ViewportViewMode { View3D, View2D };
 	Ref<FrameBuffer> GetViewportFBO() { return m_ViewportFBO; }
 	uint64_t GetViewportColorTextureID() const;
 	ViewportRenderMode GetViewportRenderMode() const { return m_ViewportRenderMode; }
 	void SetViewportRenderMode(ViewportRenderMode mode);
+	ViewportViewMode GetViewportViewMode() const { return m_ViewportViewMode; }
+	void SetViewportViewMode(ViewportViewMode mode);
+	bool IsViewport2D() const { return m_ViewportViewMode == ViewportViewMode::View2D; }
+	bool IsViewport2DEditMode() const { return IsViewport2D() && m_Viewport2DEditMode; }
+	void SetViewport2DEditMode(bool enabled);
+	void ToggleViewport2DEditMode();
+	bool SetSelected2DSubElementIndex(int index);
+	bool SetSelected2DSubElementIndices(const std::vector<int>& indices);
+	void ClearSelected2DSubElement();
+	void PanViewport2D(const glm::vec2& deltaPixels);
+	void ZoomViewport2D(float wheelDelta);
+	void ResetViewport2D();
 	int ReadPickupPixel(int x, int y);
 	int GetMSAASamples() const { return m_MSAASamples; }
 	void SetMSAASamples(int samples);
@@ -140,7 +155,9 @@ private:
 	void ResizeSelectedOutlineResources(uint32_t width, uint32_t height);
 	void RenderSelectedMaskPass();
 	uint64_t CompositeSelectedOutline(uint64_t sceneColorTexture);
+	void DrawViewport2DGrid(const glm::mat4& view, const glm::mat4& projection);
 	void ApplyGizmoDeltaToSelection(const Transform& before, const Transform& after);
+	void ApplyGizmoDeltaToSelected2DSubElements(const Transform& before, const Transform& after);
 
     WindowInterface* m_WindowInterface = nullptr;
     LayerStack m_LayerStack;
@@ -149,6 +166,7 @@ private:
 	Ref<ImGuiLayer> m_ImGuiLayer;
 	Ref<ShaderLibrary> m_ShaderLibrary;
 	Ref<Camera> m_Camera;
+	Ref<Camera> m_Camera2D;
 	Scene m_Scene;
 
 	Ref<VertexArray> m_backgroundCubeVA;
@@ -181,6 +199,8 @@ private:
 	uint32_t m_TransparentDepthFBO = 0;
 	uint32_t m_TransparentDepthTexture = 0;
 	ViewportRenderMode m_ViewportRenderMode = ViewportRenderMode::Editor;
+	ViewportViewMode m_ViewportViewMode = ViewportViewMode::View3D;
+	bool m_Viewport2DEditMode = false;
 	int m_MSAASamples = 1;
 	glm::vec2 m_ViewportSize = { 1280.0f, 720.0f };
 	glm::vec2 m_ViewportMousePos = { 0.0f, 0.0f };

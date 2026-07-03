@@ -50,6 +50,9 @@ public:
 
     void OnUpdate() override
     {
+        if (Application::Get().IsViewport2D())
+            return;
+
         auto shader = Application::Get().GetShaderLibrary()->Get("DefaultColor");
 		auto camera = Application::Get().GetCamera();
         shader->Bind();

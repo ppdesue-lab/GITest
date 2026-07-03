@@ -29,7 +29,8 @@ typedef enum
 	// Mutually exclusive axis orientation flags
 	// Default: Global axis orientation
 	GIZMO_LOCAL		= 1 << 3,	// Orients axes locally
-	GIZMO_VIEW		= 1 << 4	// Orients axes based on screen view
+	GIZMO_VIEW		= 1 << 4,	// Orients axes based on screen view
+	GIZMO_XY_PLANE	= 1 << 5	// Limits drawing and interaction to X/Y axes and the XY plane
 } GizmoFlags;
 
 //struct Color {

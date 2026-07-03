@@ -47,6 +47,10 @@ public:
     template<typename T>
     bool LoadFromPath(const std::filesystem::path& filepath);
     virtual void Draw(const glm::mat4& view, const glm::mat4 proj, bool transparentPass = false);
+    virtual void DrawPickup(const glm::mat4& view, const glm::mat4& proj,
+        const Ref<Shader>& shader, int objectID, bool xzInput = false, float xzInputY = 0.0f);
+    virtual void DrawSelectedMask(const glm::mat4& view, const glm::mat4& proj,
+        const Ref<Shader>& shader, bool xzInput = false, float xzInputY = 0.0f);
     virtual void UpdateBoundingSphere();
     BoundingSphere GetWorldBoundingSphere() const;
 

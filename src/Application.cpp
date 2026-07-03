@@ -20,9 +20,12 @@
 #include "Renderer/TerrainHeightMap.h"
 
 #include "Camera/FPSCamera.h"
+#include "Camera/OrthographicCamera2D.h"
 
 #include <Primitive/Gizmo.h>
 #include <Import/GCode/GCodeObject.h>
+#include <Import/Vector2D/DxfLoader.h>
+#include <Import/Vector2D/Object2D.h>
 
 namespace
 {
@@ -79,6 +82,7 @@ Application::Application(int w,int h)
     RenderCommand::Init();
 
     m_Camera = CreateRef<FPSCamera>(glm::vec3(100, 100, 100), glm::vec3(0, 0, 0), 45.0f, w / (float)h);
+    m_Camera2D = CreateRef<OrthographicCamera2D>(w / (float)h, 200.0f);
     m_ViewportSize = glm::vec2((float)w, (float)h);
 
     // Push ImGui layer as overlay
@@ -159,6 +163,9 @@ void Application::Run()
             titleFrames = 0;
         }
 
+        Ref<Camera> viewportCamera = GetViewportCamera();
+        const bool viewport2D = IsViewport2D();
+
         // Process continuous keyboard input (velocity-based)
         ProcessKeyboardInput(deltaTime);
         for (const auto& entry : m_Scene.GetObjects())
@@ -192,7 +199,7 @@ void Application::Run()
         // --- CSM SHADOW MAP UPDATE ---
         if (m_CSM->Enabled())
         {
-            m_CSM->Update(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix(), m_Camera->getNearPlane(), m_Camera->getFarPlane());
+            m_CSM->Update(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix(), viewportCamera->getNearPlane(), viewportCamera->getFarPlane());
 
             auto depthShader = GetShaderLibrary()->Get("ShadowDepth");
             auto& lightViewProj = m_CSM->GetLightViewProjMatrices();
@@ -239,7 +246,7 @@ void Application::Run()
             RenderCommand::SetViewport(0, 0, m_WindowInterface->GetWidth(), m_WindowInterface->GetHeight());
         }
 
-        RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
+        RenderCommand::SetClearColor(viewport2D ? glm::vec4(0.0f, 0.0f, 0.0f, 1.0f) : glm::vec4(0.1f, 0.1f, 0.1f, 1.0f));
         RenderCommand::Clear();
 #ifdef G_OPENGL
         if (m_AppMode == AppMode::Editor)
@@ -250,6 +257,7 @@ void Application::Run()
         }
 #endif
         // Draw selected environment background without writing depth.
+        if (!viewport2D)
         {
             RenderCommand::SetDepthRange(0.99f, 1.0f);
 #ifdef G_OPENGL
@@ -257,8 +265,8 @@ void Application::Run()
 #endif
             auto backshader = Application::Get().GetShaderLibrary()->Get("DefaultBackgroundSH");
             backshader->Bind();
-            auto viewrotate = glm::mat4(glm::mat3(m_Camera->GetViewMatrix()));
-            auto invViewProj = glm::inverse(m_Camera->GetProjectionMatrix() * viewrotate);
+            auto viewrotate = glm::mat4(glm::mat3(viewportCamera->GetViewMatrix()));
+            auto invViewProj = glm::inverse(viewportCamera->GetProjectionMatrix() * viewrotate);
             backshader->SetMat4("u_invViewProj", invViewProj);
             backshader->SetInt("u_BackgroundMode", m_BackgroundMode);
             if (m_BackgroundMode == 1)
@@ -283,17 +291,39 @@ void Application::Run()
         }
 
         // Update layers (draws axis, ground, etc.)
-        for (auto& layer : m_LayerStack)
-            layer->OnUpdate();
+        if (!viewport2D)
+        {
+            for (auto& layer : m_LayerStack)
+                layer->OnUpdate();
+        }
+
+        if (viewport2D && m_AppMode == AppMode::Editor)
+        {
+            auto gridShader = GetShaderLibrary()->Get("DefaultColor");
+            gridShader->Bind();
+            gridShader->SetMat4("u_View", viewportCamera->GetViewMatrix());
+            gridShader->SetMat4("u_Projection", viewportCamera->GetProjectionMatrix());
+            gridShader->SetMat4("u_Model", glm::mat4(1.0f));
+            RenderCommand::EnableDepthTest(false);
+#ifdef G_OPENGL
+            glDepthMask(GL_FALSE);
+#endif
+            DrawViewport2DGrid(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix());
+            RenderCommand::Flush();
+#ifdef G_OPENGL
+            glDepthMask(GL_TRUE);
+#endif
+            RenderCommand::EnableDepthTest(true);
+        }
 
         // Draw visible objects intersecting the active camera frustum.
-        const Frustum cameraFrustum(m_Camera->GetProjectionMatrix() * m_Camera->GetViewMatrix());
+        const Frustum cameraFrustum(viewportCamera->GetProjectionMatrix() * viewportCamera->GetViewMatrix());
 #ifdef G_OPENGL
         for (const auto& entry : m_Scene.GetObjects())
         {
             Ref<WaterNode> water = std::dynamic_pointer_cast<WaterNode>(entry.Object);
             if (entry.Visible && water && water->Opacity > 0.001f)
-                water->PrepareSceneTextures(m_Scene, *m_Camera, m_ViewportSize);
+                water->PrepareSceneTextures(m_Scene, *viewportCamera, m_ViewportSize);
         }
 
         if (m_AppMode == AppMode::Editor)
@@ -301,14 +331,14 @@ void Application::Run()
             for (const auto& entry : m_Scene.GetObjects())
                 if (entry.Visible && entry.Object && entry.Object->Opacity >= 0.999f &&
                     cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
-                    entry.Object->Draw(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix());
+                    entry.Object->Draw(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix());
         }
         else
 #endif
         for (const auto& entry : m_Scene.GetObjects())
             if (entry.Visible && entry.Object && entry.Object->Opacity > 0.001f &&
                 cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
-                entry.Object->Draw(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix());
+                entry.Object->Draw(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix());
 
             if (m_AppMode == AppMode::Editor)
             {
@@ -324,13 +354,13 @@ void Application::Run()
                 {
                     auto resetShader = GetShaderLibrary()->Get("DefaultColor");
                     resetShader->Bind();
-                    resetShader->SetMat4("u_View", m_Camera->GetViewMatrix());
-                    resetShader->SetMat4("u_Projection", m_Camera->GetProjectionMatrix());
+                    resetShader->SetMat4("u_View", viewportCamera->GetViewMatrix());
+                    resetShader->SetMat4("u_Projection", viewportCamera->GetProjectionMatrix());
                     resetShader->SetMat4("u_Model", glm::mat4(1.0f));
                 }
 
                 // Directional light indicator
-                if (m_CSM->Enabled())
+                if (!viewport2D && m_CSM->Enabled())
                 {
                     glm::vec3 lightPos(0.0f, 100.0f, 0.0f);
                     glm::vec3 lightDir = glm::normalize(m_CSM->GetLight().Direction);
@@ -366,7 +396,8 @@ void Application::Run()
                 }
 
                 // Draw gizmo
-            m_ProbeGI->DrawDebug();
+            if (!viewport2D)
+                m_ProbeGI->DrawDebug();
             Transform* targetTransform = m_GizmoTargetTransform;
             if (targetTransform)
             {
@@ -379,21 +410,29 @@ void Application::Run()
                 case 3: gizmoFlags = GIZMO_ALL;       break;
                 default: gizmoFlags = GIZMO_TRANSLATE; break;
                 }
-                if (m_GizmoLocal) gizmoFlags |= GIZMO_LOCAL;
-                if (m_GizmoView)  gizmoFlags |= GIZMO_VIEW;
+                if (viewport2D)
+                    gizmoFlags |= GIZMO_XY_PLANE;
+                else
+                {
+                    if (m_GizmoLocal) gizmoFlags |= GIZMO_LOCAL;
+                    if (m_GizmoView)  gizmoFlags |= GIZMO_VIEW;
+                }
 
-                SetGizmoSize(m_GizmoSize);
+                SetGizmoSize(viewport2D ? m_GizmoSize * 0.5f : m_GizmoSize);
                 SetGizmoLineWidth(m_GizmoLineWidth);
                 SetGizmoViewportSize((int)m_ViewportSize.x, (int)m_ViewportSize.y);
 
                 const Transform beforeGizmo = *targetTransform;
-                if (DrawGizmo3D(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix(),
+                if (DrawGizmo3D(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix(),
                     m_LeftDownGizmo, m_ViewportMousePos, gizmoFlags, targetTransform))
                 {
-                    ApplyGizmoDeltaToSelection(beforeGizmo, *targetTransform);
+                    if (viewport2D && m_Viewport2DEditMode)
+                        ApplyGizmoDeltaToSelected2DSubElements(beforeGizmo, *targetTransform);
+                    else
+                        ApplyGizmoDeltaToSelection(beforeGizmo, *targetTransform);
                     m_TimelineAnimation.RecordSelectedTransformChange(m_Scene);
                     m_SelectedOutlineValid = false;
-                    if (m_Camera->isInputEnabled()) m_Camera->setInputEnabled(false);
+                    if (viewportCamera->isInputEnabled()) viewportCamera->setInputEnabled(false);
                 }
             }
 
@@ -414,8 +453,8 @@ void Application::Run()
                     opaqueColor,
                     postProcessFBO->GetDepthAttachmentRendererID(),
                     postProcessFBO->GetColorAttachmentRendererID(2),
-                    m_Camera->GetViewMatrix(),
-                    m_Camera->GetProjectionMatrix());
+                    viewportCamera->GetViewMatrix(),
+                    viewportCamera->GetProjectionMatrix());
             }
             uint64_t shadedOpaqueColor = useSSAO ? m_SSAO->GetOutputTexture() : opaqueColor;
 
@@ -440,7 +479,7 @@ void Application::Run()
                 if (entry.Visible && entry.Object && entry.Object->Opacity > 0.001f &&
                     entry.Object->Opacity < 0.999f &&
                     cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
-                    entry.Object->Draw(m_Camera->GetViewMatrix(), m_Camera->GetProjectionMatrix(), true);
+                    entry.Object->Draw(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix(), true);
 
             glDepthMask(GL_TRUE);
             glBlendFunci(0, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -456,25 +495,26 @@ void Application::Run()
                 postProcessFBO->GetColorAttachmentRendererID(3),
                 postProcessFBO->GetColorAttachmentRendererID(4));
             RenderTransparentStepEdges(postProcessFBO->GetDepthAttachmentRendererID());
-            if (m_ViewportRenderMode == ViewportRenderMode::Editor && !IsMSAAEnabled() && m_FXAA->Enabled())
+            if (m_ViewportRenderMode == ViewportRenderMode::Editor && !viewport2D &&
+                !IsMSAAEnabled() && m_FXAA->Enabled())
             {
                 m_FXAA->Render(sceneColor);
             }
             if (m_ViewportRenderMode == ViewportRenderMode::Editor)
             {
                 uint64_t outlineSource = sceneColor;
-                if (!IsMSAAEnabled() && m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
+                if (!viewport2D && !IsMSAAEnabled() && m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
                     outlineSource = m_FXAA->GetOutputTexture();
                 CompositeSelectedOutline(outlineSource);
             }
             if (m_ViewportRenderMode == ViewportRenderMode::Rendering)
             {
                 m_SelectedOutlineValid = false;
-                m_PathTracer->Render(m_Scene, *m_Camera);
+                m_PathTracer->Render(m_Scene, *viewportCamera);
                 if (m_PathTracer->GetSampleCount() <= 1)
                     m_SVGF->ResetHistory();
                 if (m_SVGF->Enabled())
-                    m_SVGF->Render(*m_PathTracer, *m_Camera);
+                    m_SVGF->Render(*m_PathTracer, *viewportCamera);
             }
         }
         else
@@ -509,7 +549,14 @@ void Application::ProcessKeyboardInput(float deltaTime)
     int up      = (m_KeyE ? 1 : 0) - (m_KeyQ ? 1 : 0);
 
     if (forward != 0 || right != 0 || up != 0)
-        m_Camera->processKeyboard(forward, right, up, deltaTime);
+        GetViewportCamera()->processKeyboard(forward, right, up, deltaTime);
+}
+
+Ref<Camera> Application::GetViewportCamera() const
+{
+    if (m_ViewportViewMode == ViewportViewMode::View2D && m_ViewportRenderMode == ViewportRenderMode::Editor && m_Camera2D)
+        return m_Camera2D;
+    return m_Camera;
 }
 
 void Application::OnEvent(Event& e)
@@ -668,6 +715,36 @@ Ref<Object3D> Application::LoadGCode(const std::filesystem::path& filepath)
     return object;
 }
 
+Ref<Object3D> Application::LoadVector2D(const std::filesystem::path& filepath)
+{
+    std::string extension = filepath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    Vector2DDocument document;
+    std::string error;
+    bool loaded = false;
+    if (extension == ".dxf")
+        loaded = DxfLoader::Load(filepath, document, error);
+
+    if (!loaded)
+    {
+        ERROR("Failed to load 2D file {}: {}", filepath.u8string(), error);
+        return nullptr;
+    }
+
+    Ref<Object2D> object = CreateRef<Object2D>();
+    if (!object->LoadFromDocument(document))
+        return nullptr;
+
+    const std::string displayName = document.SourceName.empty() ? filepath.filename().u8string() : document.SourceName;
+    m_Scene.AddObject(object, displayName, filepath.u8string());
+    SetViewportViewMode(ViewportViewMode::View2D);
+    m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    m_SelectedOutlineValid = false;
+    return object;
+}
+
 Ref<Object3D> Application::LoadManixVolume()
 {
     const std::filesystem::path filepath = std::filesystem::u8path("D:/gitclones/VolumeRender/content/Textures/manix.dat");
@@ -747,6 +824,9 @@ bool Application::LoadFileByExtension(const std::filesystem::path& filepath)
 
     if (extension == ".gcode" || extension == ".nc" || extension == ".cnc" || extension == ".tap")
         return LoadGCode(filepath) != nullptr;
+
+    if (extension == ".dxf")
+        return LoadVector2D(filepath) != nullptr;
 
     if (extension == ".obj" || extension == ".stl" || extension == ".ply" ||
         extension == ".gltf" || extension == ".glb" ||
@@ -870,6 +950,8 @@ void Application::SetViewportSize(const glm::vec2& size)
     m_ViewportSize = pixelSize;
     if (m_Camera)
         m_Camera->setAspectRatio(pixelSize.x / pixelSize.y);
+    if (m_Camera2D)
+        m_Camera2D->setAspectRatio(pixelSize.x / pixelSize.y);
     SetGizmoViewportSize((int)pixelSize.x, (int)pixelSize.y);
 }
 
@@ -1068,6 +1150,7 @@ void Application::InitializeSelectedOutlineResources()
         uniform vec2 u_ViewportSize;
         uniform float u_EdgeWidth;
         uniform vec4 u_EdgeColor;
+        uniform int u_FillSelectedPixels;
 
         int SampleMask(ivec2 pixel)
         {
@@ -1095,6 +1178,22 @@ void Application::InitializeSelectedOutlineResources()
             }
 
             vec4 scene = texture(u_SceneColor, v_UV);
+            if (u_FillSelectedPixels != 0)
+            {
+                bool hasEmptyNeighbor = false;
+                for (int y = -1; y <= 1; y++)
+                {
+                    for (int x = -1; x <= 1; x++)
+                    {
+                        if (x == 0 && y == 0)
+                            continue;
+                        hasEmptyNeighbor = hasEmptyNeighbor || SampleMask(pixel + ivec2(x, y)) == 0;
+                    }
+                }
+                color = (centerSelected && hasEmptyNeighbor) ? u_EdgeColor : scene;
+                return;
+            }
+
             color = (!centerSelected && neighborSelected) ? u_EdgeColor : scene;
         }
     )";
@@ -1145,8 +1244,9 @@ void Application::RenderTransparentDepthPrepass()
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
 
-    const glm::mat4 view = m_Camera->GetViewMatrix();
-    const glm::mat4 projection = m_Camera->GetProjectionMatrix();
+    Ref<Camera> viewportCamera = GetViewportCamera();
+    const glm::mat4 view = viewportCamera->GetViewMatrix();
+    const glm::mat4 projection = viewportCamera->GetProjectionMatrix();
     const Frustum cameraFrustum(projection * view);
     m_TransparentDepthShader->Bind();
     m_TransparentDepthShader->SetMat4("u_View", view);
@@ -1181,8 +1281,9 @@ void Application::RenderTransparentStepEdges(uint64_t sceneDepthTexture)
         !m_OITCompositeFBO || !m_Camera)
         return;
 
-    const glm::mat4 view = m_Camera->GetViewMatrix();
-    const glm::mat4 projection = m_Camera->GetProjectionMatrix();
+    Ref<Camera> viewportCamera = GetViewportCamera();
+    const glm::mat4 view = viewportCamera->GetViewMatrix();
+    const glm::mat4 projection = viewportCamera->GetProjectionMatrix();
     const Frustum cameraFrustum(projection * view);
     glBindFramebuffer(GL_FRAMEBUFFER, m_OITCompositeFBO);
     glViewport(0, 0, (GLsizei)m_ViewportSize.x, (GLsizei)m_ViewportSize.y);
@@ -1243,13 +1344,28 @@ void Application::RenderPickupPass()
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);
 
-    const glm::mat4 view = m_Camera->GetViewMatrix();
-    const glm::mat4 projection = m_Camera->GetProjectionMatrix();
+    Ref<Camera> viewportCamera = GetViewportCamera();
+    const glm::mat4 view = viewportCamera->GetViewMatrix();
+    const glm::mat4 projection = viewportCamera->GetProjectionMatrix();
     const Frustum cameraFrustum(projection * view);
 
     m_PickupShader->Bind();
     m_PickupShader->SetMat4("u_View", view);
     m_PickupShader->SetMat4("u_Projection", projection);
+
+    if (IsViewport2DEditMode())
+    {
+        Scene::Entry* selectedEntry = m_Scene.GetSelectedEntry();
+        Ref<Object2D> object2D = selectedEntry ? std::dynamic_pointer_cast<Object2D>(selectedEntry->Object) : nullptr;
+        if (selectedEntry && selectedEntry->Visible && object2D &&
+            cameraFrustum.Intersects(object2D->GetWorldBoundingSphere()))
+        {
+            object2D->DrawSubElementPickup(view, projection, m_PickupShader);
+        }
+        m_PickupFBO->Unbind();
+        glEnable(GL_BLEND);
+        return;
+    }
 
     const auto& objects = m_Scene.GetObjects();
     for (int i = 0; i < (int)objects.size(); i++)
@@ -1259,19 +1375,9 @@ void Application::RenderPickupPass()
             !cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
             continue;
 
-        m_PickupShader->SetInt("u_ObjectID", i + 1);
         const bool isWaterNode = (bool)std::dynamic_pointer_cast<WaterNode>(entry.Object);
         const bool xzInput = isWaterNode || std::dynamic_pointer_cast<TerrainHeightMap>(entry.Object);
-        m_PickupShader->SetInt("u_XZInput", xzInput ? 1 : 0);
-        m_PickupShader->SetFloat("u_XZInputY", isWaterNode ? -0.5f : 0.0f);
-        for (const auto& mesh : entry.Object->Meshes)
-        {
-            Ref<VertexArray> vertexObject = mesh ? GeometryLibrary::Resolve(mesh->VertexObject) : nullptr;
-            if (!vertexObject)
-                continue;
-            m_PickupShader->SetMat4("u_Model", entry.Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
-            RenderCommand::DrawIndexed(vertexObject);
-        }
+        entry.Object->DrawPickup(view, projection, m_PickupShader, i + 1, xzInput, isWaterNode ? -0.5f : 0.0f);
     }
 
     m_PickupFBO->Unbind();
@@ -1284,6 +1390,14 @@ void Application::RenderSelectedMaskPass()
 #ifdef G_OPENGL
     if (!m_SelectedMaskFBO || !m_SelectedMaskShader || !m_Camera)
         return;
+
+    if (IsViewport2DEditMode())
+    {
+        m_SelectedMaskFBO->Bind();
+        m_SelectedMaskFBO->ClearAttachment(0, 0);
+        m_SelectedMaskFBO->Unbind();
+        return;
+    }
 
     m_SelectedMaskFBO->Bind();
     m_SelectedMaskFBO->ClearAttachment(0, 0);
@@ -1301,8 +1415,9 @@ void Application::RenderSelectedMaskPass()
         return;
     }
 
-    const glm::mat4 view = m_Camera->GetViewMatrix();
-    const glm::mat4 projection = m_Camera->GetProjectionMatrix();
+    Ref<Camera> viewportCamera = GetViewportCamera();
+    const glm::mat4 view = viewportCamera->GetViewMatrix();
+    const glm::mat4 projection = viewportCamera->GetProjectionMatrix();
     const Frustum cameraFrustum(projection * view);
 
     m_SelectedMaskShader->Bind();
@@ -1318,16 +1433,7 @@ void Application::RenderSelectedMaskPass()
 
         const bool isWaterNode = (bool)std::dynamic_pointer_cast<WaterNode>(entry->Object);
         const bool xzInput = isWaterNode || std::dynamic_pointer_cast<TerrainHeightMap>(entry->Object);
-        m_SelectedMaskShader->SetInt("u_XZInput", xzInput ? 1 : 0);
-        m_SelectedMaskShader->SetFloat("u_XZInputY", isWaterNode ? -0.5f : 0.0f);
-        for (const auto& mesh : entry->Object->Meshes)
-        {
-            Ref<VertexArray> vertexObject = mesh ? GeometryLibrary::Resolve(mesh->VertexObject) : nullptr;
-            if (!vertexObject)
-                continue;
-            m_SelectedMaskShader->SetMat4("u_Model", entry->Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix());
-            RenderCommand::DrawIndexed(vertexObject);
-        }
+        entry->Object->DrawSelectedMask(view, projection, m_SelectedMaskShader, xzInput, isWaterNode ? -0.5f : 0.0f);
     }
 
     m_SelectedMaskFBO->Unbind();
@@ -1340,6 +1446,8 @@ uint64_t Application::CompositeSelectedOutline(uint64_t sceneColorTexture)
 {
 #ifdef G_OPENGL
     m_SelectedOutlineValid = false;
+    if (IsViewport2DEditMode())
+        return sceneColorTexture;
     if (!sceneColorTexture || !m_SelectedMaskFBO || !m_SelectedEdgeShader ||
         !m_SelectedOutlineFBO || !m_SelectedOutlineTexture)
         return sceneColorTexture;
@@ -1360,6 +1468,7 @@ uint64_t Application::CompositeSelectedOutline(uint64_t sceneColorTexture)
     m_SelectedEdgeShader->SetFloat2("u_ViewportSize", m_ViewportSize);
     m_SelectedEdgeShader->SetFloat("u_EdgeWidth", m_SelectedEdgeWidth);
     m_SelectedEdgeShader->SetFloat4("u_EdgeColor", glm::vec4(1.0f, 0.85f, 0.05f, 1.0f));
+    m_SelectedEdgeShader->SetInt("u_FillSelectedPixels", IsViewport2D() ? 1 : 0);
     glBindTextureUnit(0, (uint32_t)sceneColorTexture);
     glBindTextureUnit(1, (uint32_t)m_SelectedMaskFBO->GetColorAttachmentRendererID(0));
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -1393,14 +1502,30 @@ int Application::ReadPickupPixel(int x, int y)
 void Application::SetSelectedObjectIndex(int index)
 {
     m_Scene.SetSelectedIndex(index);
-    m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    if (m_Viewport2DEditMode)
+    {
+        ClearSelected2DSubElement();
+        m_GizmoTargetTransform = nullptr;
+    }
+    else
+    {
+        m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    }
     m_SelectedOutlineValid = false;
 }
 
 void Application::AddSelectedObjectIndex(int index)
 {
     m_Scene.AddSelectedIndex(index);
-    m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    if (m_Viewport2DEditMode)
+    {
+        ClearSelected2DSubElement();
+        m_GizmoTargetTransform = nullptr;
+    }
+    else
+    {
+        m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    }
     m_SelectedOutlineValid = false;
 }
 
@@ -1434,6 +1559,42 @@ void Application::ApplyGizmoDeltaToSelection(const Transform& before, const Tran
     }
 }
 
+void Application::ApplyGizmoDeltaToSelected2DSubElements(const Transform& before, const Transform& after)
+{
+    Scene::Entry* entry = m_Scene.GetSelectedEntry();
+    Ref<Object2D> object2D = entry ? std::dynamic_pointer_cast<Object2D>(entry->Object) : nullptr;
+    if (!object2D)
+        return;
+
+    const int activeIndex = object2D->GetSelectedSubElementIndex();
+    const auto& selectedIndices = object2D->GetSelectedSubElementIndices();
+    if (activeIndex < 0 || selectedIndices.size() <= 1)
+        return;
+
+    const glm::vec3 translationDelta = after.translation - before.translation;
+    const glm::quat rotationDelta = glm::normalize(after.rotation * glm::inverse(before.rotation));
+    glm::vec3 scaleRatio(1.0f);
+    for (int axis = 0; axis < 3; axis++)
+    {
+        const float beforeScale = before.scale[axis];
+        scaleRatio[axis] = std::abs(beforeScale) > 0.000001f ? after.scale[axis] / beforeScale : 1.0f;
+    }
+
+    for (int selectedIndex : selectedIndices)
+    {
+        if (selectedIndex == activeIndex)
+            continue;
+
+        Transform* transform = object2D->GetSubElementTransform(selectedIndex);
+        if (!transform)
+            continue;
+
+        transform->translation += translationDelta;
+        transform->rotation = glm::normalize(rotationDelta * transform->rotation);
+        transform->scale *= scaleRatio;
+    }
+}
+
 void Application::SetViewportRenderMode(ViewportRenderMode mode)
 {
     if (m_ViewportRenderMode == mode)
@@ -1443,6 +1604,164 @@ void Application::SetViewportRenderMode(ViewportRenderMode mode)
         m_PathTracer->ResetAccumulation();
     if (m_SVGF)
         m_SVGF->ResetHistory();
+}
+
+void Application::SetViewportViewMode(ViewportViewMode mode)
+{
+    if (m_ViewportViewMode == mode)
+        return;
+
+    m_ViewportViewMode = mode;
+    if (mode == ViewportViewMode::View2D)
+        SetViewportRenderMode(ViewportRenderMode::Editor);
+    else
+        SetViewport2DEditMode(false);
+    m_SelectedOutlineValid = false;
+}
+
+void Application::SetViewport2DEditMode(bool enabled)
+{
+    enabled = enabled && IsViewport2D();
+    if (m_Viewport2DEditMode == enabled)
+        return;
+
+    m_Viewport2DEditMode = enabled;
+    if (!m_Viewport2DEditMode)
+    {
+        ClearSelected2DSubElement();
+        m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    }
+    else
+    {
+        Scene::Entry* entry = m_Scene.GetSelectedEntry();
+        Ref<Object2D> object2D = entry ? std::dynamic_pointer_cast<Object2D>(entry->Object) : nullptr;
+        m_GizmoTargetTransform = object2D ? object2D->GetSubElementTransform(object2D->GetSelectedSubElementIndex()) : nullptr;
+    }
+    m_SelectedOutlineValid = false;
+}
+
+void Application::ToggleViewport2DEditMode()
+{
+    SetViewport2DEditMode(!m_Viewport2DEditMode);
+}
+
+bool Application::SetSelected2DSubElementIndex(int index)
+{
+    Scene::Entry* entry = m_Scene.GetSelectedEntry();
+    Ref<Object2D> object2D = entry ? std::dynamic_pointer_cast<Object2D>(entry->Object) : nullptr;
+    if (!object2D)
+        return false;
+
+    object2D->SetSelectedSubElementIndex(index);
+    m_GizmoTargetTransform = object2D->GetSubElementTransform(object2D->GetSelectedSubElementIndex());
+    m_SelectedOutlineValid = false;
+    return true;
+}
+
+bool Application::SetSelected2DSubElementIndices(const std::vector<int>& indices)
+{
+    Scene::Entry* entry = m_Scene.GetSelectedEntry();
+    Ref<Object2D> object2D = entry ? std::dynamic_pointer_cast<Object2D>(entry->Object) : nullptr;
+    if (!object2D)
+        return false;
+
+    object2D->SetSelectedSubElementIndices(indices);
+    m_GizmoTargetTransform = object2D->GetSubElementTransform(object2D->GetSelectedSubElementIndex());
+    m_SelectedOutlineValid = false;
+    return true;
+}
+
+void Application::ClearSelected2DSubElement()
+{
+    for (const auto& entry : m_Scene.GetObjects())
+    {
+        Ref<Object2D> object2D = entry.Object ? std::dynamic_pointer_cast<Object2D>(entry.Object) : nullptr;
+        if (object2D)
+            object2D->ClearSelectedSubElement();
+    }
+    if (m_Viewport2DEditMode)
+        m_GizmoTargetTransform = nullptr;
+    m_SelectedOutlineValid = false;
+}
+
+void Application::PanViewport2D(const glm::vec2& deltaPixels)
+{
+    Ref<OrthographicCamera2D> camera2D = std::dynamic_pointer_cast<OrthographicCamera2D>(m_Camera2D);
+    if (!camera2D)
+        return;
+
+    camera2D->PanPixels(deltaPixels, m_ViewportSize);
+    m_SelectedOutlineValid = false;
+}
+
+void Application::ZoomViewport2D(float wheelDelta)
+{
+    Ref<OrthographicCamera2D> camera2D = std::dynamic_pointer_cast<OrthographicCamera2D>(m_Camera2D);
+    if (!camera2D || wheelDelta == 0.0f)
+        return;
+
+    const float factor = wheelDelta > 0.0f ? 0.9f : 1.1f;
+    const int steps = (int)std::abs(wheelDelta);
+    for (int i = 0; i < std::max(1, steps); ++i)
+        camera2D->Zoom(factor);
+    m_SelectedOutlineValid = false;
+}
+
+void Application::ResetViewport2D()
+{
+    Ref<OrthographicCamera2D> camera2D = std::dynamic_pointer_cast<OrthographicCamera2D>(m_Camera2D);
+    if (!camera2D)
+        return;
+
+    camera2D->ResetView();
+    m_SelectedOutlineValid = false;
+}
+
+void Application::DrawViewport2DGrid(const glm::mat4&, const glm::mat4&)
+{
+    Ref<OrthographicCamera2D> camera2D = std::dynamic_pointer_cast<OrthographicCamera2D>(m_Camera2D);
+    if (!camera2D || m_ViewportSize.x <= 0.0f || m_ViewportSize.y <= 0.0f)
+        return;
+
+    const glm::vec2 center = camera2D->GetCenter();
+    const float height = camera2D->GetOrthoHeight();
+    const float width = height * (m_ViewportSize.x / m_ViewportSize.y);
+    const float halfWidth = width * 0.5f;
+    const float halfHeight = height * 0.5f;
+    const float minX = center.x - halfWidth;
+    const float maxX = center.x + halfWidth;
+    const float minY = center.y - halfHeight;
+    const float maxY = center.y + halfHeight;
+
+    float step = std::pow(10.0f, std::floor(std::log10((std::max)(height, 1.0f) / 12.0f)));
+    if (height / step > 24.0f)
+        step *= 2.0f;
+    if (height / step > 24.0f)
+        step *= 2.5f;
+
+    const glm::vec4 minorColor(0.13f, 0.13f, 0.13f, 0.45f);
+    const glm::vec4 majorColor(0.22f, 0.22f, 0.22f, 0.62f);
+    const glm::vec4 xAxisColor(0.72f, 0.16f, 0.20f, 0.90f);
+    const glm::vec4 yAxisColor(0.18f, 0.64f, 0.16f, 0.90f);
+    const float z = -0.01f;
+
+    int index = 0;
+    for (float x = std::floor(minX / step) * step; x <= maxX; x += step, ++index)
+    {
+        const bool axis = std::abs(x) < step * 0.001f;
+        const bool major = index % 5 == 0;
+        RenderCommand::FlushLine(glm::vec3(x, minY, z), glm::vec3(x, maxY, z),
+            axis ? yAxisColor : (major ? majorColor : minorColor));
+    }
+
+    index = 0;
+    for (float y = std::floor(minY / step) * step; y <= maxY; y += step, ++index)
+    {
+        const bool axis = std::abs(y) < step * 0.001f;
+        const bool major = index % 5 == 0;
+        RenderCommand::FlushLine(glm::vec3(minX, y, z), glm::vec3(maxX, y, z),
+            axis ? xAxisColor : (major ? majorColor : minorColor));
+    }
 }
 
 uint64_t Application::GetViewportColorTextureID() const
@@ -1456,7 +1775,7 @@ uint64_t Application::GetViewportColorTextureID() const
         return m_SVGF->GetOutputTexture();
     if (m_ViewportRenderMode == ViewportRenderMode::Rendering && m_PathTracer && m_PathTracer->GetOutputTexture())
         return m_PathTracer->GetOutputTexture();
-    if (!IsMSAAEnabled() && m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
+    if (!IsViewport2D() && !IsMSAAEnabled() && m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
         return m_FXAA->GetOutputTexture();
     if (m_OITCompositeTexture)
         return m_OITCompositeTexture;

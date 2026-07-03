@@ -56,15 +56,28 @@ private:
     void OpenModelFile();
     void OpenGCodeFile();
     bool IsSupportedModelFile(const std::filesystem::path& filepath) const;
+    bool IsSupported2DFile(const std::filesystem::path& filepath) const;
     bool IsSupportedGCodeFile(const std::filesystem::path& filepath) const;
 
     bool OnMouseButtonDown(MouseButtonPressedEvent& e);
     bool OnMouseButtonUp(MouseButtonReleasedEvent& e);
+    bool OnKeyPressed(KeyPressedEvent& e);
     bool OnMouseMove(MouseMovedEvent& e);
+    bool OnMouseScrolled(MouseScrolledEvent& e);
+    void SelectObjectsInViewportRect(const glm::vec2& start, const glm::vec2& end, bool appendSelection);
+    void Select2DSubElementsInViewportRect(const glm::vec2& start, const glm::vec2& end, bool appendSelection);
 
 private:
     bool m_LeftDownCamera = false;
     bool m_LeftDownGizmo = false;
+    bool m_MiddleDownViewport2D = false;
+    bool m_ViewportSelectRectActive = false;
+    double m_LastViewport2DLeftClickTime = -1.0;
+    glm::vec2 m_LastViewport2DLeftClickPos = glm::vec2(0.0f);
+    glm::vec2 m_ViewportSelectStart = glm::vec2(0.0f);
+    glm::vec2 m_ViewportSelectEnd = glm::vec2(0.0f);
+    bool m_ShowViewport2DProperties = false;
+    ImVec2 m_Viewport2DPropertiesPos = ImVec2(0.0f, 0.0f);
 
     glm::vec2 m_MousePos;
 	Transform g_DefaultTransform;
