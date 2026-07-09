@@ -90,7 +90,7 @@ dimeVec3f TransformPoint(const dimeMatrix& matrix, const dimeVec3f& point)
 
 void AddLine(Vector2DDocument& document, uint32_t elementIndex, const dimeMatrix& transform,
     const dimeVec3f& start, const dimeVec3f& end, const glm::vec4& color, bool emitPrimitive = false,
-    bool displayAsArc = false)
+    bool displayAsArc = false, uint32_t displayArcGroup = 0)
 {
     const dimeVec3f transformedStart = TransformPoint(transform, start);
     const dimeVec3f transformedEnd = TransformPoint(transform, end);
@@ -105,6 +105,7 @@ void AddLine(Vector2DDocument& document, uint32_t elementIndex, const dimeMatrix
     line.Color = color;
     line.ElementIndex = elementIndex;
     line.DisplayAsArc = displayAsArc;
+    line.DisplayArcGroup = displayAsArc ? displayArcGroup : 0;
     document.Lines.push_back(line);
     if (elementIndex < document.Elements.size())
         document.Elements[elementIndex].LineIndices.push_back(lineIndex);
@@ -116,9 +117,10 @@ void AddLineStrip(Vector2DDocument& document, uint32_t elementIndex, const dimeM
     const dimeArray<dimeVec3f>& vertices, const glm::vec4& color, bool emitPrimitives = false,
     bool displayAsArc = false)
 {
+    const uint32_t displayArcGroup = displayAsArc ? (uint32_t)document.Lines.size() + 1 : 0;
     for (int i = 1; i < vertices.count(); ++i)
         AddLine(document, elementIndex, transform, vertices[i - 1], vertices[i], color, emitPrimitives,
-            displayAsArc);
+            displayAsArc, displayArcGroup);
 }
 
 void AddIndexedLines(Vector2DDocument& document, uint32_t elementIndex, const dimeMatrix& transform,
@@ -209,6 +211,7 @@ void AddBulgeSegment(Vector2DDocument& document, uint32_t elementIndex, const di
     }
 
     const int sampleCount = std::max(4, std::min(96, (int)std::ceil(std::abs(includedAngle) / 0.08726646259971647)));
+    const uint32_t displayArcGroup = emitNativePrimitive ? (uint32_t)document.Lines.size() + 1 : 0;
     dimeVec3f previous = start;
     for (int i = 1; i <= sampleCount; ++i)
     {
@@ -220,7 +223,8 @@ void AddBulgeSegment(Vector2DDocument& document, uint32_t elementIndex, const di
             start.z + (end.z - start.z) * (dxfdouble)t);
         if (i == sampleCount)
             current = end;
-        AddLine(document, elementIndex, transform, previous, current, color, false, emitNativePrimitive);
+        AddLine(document, elementIndex, transform, previous, current, color, false, emitNativePrimitive,
+            displayArcGroup);
         previous = current;
     }
 }
@@ -680,6 +684,51 @@ bool FitArcToPoints(const std::vector<glm::vec2>& points, size_t startIndex, siz
     return true;
 }
 
+bool FitLineToPoints(const std::vector<glm::vec2>& points, size_t startIndex, size_t endIndex,
+    float tolerance)
+{
+    if (endIndex <= startIndex + 1)
+        return true;
+
+    const glm::vec2 start = points[startIndex];
+    const glm::vec2 end = points[endIndex];
+    const glm::vec2 direction = end - start;
+    const float length = glm::length(direction);
+    if (length < tolerance)
+        return false;
+
+    float previousProgress = 0.0f;
+    for (size_t i = startIndex + 1; i < endIndex; ++i)
+    {
+        const glm::vec2 offset = points[i] - start;
+        const float distance = std::abs(direction.x * offset.y - direction.y * offset.x) / length;
+        if (distance > tolerance)
+            return false;
+
+        const float progress = glm::dot(offset, direction) / (length * length);
+        if (progress + 0.0001f < previousProgress || progress < -0.0001f || progress > 1.0001f)
+            return false;
+        previousProgress = progress;
+    }
+
+    return true;
+}
+
+size_t FindFittedLineEnd(const std::vector<glm::vec2>& points, const std::vector<float>& absAngleTurnPrefix,
+    size_t startIndex, float tolerance, float maxLineTurn)
+{
+    size_t bestEnd = std::min(startIndex + 1, points.size() - 1);
+    for (size_t candidateEnd = startIndex + 2; candidateEnd < points.size(); ++candidateEnd)
+    {
+        if (PrefixRangeSum(absAngleTurnPrefix, startIndex, candidateEnd) > maxLineTurn)
+            break;
+        if (!FitLineToPoints(points, startIndex, candidateEnd, tolerance))
+            break;
+        bestEnd = candidateEnd;
+    }
+    return bestEnd;
+}
+
 uint32_t AddPrimitiveLine(Vector2DDocument& document, uint32_t elementIndex, const Vector2DLine& line)
 {
     Vector2DPrimitive primitive;
@@ -691,6 +740,36 @@ uint32_t AddPrimitiveLine(Vector2DDocument& document, uint32_t elementIndex, con
     document.Primitives.push_back(primitive);
     if (elementIndex < document.Elements.size())
         document.Elements[elementIndex].PrimitiveIndices.push_back(primitiveIndex);
+    return primitiveIndex;
+}
+
+uint32_t AddFittedLinePrimitive(Vector2DDocument& document, uint32_t elementIndex,
+    const std::vector<uint32_t>& lineIndices, size_t startOffset, size_t endOffset)
+{
+    if (startOffset >= endOffset || startOffset >= lineIndices.size())
+        return 0;
+
+    const uint32_t firstLineIndex = lineIndices[startOffset];
+    const uint32_t lastLineIndex = lineIndices[endOffset - 1];
+    if (firstLineIndex >= document.Lines.size() || lastLineIndex >= document.Lines.size())
+        return 0;
+
+    Vector2DLine fittedLine = document.Lines[firstLineIndex];
+    fittedLine.End = document.Lines[lastLineIndex].End;
+    fittedLine.DisplayAsArc = false;
+    fittedLine.DisplayArcGroup = 0;
+    const uint32_t primitiveIndex = AddPrimitiveLine(document, elementIndex, fittedLine);
+    const uint32_t displayLineGroup = primitiveIndex + 1;
+
+    for (size_t lineOffset = startOffset; lineOffset < endOffset && lineOffset < lineIndices.size(); ++lineOffset)
+    {
+        const uint32_t lineIndex = lineIndices[lineOffset];
+        if (lineIndex >= document.Lines.size())
+            continue;
+        document.Lines[lineIndex].DisplayAsFittedLine = true;
+        document.Lines[lineIndex].DisplayLineGroup = displayLineGroup;
+    }
+
     return primitiveIndex;
 }
 
@@ -714,19 +793,50 @@ void FitLineRunToPrimitives(Vector2DDocument& document, uint32_t elementIndex,
     if (lineIndices.empty())
         return;
 
-    constexpr size_t minArcSegmentCount = 3;
-    if (lineIndices.size() < minArcSegmentCount)
-    {
-        for (uint32_t lineIndex : lineIndices)
-            AddPrimitiveLine(document, elementIndex, document.Lines[lineIndex]);
-        return;
-    }
-
     std::vector<glm::vec2> points;
     points.reserve(lineIndices.size() + 1);
     points.push_back(document.Lines[lineIndices.front()].Start);
     for (uint32_t lineIndex : lineIndices)
         points.push_back(document.Lines[lineIndex].End);
+
+    constexpr size_t minArcSegmentCount = 3;
+    constexpr float minArcSweep = 0.0523598776f;
+    constexpr float maxArcSweep = 3.14159265358979323846f + 0.001f;
+    constexpr float maxCandidateTurn = maxArcSweep + 0.25f;
+    constexpr float minCandidateTurn = minArcSweep * 0.2f;
+    constexpr float maxLineTurn = 0.0174532925f;
+
+    std::vector<float> crossTurnPrefix(points.size() + 1, 0.0f);
+    std::vector<float> angleTurnPrefix(points.size() + 1, 0.0f);
+    std::vector<float> absAngleTurnPrefix(points.size() + 1, 0.0f);
+    for (size_t prefixIndex = 1; prefixIndex <= points.size(); ++prefixIndex)
+    {
+        crossTurnPrefix[prefixIndex] = crossTurnPrefix[prefixIndex - 1];
+        angleTurnPrefix[prefixIndex] = angleTurnPrefix[prefixIndex - 1];
+        absAngleTurnPrefix[prefixIndex] = absAngleTurnPrefix[prefixIndex - 1];
+
+        const size_t pointIndex = prefixIndex - 1;
+        if (pointIndex > 0 && pointIndex + 1 < points.size())
+        {
+            const glm::vec2 previous = points[pointIndex] - points[pointIndex - 1];
+            const glm::vec2 next = points[pointIndex + 1] - points[pointIndex];
+            const float turnAngle = SignedTurnAngle(previous, next);
+            crossTurnPrefix[prefixIndex] += previous.x * next.y - previous.y * next.x;
+            angleTurnPrefix[prefixIndex] += turnAngle;
+            absAngleTurnPrefix[prefixIndex] += std::abs(turnAngle);
+        }
+    }
+
+    const size_t lastPointIndex = points.size() - 1;
+    const float totalTurn = PrefixRangeSum(angleTurnPrefix, 0, lastPointIndex);
+    const float totalCrossTurn = PrefixRangeSum(crossTurnPrefix, 0, lastPointIndex);
+    const float totalAbsTurn = PrefixRangeSum(absAngleTurnPrefix, 0, lastPointIndex);
+    if (std::abs(totalTurn) < minCandidateTurn && std::abs(totalCrossTurn) < tolerance * tolerance &&
+        totalAbsTurn <= maxLineTurn && FitLineToPoints(points, 0, lastPointIndex, tolerance))
+    {
+        AddFittedLinePrimitive(document, elementIndex, lineIndices, 0, lineIndices.size());
+        return;
+    }
 
     size_t i = 0;
     while (i + 1 < points.size())
@@ -735,8 +845,22 @@ void FitLineRunToPrimitives(Vector2DDocument& document, uint32_t elementIndex,
         size_t bestEnd = i;
         for (size_t candidateEnd = i + minArcSegmentCount; candidateEnd < points.size(); ++candidateEnd)
         {
+            const float candidateTurn = PrefixRangeSum(angleTurnPrefix, i, candidateEnd);
+            if (std::abs(candidateTurn) > maxCandidateTurn)
+                break;
+            if (std::abs(candidateTurn) < minCandidateTurn)
+                continue;
+
+            const float candidateCrossTurn = PrefixRangeSum(crossTurnPrefix, i, candidateEnd);
+            if (std::abs(candidateCrossTurn) < tolerance * tolerance)
+                continue;
+
+            const float chordLength = glm::length(points[candidateEnd] - points[i]);
+            if (chordLength < tolerance)
+                continue;
+
             Vector2DArc candidate;
-            if (!FitArcToPoints(points, i, candidateEnd, tolerance, candidate))
+            if (!FitArcToPoints(points, i, candidateEnd, tolerance, candidateCrossTurn, candidate))
                 continue;
 
             bestArc = candidate;
@@ -746,19 +870,23 @@ void FitLineRunToPrimitives(Vector2DDocument& document, uint32_t elementIndex,
         if (bestEnd > i)
         {
             bestArc.Color = document.Lines[lineIndices[i]].Color;
-            AddPrimitiveArc(document, elementIndex, bestArc);
+            const uint32_t displayArcGroup = AddPrimitiveArc(document, elementIndex, bestArc) + 1;
             for (size_t lineOffset = i; lineOffset < bestEnd; ++lineOffset)
             {
                 const uint32_t lineIndex = lineIndices[lineOffset];
                 if (lineIndex < document.Lines.size())
+                {
                     document.Lines[lineIndex].DisplayAsArc = true;
+                    document.Lines[lineIndex].DisplayArcGroup = displayArcGroup;
+                }
             }
             i = bestEnd;
         }
         else
         {
-            AddPrimitiveLine(document, elementIndex, document.Lines[lineIndices[i]]);
-            ++i;
+            const size_t fittedLineEnd = FindFittedLineEnd(points, absAngleTurnPrefix, i, tolerance, maxLineTurn);
+            AddFittedLinePrimitive(document, elementIndex, lineIndices, i, fittedLineEnd);
+            i = fittedLineEnd;
         }
     }
 }
@@ -767,7 +895,12 @@ void BuildFittedPrimitives(Vector2DDocument& document)
 {
     document.Primitives.clear();
     for (Vector2DLine& line : document.Lines)
+    {
         line.DisplayAsArc = false;
+        line.DisplayArcGroup = 0;
+        line.DisplayAsFittedLine = false;
+        line.DisplayLineGroup = 0;
+    }
     for (Vector2DSubElement& element : document.Elements)
         element.PrimitiveIndices.clear();
 
@@ -819,7 +952,12 @@ void BuildLinePrimitives(Vector2DDocument& document)
 {
     document.Primitives.clear();
     for (Vector2DLine& line : document.Lines)
+    {
         line.DisplayAsArc = false;
+        line.DisplayArcGroup = 0;
+        line.DisplayAsFittedLine = false;
+        line.DisplayLineGroup = 0;
+    }
     for (Vector2DSubElement& element : document.Elements)
         element.PrimitiveIndices.clear();
 

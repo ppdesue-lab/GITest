@@ -463,8 +463,8 @@ void Application::Run()
 
             if (m_AppMode == AppMode::Editor)
             {
-                RenderPickupPass();
-                RenderSelectedMaskPass();
+                if (!m_SelectedMaskValid && !IsViewport2DEditMode() && m_Scene.GetSelectedCount() > 0)
+                    RenderSelectedMaskPass();
                 if (m_ViewportFBO) m_ViewportFBO->Bind(false);
 #ifdef G_OPENGL
                 const GLenum editorBuffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
@@ -558,7 +558,8 @@ void Application::Run()
                     else
                         ApplyGizmoDeltaToSelection(beforeGizmo, *targetTransform);
                     m_TimelineAnimation.RecordSelectedTransformChange(m_Scene);
-                    m_SelectedOutlineValid = false;
+                    InvalidateSelectedMask();
+                    InvalidatePickupPass();
                     if (viewportCamera->isInputEnabled()) viewportCamera->setInputEnabled(false);
                 }
             }
@@ -642,7 +643,7 @@ void Application::Run()
             }
             if (m_ViewportRenderMode == ViewportRenderMode::Rendering)
             {
-                m_SelectedOutlineValid = false;
+                InvalidateSelectedMask();
                 m_PathTracer->Render(m_Scene, *viewportCamera);
                 if (m_PathTracer->GetSampleCount() <= 1)
                     m_SVGF->ResetHistory();
@@ -692,7 +693,11 @@ void Application::ProcessKeyboardInput(float deltaTime)
     int up      = (m_KeyE ? 1 : 0) - (m_KeyQ ? 1 : 0);
 
     if (forward != 0 || right != 0 || up != 0)
+    {
         GetViewportCamera()->processKeyboard(forward, right, up, deltaTime);
+        InvalidateSelectedMask();
+        InvalidatePickupPass();
+    }
 }
 
 Ref<Camera> Application::GetViewportCamera() const
@@ -848,7 +853,8 @@ Ref<Object3D> Application::LoadObject3D(const std::filesystem::path& filepath)
     m_Scene.AddObject(object, displayName, filepath.u8string());
     // Update gizmo target to the new selection
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
     return object;
 }
 
@@ -869,7 +875,8 @@ Ref<Object3D> Application::LoadTexturePlane(const std::filesystem::path& filepat
     SetViewportViewMode(ViewportViewMode::View3D);
     SetViewportRenderMode(ViewportRenderMode::Editor);
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
     return object;
 }
 
@@ -888,7 +895,8 @@ Ref<Object3D> Application::LoadGCode(const std::filesystem::path& filepath)
 
     m_Scene.AddObject(object, displayName, filepath.u8string());
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
     return object;
 }
 
@@ -918,7 +926,8 @@ Ref<Object3D> Application::LoadVector2D(const std::filesystem::path& filepath, D
     m_Scene.AddObject(object, displayName, filepath.u8string());
     SetViewportViewMode(ViewportViewMode::View2D);
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
     return object;
 }
 
@@ -1001,7 +1010,8 @@ Ref<Object3D> Application::SliceSelectedModel(float layerHeight)
     SetViewportViewMode(ViewportViewMode::View3D);
     SetViewportRenderMode(ViewportRenderMode::Editor);
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 
     INFO("Sliced {} triangles into {} layers.", triangleVertices.size() / 3, contours.size());
     return preview;
@@ -1016,7 +1026,8 @@ Ref<Object3D> Application::LoadManixVolume()
 
     m_Scene.AddObject(object, "Manix Volume", filepath.u8string());
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
     return object;
 }
 
@@ -1029,7 +1040,8 @@ Ref<Object3D> Application::LoadDefaultTerrainCDLOD()
 
     m_Scene.AddObject(object, "CDLOD Hetch Terrain", heightmapPath.u8string());
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
     return object;
 }
 
@@ -1124,7 +1136,8 @@ void Application::NewProject()
 
     m_Scene.ClearSelection();
     m_GizmoTargetTransform = nullptr;
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
     if (m_PathTracer)
         m_PathTracer->ResetAccumulation();
     if (m_SVGF)
@@ -1136,7 +1149,8 @@ void Application::ClearObject3Ds()
     m_TimelineAnimation.Clear();
     m_Scene.Clear();
     m_GizmoTargetTransform = nullptr;
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 }
 
 void Application::SetAppMode(AppMode mode)
@@ -1203,6 +1217,8 @@ void Application::SetMSAASamples(int samples)
     if (m_MSAASamples > 1 && m_FXAA)
         m_FXAA->Enabled() = false;
     CreateViewportFrameBuffers();
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 }
 
 void Application::SetViewportSize(const glm::vec2& size)
@@ -1219,6 +1235,8 @@ void Application::SetViewportSize(const glm::vec2& size)
     if (m_Camera2D)
         m_Camera2D->setAspectRatio(pixelSize.x / pixelSize.y);
     SetGizmoViewportSize((int)pixelSize.x, (int)pixelSize.y);
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 }
 
 void Application::InitializeWeightedBlendedOIT()
@@ -1475,7 +1493,7 @@ void Application::InitializeSelectedOutlineResources()
 void Application::ResizeSelectedOutlineResources(uint32_t width, uint32_t height)
 {
 #ifdef G_OPENGL
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
     if (!m_SelectedOutlineFBO)
         return;
     if (m_SelectedOutlineTexture)
@@ -1632,6 +1650,7 @@ void Application::RenderPickupPass()
         }
         m_PickupFBO->Unbind();
         glEnable(GL_BLEND);
+        m_PickupPassDirty = false;
         return;
     }
 
@@ -1650,6 +1669,7 @@ void Application::RenderPickupPass()
 
     m_PickupFBO->Unbind();
     glEnable(GL_BLEND);
+    m_PickupPassDirty = false;
 #endif
 }
 
@@ -1661,9 +1681,14 @@ void Application::RenderSelectedMaskPass()
 
     if (IsViewport2DEditMode())
     {
-        m_SelectedMaskFBO->Bind();
-        m_SelectedMaskFBO->ClearAttachment(0, 0);
-        m_SelectedMaskFBO->Unbind();
+        m_SelectedMaskValid = false;
+        return;
+    }
+
+    if (m_Scene.GetSelectedCount() == 0)
+    {
+        m_SelectedMaskValid = false;
+        m_SelectedOutlineValid = false;
         return;
     }
 
@@ -1675,13 +1700,6 @@ void Application::RenderSelectedMaskPass()
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);
-
-    if (m_Scene.GetSelectedCount() == 0)
-    {
-        m_SelectedMaskFBO->Unbind();
-        glEnable(GL_BLEND);
-        return;
-    }
 
     Ref<Camera> viewportCamera = GetViewportCamera();
     const glm::mat4 view = viewportCamera->GetViewMatrix();
@@ -1707,20 +1725,32 @@ void Application::RenderSelectedMaskPass()
     m_SelectedMaskFBO->Unbind();
     glDepthMask(GL_TRUE);
     glEnable(GL_BLEND);
+    m_SelectedMaskValid = true;
 #endif
 }
 
 uint64_t Application::CompositeSelectedOutline(uint64_t sceneColorTexture)
 {
 #ifdef G_OPENGL
-    m_SelectedOutlineValid = false;
     if (IsViewport2DEditMode())
+    {
+        m_SelectedOutlineValid = false;
         return sceneColorTexture;
+    }
     if (!sceneColorTexture || !m_SelectedMaskFBO || !m_SelectedEdgeShader ||
         !m_SelectedOutlineFBO || !m_SelectedOutlineTexture)
+    {
+        m_SelectedOutlineValid = false;
         return sceneColorTexture;
+    }
 
     if (m_Scene.GetSelectedCount() == 0)
+    {
+        m_SelectedOutlineValid = false;
+        return sceneColorTexture;
+    }
+
+    if (!m_SelectedMaskValid)
         return sceneColorTexture;
 
     glDisable(GL_DEPTH_TEST);
@@ -1761,6 +1791,9 @@ int Application::ReadPickupPixel(int x, int y)
     if (x < 0 || y < 0 || x >= (int)spec.Width || y >= (int)spec.Height)
         return 0;
 
+    if (m_PickupPassDirty)
+        RenderPickupPass();
+
     m_PickupFBO->Bind(false);
     const int id = m_PickupFBO->ReadPixel(0, x, y);
     m_PickupFBO->Unbind();
@@ -1781,7 +1814,8 @@ void Application::SetSelectedObjectIndex(int index)
         if (IsViewport2D())
             UpdateViewport2DObjectGizmoTarget(true);
     }
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 }
 
 void Application::AddSelectedObjectIndex(int index)
@@ -1798,7 +1832,8 @@ void Application::AddSelectedObjectIndex(int index)
         if (IsViewport2D())
             UpdateViewport2DObjectGizmoTarget(true);
     }
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 }
 
 void Application::ApplyGizmoDeltaToSelection(const Transform& before, const Transform& after)
@@ -1999,7 +2034,8 @@ void Application::SetViewportViewMode(ViewportViewMode mode)
     }
     else
         SetViewport2DEditMode(false);
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 }
 
 void Application::SetViewport2DEditMode(bool enabled)
@@ -2021,7 +2057,8 @@ void Application::SetViewport2DEditMode(bool enabled)
         m_GizmoTargetTransform = object2D ? object2D->GetSubElementTransform(object2D->GetSelectedSubElementIndex()) : nullptr;
         Update2DSubElementGizmoTarget(true);
     }
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 }
 
 void Application::ToggleViewport2DEditMode()
@@ -2038,7 +2075,8 @@ bool Application::SetSelected2DSubElementIndex(int index)
 
     object2D->SetSelectedSubElementIndex(index);
     Update2DSubElementGizmoTarget(true);
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
     return true;
 }
 
@@ -2051,7 +2089,8 @@ bool Application::SetSelected2DSubElementIndices(const std::vector<int>& indices
 
     object2D->SetSelectedSubElementIndices(indices);
     Update2DSubElementGizmoTarget(true);
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
     return true;
 }
 
@@ -2065,7 +2104,8 @@ void Application::ClearSelected2DSubElement()
     }
     if (m_Viewport2DEditMode)
         m_GizmoTargetTransform = nullptr;
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 }
 
 void Application::PanViewport2D(const glm::vec2& deltaPixels)
@@ -2075,7 +2115,8 @@ void Application::PanViewport2D(const glm::vec2& deltaPixels)
         return;
 
     camera2D->PanPixels(deltaPixels, m_ViewportSize);
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 }
 
 void Application::ZoomViewport2D(float wheelDelta)
@@ -2088,7 +2129,8 @@ void Application::ZoomViewport2D(float wheelDelta)
     const int steps = (int)std::abs(wheelDelta);
     for (int i = 0; i < std::max(1, steps); ++i)
         camera2D->Zoom(factor);
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 }
 
 void Application::ResetViewport2D()
@@ -2098,7 +2140,8 @@ void Application::ResetViewport2D()
         return;
 
     camera2D->ResetView();
-    m_SelectedOutlineValid = false;
+    InvalidateSelectedMask();
+    InvalidatePickupPass();
 }
 
 void Application::DrawViewport2DGrid(const glm::mat4&, const glm::mat4&)

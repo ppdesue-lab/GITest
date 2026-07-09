@@ -13,6 +13,9 @@ struct Vector2DLine
     glm::vec4 Color = glm::vec4(0.92f, 0.95f, 1.0f, 1.0f);
     uint32_t ElementIndex = 0;
     bool DisplayAsArc = false;
+    uint32_t DisplayArcGroup = 0;
+    bool DisplayAsFittedLine = false;
+    uint32_t DisplayLineGroup = 0;
 };
 
 struct Vector2DArc

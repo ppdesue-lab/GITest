@@ -14,16 +14,24 @@ public:
         std::string Name;
         Transform Transfm;
         std::vector<uint32_t> LineIndices;
+        std::vector<uint32_t> PrimitiveIndices;
         GeometryHandle Geometry;
+        GeometryHandle PointGeometry;
         GeometryHandle SelectionGeometry;
         uint32_t VertexCount = 0;
+        uint32_t PointVertexCount = 0;
         uint32_t SelectionVertexCount = 0;
         glm::vec2 Center = glm::vec2(0.0f);
+        glm::vec2 LocalMinimum = glm::vec2(0.0f);
+        glm::vec2 LocalMaximum = glm::vec2(0.0f);
+        bool HasBounds = false;
         bool Visible = true;
     };
 
     Object2D() = default;
     ~Object2D() override;
+
+    bool bPointVisible = false;
 
     bool LoadFromDocument(const Vector2DDocument& document);
     void Draw(const glm::mat4& view, const glm::mat4 proj, bool transparentPass = false) override;
@@ -59,13 +67,23 @@ private:
     void UpdateBoundsFromVertices(const std::vector<VertexColor>& vertices);
     void EnsurePatternShader();
     void ReleaseElementGeometries();
+    void ReleaseBatchedGeometries();
+    void EnsureBatchedGeometries();
     void BuildElementGeometry(Object2DElement& element);
     void RebuildSelectedSubElementGeometry();
     Ref<VertexArray> BuildVertexArray(const std::vector<VertexColor>& vertices) const;
 
     std::string m_SourceName;
     std::vector<Vector2DLine> m_Lines;
+    std::vector<Vector2DPrimitive> m_Primitives;
     std::vector<Object2DElement> m_SubElements;
+    GeometryHandle m_BatchedGeometry;
+    GeometryHandle m_BatchedPointGeometry;
+    uint32_t m_BatchedVertexCount = 0;
+    uint32_t m_BatchedPointVertexCount = 0;
+    std::vector<glm::mat4> m_BatchedElementMatrices;
+    std::vector<uint8_t> m_BatchedElementVisible;
+    bool m_BatchedGeometryDirty = true;
     GeometryHandle m_SelectedSubElementGeometry;
     uint32_t m_SelectedSubElementVertexCount = 0;
     int m_SelectedSubElementIndex = -1;

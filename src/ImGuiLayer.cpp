@@ -174,6 +174,8 @@ namespace
         camera->setInputEnabled(false);
         camera->setPosition(target + direction * distance);
         camera->lookAt(target);
+        app.InvalidateSelectedMask();
+        app.InvalidatePickupPass();
     }
 
     ImVec2 ToImVec2(const glm::vec2& value)
@@ -2448,7 +2450,13 @@ bool ImGuiLayer::OnMouseMove(MouseMovedEvent& e)
         m_LeftDownGizmo = false;
     const glm::vec2 previousMousePos = m_MousePos;
     m_MousePos = { e.GetX(),e.GetY() };
+    const bool cameraInputEnabled = viewportCamera->isInputEnabled();
     viewportCamera->processMouseMovement(e.GetX(), e.GetY());
+    if (cameraInputEnabled)
+    {
+        app.InvalidateSelectedMask();
+        app.InvalidatePickupPass();
+    }
 
     // Update viewport-relative mouse position for gizmo tracking
     const glm::vec2& origin = app.GetViewportOrigin();

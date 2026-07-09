@@ -14,9 +14,11 @@ public:
     //drawing
     virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount=0) override;
     virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount) override;
+    virtual void DrawPoints(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) override;
 
 
     virtual void SetLineWidth(float width) override;
+    virtual void SetPointSize(float size) override;
 
     virtual void Enable(const std::string& capability) override;
     virtual void Disable(const std::string& capability) override;

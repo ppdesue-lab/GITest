@@ -55,12 +55,26 @@ void OpenGLRenderer::DrawLines(const Ref<VertexArray>& vertexArray, uint32_t ind
 	if (!vertexArray->GetIndexBuffer())
 		glDrawArrays(GL_LINES, 0, indexCount);
 	else
-		glDrawElements(GL_LINES, indexCount,GL_UNSIGNED_INT,nullptr);
+	    glDrawElements(GL_LINES, indexCount,GL_UNSIGNED_INT,nullptr);
+}
+
+void OpenGLRenderer::DrawPoints(const Ref<VertexArray>& vertexArray, uint32_t vertexCount)
+{
+	vertexArray->Bind();
+	if (!vertexArray->GetIndexBuffer())
+		glDrawArrays(GL_POINTS, 0, vertexCount);
+	else
+		glDrawElements(GL_POINTS, vertexCount, GL_UNSIGNED_INT, nullptr);
 }
 
 void OpenGLRenderer::SetLineWidth(float width)
 {
 	glLineWidth(width);
+}
+
+void OpenGLRenderer::SetPointSize(float size)
+{
+	glPointSize(size);
 }
 
 void OpenGLRenderer::Enable(const std::string& capability)

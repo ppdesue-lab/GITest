@@ -72,9 +72,24 @@ void DX11Renderer::DrawLines(const Ref<VertexArray>& vertexArray, uint32_t index
 		DX11Context::GetDeviceContext()->Draw(indexCount, 0);
 }
 
+void DX11Renderer::DrawPoints(const Ref<VertexArray>& vertexArray, uint32_t vertexCount)
+{
+	vertexArray->Bind();
+	DX11Context::GetDeviceContext()->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+	if (vertexArray->GetIndexBuffer())
+		DX11Context::GetDeviceContext()->DrawIndexed(vertexCount, 0, 0);
+	else
+		DX11Context::GetDeviceContext()->Draw(vertexCount, 0);
+}
+
 void DX11Renderer::SetLineWidth(float width)
 {
 	(void)width;
+}
+
+void DX11Renderer::SetPointSize(float size)
+{
+	(void)size;
 }
 
 void DX11Renderer::ApplyRasterizerState()

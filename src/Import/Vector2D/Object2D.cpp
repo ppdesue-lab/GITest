@@ -61,11 +61,116 @@ glm::vec4 DisplayColorForFile(const Vector2DDocument& document)
 
     return glm::vec4(rgb + glm::vec3(m), 1.0f);
 }
+
+size_t ArcSegmentCount(const Vector2DArc& arc)
+{
+    constexpr float kMaxArcStepRadians = 0.174532925f; // 10 degrees
+    constexpr size_t kMinArcSegments = 2;
+    constexpr size_t kMaxArcSegments = 96;
+    if (arc.Radius <= 0.0f || std::abs(arc.SweepAngle) <= 0.000001f)
+        return kMinArcSegments;
+
+    const size_t count = (size_t)std::ceil(std::abs(arc.SweepAngle) / kMaxArcStepRadians);
+    return std::max(kMinArcSegments, std::min(kMaxArcSegments, count));
+}
+
+glm::vec2 ArcPointAt(const Vector2DArc& arc, size_t index, size_t segmentCount)
+{
+    if (index == 0)
+        return arc.Start;
+    if (index >= segmentCount)
+        return arc.End;
+
+    const float t = (float)index / (float)segmentCount;
+    const float angle = arc.StartAngle + arc.SweepAngle * t;
+    return arc.Center + glm::vec2(std::cos(angle), std::sin(angle)) * arc.Radius;
+}
+
+void AppendPrimitiveLineVertices(const Vector2DPrimitive& primitive, std::vector<VertexColor>& vertices)
+{
+    if (primitive.Type == Vector2DPrimitiveType::Line)
+    {
+        vertices.emplace_back(glm::vec3(primitive.Line.Start, 0.0f), primitive.Line.Color);
+        vertices.emplace_back(glm::vec3(primitive.Line.End, 0.0f), primitive.Line.Color);
+        return;
+    }
+
+    const Vector2DArc& arc = primitive.Arc;
+    const size_t segmentCount = ArcSegmentCount(arc);
+    glm::vec2 previous = ArcPointAt(arc, 0, segmentCount);
+    for (size_t i = 1; i <= segmentCount; ++i)
+    {
+        const glm::vec2 current = ArcPointAt(arc, i, segmentCount);
+        vertices.emplace_back(glm::vec3(previous, 0.0f), arc.Color);
+        vertices.emplace_back(glm::vec3(current, 0.0f), arc.Color);
+        previous = current;
+    }
+}
+
+void AppendPrimitivePointVertices(const Vector2DPrimitive& primitive, std::vector<VertexColor>& vertices)
+{
+    if (primitive.Type == Vector2DPrimitiveType::Line)
+    {
+        vertices.emplace_back(glm::vec3(primitive.Line.Start, 0.0f), primitive.Line.Color);
+        vertices.emplace_back(glm::vec3(primitive.Line.End, 0.0f), primitive.Line.Color);
+        return;
+    }
+
+    vertices.emplace_back(glm::vec3(primitive.Arc.Start, 0.0f), primitive.Arc.Color);
+    vertices.emplace_back(glm::vec3(primitive.Arc.End, 0.0f), primitive.Arc.Color);
+}
+
+bool AppendElementPrimitiveLineVertices(const Object2D::Object2DElement& element,
+    const std::vector<Vector2DPrimitive>& primitives,
+    std::vector<VertexColor>& vertices)
+{
+    bool hasVertex = false;
+    for (uint32_t primitiveIndex : element.PrimitiveIndices)
+    {
+        if (primitiveIndex >= primitives.size())
+            continue;
+
+        AppendPrimitiveLineVertices(primitives[(size_t)primitiveIndex], vertices);
+        hasVertex = true;
+    }
+    return hasVertex;
+}
+
+bool AppendElementPrimitivePointVertices(const Object2D::Object2DElement& element,
+    const std::vector<Vector2DPrimitive>& primitives,
+    std::vector<VertexColor>& vertices)
+{
+    bool hasVertex = false;
+    for (uint32_t primitiveIndex : element.PrimitiveIndices)
+    {
+        if (primitiveIndex >= primitives.size())
+            continue;
+
+        AppendPrimitivePointVertices(primitives[(size_t)primitiveIndex], vertices);
+        hasVertex = true;
+    }
+    return hasVertex;
+}
+
+bool Mat4NearlyEqual(const glm::mat4& a, const glm::mat4& b)
+{
+    constexpr float kEpsilon = 0.000001f;
+    for (int column = 0; column < 4; ++column)
+    {
+        for (int row = 0; row < 4; ++row)
+        {
+            if (std::abs(a[column][row] - b[column][row]) > kEpsilon)
+                return false;
+        }
+    }
+    return true;
+}
 }
 
 Object2D::~Object2D()
 {
     ReleaseElementGeometries();
+    ReleaseBatchedGeometries();
     GeometryLibrary::Release(m_SelectedSubElementGeometry);
 }
 
@@ -73,18 +178,25 @@ bool Object2D::LoadFromDocument(const Vector2DDocument& document)
 {
     m_SourceName = document.SourceName;
     m_Lines = document.Lines;
+    m_Primitives = document.Primitives;
     ReleaseElementGeometries();
+    ReleaseBatchedGeometries();
     m_SubElements.clear();
 
     if (document.Elements.empty())
     {
-        m_SubElements.reserve(m_Lines.size());
-        for (uint32_t i = 0; i < (uint32_t)m_Lines.size(); ++i)
+        const uint32_t elementCount = (uint32_t)std::max(m_Lines.size(), m_Primitives.size());
+        m_SubElements.reserve(elementCount);
+        for (uint32_t i = 0; i < elementCount; ++i)
         {
-            m_Lines[i].ElementIndex = i;
+            if (i < m_Lines.size())
+                m_Lines[i].ElementIndex = i;
             Object2DElement element;
-            element.Name = "Line";
-            element.LineIndices.push_back(i);
+            element.Name = i < m_Lines.size() ? "Line" : "Primitive";
+            if (i < m_Lines.size())
+                element.LineIndices.push_back(i);
+            if (i < m_Primitives.size())
+                element.PrimitiveIndices.push_back(i);
             m_SubElements.push_back(std::move(element));
         }
     }
@@ -96,6 +208,7 @@ bool Object2D::LoadFromDocument(const Vector2DDocument& document)
             Object2DElement element;
             element.Name = sourceElement.Name;
             element.LineIndices = sourceElement.LineIndices;
+            element.PrimitiveIndices = sourceElement.PrimitiveIndices;
             m_SubElements.push_back(std::move(element));
         }
     }
@@ -113,13 +226,56 @@ bool Object2D::LoadFromDocument(const Vector2DDocument& document)
         }
     }
 
-    std::vector<VertexColor> vertices;
-    vertices.reserve(m_Lines.size() * 2);
-    for (const Vector2DLine& line : m_Lines)
+    if (m_Primitives.empty())
     {
-        vertices.emplace_back(glm::vec3(line.Start, 0.0f), line.Color);
-        vertices.emplace_back(glm::vec3(line.End, 0.0f), line.Color);
+        m_Primitives.reserve(m_Lines.size());
+        for (const Vector2DLine& line : m_Lines)
+        {
+            Vector2DPrimitive primitive;
+            primitive.Type = Vector2DPrimitiveType::Line;
+            primitive.Line = line;
+            m_Primitives.push_back(primitive);
+        }
     }
+
+    for (Object2DElement& element : m_SubElements)
+    {
+        if (!element.PrimitiveIndices.empty() || m_Primitives.size() != m_Lines.size())
+            continue;
+
+        element.PrimitiveIndices.reserve(element.LineIndices.size());
+        for (uint32_t lineIndex : element.LineIndices)
+        {
+            if (lineIndex < m_Primitives.size())
+                element.PrimitiveIndices.push_back(lineIndex);
+        }
+    }
+
+    for (uint32_t elementIndex = 0; elementIndex < (uint32_t)m_SubElements.size(); ++elementIndex)
+    {
+        for (uint32_t primitiveIndex : m_SubElements[(size_t)elementIndex].PrimitiveIndices)
+        {
+            if (primitiveIndex >= m_Primitives.size())
+                continue;
+
+            Vector2DPrimitive& primitive = m_Primitives[(size_t)primitiveIndex];
+            if (primitive.Type == Vector2DPrimitiveType::Arc)
+            {
+                primitive.Arc.ElementIndex = elementIndex;
+                primitive.Arc.Color = arcDisplayColor;
+            }
+            else
+            {
+                primitive.Line.ElementIndex = elementIndex;
+                primitive.Line.Color = displayColor;
+            }
+        }
+    }
+
+    std::vector<VertexColor> vertices;
+    vertices.reserve(m_Primitives.size() * 2);
+    for (const Vector2DPrimitive& primitive : m_Primitives)
+        AppendPrimitiveLineVertices(primitive, vertices);
 
     if (vertices.empty())
         return false;
@@ -129,6 +285,7 @@ bool Object2D::LoadFromDocument(const Vector2DDocument& document)
 
     m_LineShader = Application::Get().GetShaderLibrary()->Get("DefaultColor");
     ClearSelectedSubElement();
+    m_BatchedGeometryDirty = true;
     UpdateBoundsFromVertices(vertices);
     return true;
 }
@@ -145,17 +302,24 @@ void Object2D::Draw(const glm::mat4& view, const glm::mat4 proj, bool transparen
     RenderCommand::EnableDepthTest(true);
     RenderCommand::SetLineWidth(1.0f);
     const glm::mat4 objectTransform = Transfm.GetMatrix();
-    for (const Object2DElement& element : m_SubElements)
+    EnsureBatchedGeometries();
+    Ref<VertexArray> batchedVertexArray = GeometryLibrary::Resolve(m_BatchedGeometry);
+    if (batchedVertexArray && m_BatchedVertexCount > 0)
     {
-        if (!element.Visible)
-            continue;
+        m_LineShader->SetMat4("u_Model", objectTransform);
+        RenderCommand::DrawLines(batchedVertexArray, m_BatchedVertexCount);
+    }
 
-        Ref<VertexArray> vertexArray = GeometryLibrary::Resolve(element.Geometry);
-        if (!vertexArray || element.VertexCount == 0)
-            continue;
-
-        m_LineShader->SetMat4("u_Model", objectTransform * element.Transfm.GetMatrix());
-        RenderCommand::DrawLines(vertexArray, element.VertexCount);
+    if (bPointVisible)
+    {
+        RenderCommand::SetPointSize(5.0f);
+        Ref<VertexArray> batchedPointVertexArray = GeometryLibrary::Resolve(m_BatchedPointGeometry);
+        if (batchedPointVertexArray && m_BatchedPointVertexCount > 0)
+        {
+            m_LineShader->SetMat4("u_Model", objectTransform);
+            RenderCommand::DrawPoints(batchedPointVertexArray, m_BatchedPointVertexCount);
+        }
+        RenderCommand::SetPointSize(1.0f);
     }
 
     if (Application::Get().IsViewport2DEditMode() && !m_SelectedSubElementIndices.empty())
@@ -206,17 +370,12 @@ void Object2D::DrawPickup(const glm::mat4& view, const glm::mat4& proj,
     shader->SetFloat("u_XZInputY", 0.0f);
     RenderCommand::SetLineWidth(7.0f);
     const glm::mat4 objectTransform = Transfm.GetMatrix();
-    for (const Object2DElement& element : m_SubElements)
+    EnsureBatchedGeometries();
+    Ref<VertexArray> batchedVertexArray = GeometryLibrary::Resolve(m_BatchedGeometry);
+    if (batchedVertexArray && m_BatchedVertexCount > 0)
     {
-        if (!element.Visible)
-            continue;
-
-        Ref<VertexArray> vertexArray = GeometryLibrary::Resolve(element.Geometry);
-        if (!vertexArray || element.VertexCount == 0)
-            continue;
-
-        shader->SetMat4("u_Model", objectTransform * element.Transfm.GetMatrix());
-        RenderCommand::DrawLines(vertexArray, element.VertexCount);
+        shader->SetMat4("u_Model", objectTransform);
+        RenderCommand::DrawLines(batchedVertexArray, m_BatchedVertexCount);
     }
 }
 
@@ -230,17 +389,12 @@ void Object2D::DrawSelectedMask(const glm::mat4& view, const glm::mat4& proj,
     shader->SetFloat("u_XZInputY", 0.0f);
     RenderCommand::SetLineWidth(1.0f);
     const glm::mat4 objectTransform = Transfm.GetMatrix();
-    for (const Object2DElement& element : m_SubElements)
+    EnsureBatchedGeometries();
+    Ref<VertexArray> batchedVertexArray = GeometryLibrary::Resolve(m_BatchedGeometry);
+    if (batchedVertexArray && m_BatchedVertexCount > 0)
     {
-        if (!element.Visible)
-            continue;
-
-        Ref<VertexArray> vertexArray = GeometryLibrary::Resolve(element.Geometry);
-        if (!vertexArray || element.VertexCount == 0)
-            continue;
-
-        shader->SetMat4("u_Model", objectTransform * element.Transfm.GetMatrix());
-        RenderCommand::DrawLines(vertexArray, element.VertexCount);
+        shader->SetMat4("u_Model", objectTransform);
+        RenderCommand::DrawLines(batchedVertexArray, m_BatchedVertexCount);
     }
 }
 
@@ -314,18 +468,22 @@ bool Object2D::GetObjectBounds(glm::vec3& minimum, glm::vec3& maximum) const
             continue;
 
         const glm::mat4 transform = objectTransform * element.Transfm.GetMatrix();
-        for (uint32_t lineIndex : element.LineIndices)
-        {
-            if (lineIndex >= m_Lines.size())
-                continue;
+        if (!element.HasBounds)
+            continue;
 
-            const Vector2DLine& line = m_Lines[(size_t)lineIndex];
-            const glm::vec3 start = glm::vec3(transform * glm::vec4(glm::vec3(line.Start - element.Center, 0.0f), 1.0f));
-            const glm::vec3 end = glm::vec3(transform * glm::vec4(glm::vec3(line.End - element.Center, 0.0f), 1.0f));
-            minimum = glm::min(minimum, glm::min(start, end));
-            maximum = glm::max(maximum, glm::max(start, end));
-            hasPoint = true;
+        const glm::vec3 corners[] = {
+            glm::vec3(element.LocalMinimum.x, element.LocalMinimum.y, 0.0f),
+            glm::vec3(element.LocalMaximum.x, element.LocalMinimum.y, 0.0f),
+            glm::vec3(element.LocalMaximum.x, element.LocalMaximum.y, 0.0f),
+            glm::vec3(element.LocalMinimum.x, element.LocalMaximum.y, 0.0f)
+        };
+        for (const glm::vec3& corner : corners)
+        {
+            const glm::vec3 point = glm::vec3(transform * glm::vec4(corner, 1.0f));
+            minimum = glm::min(minimum, point);
+            maximum = glm::max(maximum, point);
         }
+        hasPoint = true;
     }
 
     return hasPoint;
@@ -347,19 +505,23 @@ bool Object2D::GetSelectedSubElementBounds(glm::vec3& minimum, glm::vec3& maximu
         if (!element.Visible)
             continue;
 
-        const glm::mat4 elementTransform = objectTransform * element.Transfm.GetMatrix();
-        for (uint32_t lineIndex : element.LineIndices)
-        {
-            if (lineIndex >= m_Lines.size())
-                continue;
+        if (!element.HasBounds)
+            continue;
 
-            const Vector2DLine& line = m_Lines[(size_t)lineIndex];
-            const glm::vec3 start = glm::vec3(elementTransform * glm::vec4(glm::vec3(line.Start - element.Center, 0.0f), 1.0f));
-            const glm::vec3 end = glm::vec3(elementTransform * glm::vec4(glm::vec3(line.End - element.Center, 0.0f), 1.0f));
-            minimum = glm::min(minimum, glm::min(start, end));
-            maximum = glm::max(maximum, glm::max(start, end));
-            hasPoint = true;
+        const glm::mat4 elementTransform = objectTransform * element.Transfm.GetMatrix();
+        const glm::vec3 corners[] = {
+            glm::vec3(element.LocalMinimum.x, element.LocalMinimum.y, 0.0f),
+            glm::vec3(element.LocalMaximum.x, element.LocalMinimum.y, 0.0f),
+            glm::vec3(element.LocalMaximum.x, element.LocalMaximum.y, 0.0f),
+            glm::vec3(element.LocalMinimum.x, element.LocalMaximum.y, 0.0f)
+        };
+        for (const glm::vec3& corner : corners)
+        {
+            const glm::vec3 point = glm::vec3(elementTransform * glm::vec4(corner, 1.0f));
+            minimum = glm::min(minimum, point);
+            maximum = glm::max(maximum, point);
         }
+        hasPoint = true;
     }
 
     return hasPoint;
@@ -445,54 +607,223 @@ void Object2D::ReleaseElementGeometries()
     for (Object2DElement& element : m_SubElements)
     {
         GeometryLibrary::Release(element.Geometry);
+        GeometryLibrary::Release(element.PointGeometry);
         GeometryLibrary::Release(element.SelectionGeometry);
         element.Geometry = {};
+        element.PointGeometry = {};
         element.SelectionGeometry = {};
         element.VertexCount = 0;
+        element.PointVertexCount = 0;
         element.SelectionVertexCount = 0;
     }
+}
+
+void Object2D::ReleaseBatchedGeometries()
+{
+    GeometryLibrary::Release(m_BatchedGeometry);
+    GeometryLibrary::Release(m_BatchedPointGeometry);
+    m_BatchedGeometry = {};
+    m_BatchedPointGeometry = {};
+    m_BatchedVertexCount = 0;
+    m_BatchedPointVertexCount = 0;
+    m_BatchedElementMatrices.clear();
+    m_BatchedElementVisible.clear();
+    m_BatchedGeometryDirty = true;
+}
+
+void Object2D::EnsureBatchedGeometries()
+{
+    bool needsRebuild = m_BatchedGeometryDirty ||
+        m_BatchedElementMatrices.size() != m_SubElements.size() ||
+        m_BatchedElementVisible.size() != m_SubElements.size();
+
+    if (!needsRebuild)
+    {
+        for (size_t i = 0; i < m_SubElements.size(); ++i)
+        {
+            const Object2DElement& element = m_SubElements[i];
+            if ((m_BatchedElementVisible[i] != 0) != element.Visible ||
+                !Mat4NearlyEqual(m_BatchedElementMatrices[i], element.Transfm.GetMatrix()))
+            {
+                needsRebuild = true;
+                break;
+            }
+        }
+    }
+
+    if (!needsRebuild)
+        return;
+
+    GeometryLibrary::Release(m_BatchedGeometry);
+    GeometryLibrary::Release(m_BatchedPointGeometry);
+    m_BatchedGeometry = {};
+    m_BatchedPointGeometry = {};
+    m_BatchedVertexCount = 0;
+    m_BatchedPointVertexCount = 0;
+    m_BatchedElementMatrices.clear();
+    m_BatchedElementVisible.clear();
+    m_BatchedElementMatrices.reserve(m_SubElements.size());
+    m_BatchedElementVisible.reserve(m_SubElements.size());
+
+    size_t lineVertexReserve = 0;
+    size_t pointVertexReserve = 0;
+    for (const Object2DElement& element : m_SubElements)
+    {
+        m_BatchedElementMatrices.push_back(element.Transfm.GetMatrix());
+        m_BatchedElementVisible.push_back(element.Visible ? 1 : 0);
+        if (!element.Visible)
+            continue;
+
+        lineVertexReserve += element.VertexCount;
+        pointVertexReserve += element.PointVertexCount;
+    }
+
+    std::vector<VertexColor> lineVertices;
+    lineVertices.reserve(lineVertexReserve);
+    std::vector<VertexColor> pointVertices;
+    pointVertices.reserve(pointVertexReserve);
+
+    for (const Object2DElement& element : m_SubElements)
+    {
+        if (!element.Visible || element.VertexCount == 0)
+            continue;
+
+        std::vector<VertexColor> rawVertices;
+        rawVertices.reserve(std::max(element.PrimitiveIndices.size(), element.LineIndices.size()) * 2);
+        if (element.PrimitiveIndices.empty() || !AppendElementPrimitiveLineVertices(element, m_Primitives, rawVertices))
+        {
+            for (uint32_t lineIndex : element.LineIndices)
+            {
+                if (lineIndex >= m_Lines.size())
+                    continue;
+                const Vector2DLine& line = m_Lines[lineIndex];
+                rawVertices.emplace_back(glm::vec3(line.Start, 0.0f), line.Color);
+                rawVertices.emplace_back(glm::vec3(line.End, 0.0f), line.Color);
+            }
+        }
+
+        const glm::mat4 elementTransform = element.Transfm.GetMatrix();
+        for (const VertexColor& vertex : rawVertices)
+        {
+            const glm::vec2 point(vertex.Position.x, vertex.Position.y);
+            const glm::vec3 localPoint(point - element.Center, 0.0f);
+            lineVertices.emplace_back(glm::vec3(elementTransform * glm::vec4(localPoint, 1.0f)), vertex.Color);
+        }
+
+        if (element.PointVertexCount == 0)
+            continue;
+
+        std::vector<VertexColor> rawPointVertices;
+        rawPointVertices.reserve(std::max(element.PrimitiveIndices.size(), element.LineIndices.size()) * 2);
+        if (element.PrimitiveIndices.empty() || !AppendElementPrimitivePointVertices(element, m_Primitives, rawPointVertices))
+        {
+            for (uint32_t lineIndex : element.LineIndices)
+            {
+                if (lineIndex >= m_Lines.size())
+                    continue;
+                const Vector2DLine& line = m_Lines[lineIndex];
+                rawPointVertices.emplace_back(glm::vec3(line.Start, 0.0f), line.Color);
+                rawPointVertices.emplace_back(glm::vec3(line.End, 0.0f), line.Color);
+            }
+        }
+
+        for (const VertexColor& vertex : rawPointVertices)
+        {
+            const glm::vec2 point(vertex.Position.x, vertex.Position.y);
+            const glm::vec3 localPoint(point - element.Center, 0.0f);
+            pointVertices.emplace_back(glm::vec3(elementTransform * glm::vec4(localPoint, 1.0f)), vertex.Color);
+        }
+    }
+
+    if (!lineVertices.empty())
+    {
+        m_BatchedGeometry = GeometryLibrary::Register(BuildVertexArray(lineVertices));
+        m_BatchedVertexCount = (uint32_t)lineVertices.size();
+    }
+
+    if (!pointVertices.empty())
+    {
+        m_BatchedPointGeometry = GeometryLibrary::Register(BuildVertexArray(pointVertices));
+        m_BatchedPointVertexCount = (uint32_t)pointVertices.size();
+    }
+
+    m_BatchedGeometryDirty = false;
 }
 
 void Object2D::BuildElementGeometry(Object2DElement& element)
 {
     GeometryLibrary::Release(element.Geometry);
+    GeometryLibrary::Release(element.PointGeometry);
+    GeometryLibrary::Release(element.SelectionGeometry);
     element.Geometry = {};
+    element.PointGeometry = {};
+    element.SelectionGeometry = {};
     element.VertexCount = 0;
+    element.PointVertexCount = 0;
+    element.SelectionVertexCount = 0;
     element.Center = glm::vec2(0.0f);
+    element.LocalMinimum = glm::vec2(0.0f);
+    element.LocalMaximum = glm::vec2(0.0f);
+    element.HasBounds = false;
+
+    std::vector<VertexColor> rawVertices;
+    rawVertices.reserve(std::max(element.PrimitiveIndices.size(), element.LineIndices.size()) * 2);
+    std::vector<VertexColor> rawPointVertices;
+    rawPointVertices.reserve(std::max(element.PrimitiveIndices.size(), element.LineIndices.size()) * 2);
+
+    if (!element.PrimitiveIndices.empty() && AppendElementPrimitiveLineVertices(element, m_Primitives, rawVertices))
+    {
+        AppendElementPrimitivePointVertices(element, m_Primitives, rawPointVertices);
+    }
+    else
+    {
+        for (uint32_t lineIndex : element.LineIndices)
+        {
+            if (lineIndex >= m_Lines.size())
+                continue;
+
+            const Vector2DLine& line = m_Lines[lineIndex];
+            rawVertices.emplace_back(glm::vec3(line.Start, 0.0f), line.Color);
+            rawVertices.emplace_back(glm::vec3(line.End, 0.0f), line.Color);
+            rawPointVertices.emplace_back(glm::vec3(line.Start, 0.0f), line.Color);
+            rawPointVertices.emplace_back(glm::vec3(line.End, 0.0f), line.Color);
+        }
+    }
+
+    if (rawVertices.empty())
+        return;
 
     glm::vec2 minimum(std::numeric_limits<float>::max());
     glm::vec2 maximum(std::numeric_limits<float>::lowest());
-    bool hasPoint = false;
-    for (uint32_t lineIndex : element.LineIndices)
+    for (const VertexColor& vertex : rawVertices)
     {
-        if (lineIndex >= m_Lines.size())
-            continue;
-        const Vector2DLine& line = m_Lines[lineIndex];
-        minimum = glm::min(minimum, glm::min(line.Start, line.End));
-        maximum = glm::max(maximum, glm::max(line.Start, line.End));
-        hasPoint = true;
+        const glm::vec2 point(vertex.Position.x, vertex.Position.y);
+        minimum = glm::min(minimum, point);
+        maximum = glm::max(maximum, point);
     }
-    if (!hasPoint)
-        return;
 
     element.Center = (minimum + maximum) * 0.5f;
     element.Transfm.translation = glm::vec3(element.Center, 0.0f);
+    element.LocalMinimum = minimum - element.Center;
+    element.LocalMaximum = maximum - element.Center;
+    element.HasBounds = true;
 
     std::vector<VertexColor> vertices;
-    vertices.reserve(element.LineIndices.size() * 2);
+    vertices.reserve(rawVertices.size());
     std::vector<PatternVertex> selectionVertices;
-    selectionVertices.reserve(element.LineIndices.size() * 2);
+    selectionVertices.reserve(rawVertices.size());
     float distance = 0.0f;
-    for (uint32_t lineIndex : element.LineIndices)
+    for (size_t i = 0; i + 1 < rawVertices.size(); i += 2)
     {
-        if (lineIndex >= m_Lines.size())
-            continue;
-        const Vector2DLine& line = m_Lines[lineIndex];
-        vertices.emplace_back(glm::vec3(line.Start - element.Center, 0.0f), line.Color);
-        vertices.emplace_back(glm::vec3(line.End - element.Center, 0.0f), line.Color);
-        const float length = glm::length(line.End - line.Start);
-        selectionVertices.push_back({ glm::vec3(line.Start - element.Center, 0.0f), glm::vec4(1.0f, 0.85f, 0.05f, 1.0f), distance });
-        selectionVertices.push_back({ glm::vec3(line.End - element.Center, 0.0f), glm::vec4(1.0f, 0.85f, 0.05f, 1.0f), distance + length });
+        const glm::vec2 start(rawVertices[i].Position.x, rawVertices[i].Position.y);
+        const glm::vec2 end(rawVertices[i + 1].Position.x, rawVertices[i + 1].Position.y);
+        const glm::vec3 localStart(start - element.Center, 0.0f);
+        const glm::vec3 localEnd(end - element.Center, 0.0f);
+        vertices.emplace_back(localStart, rawVertices[i].Color);
+        vertices.emplace_back(localEnd, rawVertices[i + 1].Color);
+        const float length = glm::length(end - start);
+        selectionVertices.push_back({ localStart, glm::vec4(1.0f, 0.85f, 0.05f, 1.0f), distance });
+        selectionVertices.push_back({ localEnd, glm::vec4(1.0f, 0.85f, 0.05f, 1.0f), distance + length });
         distance += length;
     }
     if (vertices.empty())
@@ -500,6 +831,19 @@ void Object2D::BuildElementGeometry(Object2DElement& element)
 
     element.Geometry = GeometryLibrary::Register(BuildVertexArray(vertices));
     element.VertexCount = (uint32_t)vertices.size();
+
+    std::vector<VertexColor> pointVertices;
+    pointVertices.reserve(rawPointVertices.size());
+    for (const VertexColor& pointVertex : rawPointVertices)
+    {
+        const glm::vec2 point(pointVertex.Position.x, pointVertex.Position.y);
+        pointVertices.emplace_back(glm::vec3(point - element.Center, 0.0f), pointVertex.Color);
+    }
+    if (!pointVertices.empty())
+    {
+        element.PointGeometry = GeometryLibrary::Register(BuildVertexArray(pointVertices));
+        element.PointVertexCount = (uint32_t)pointVertices.size();
+    }
 
     Ref<VertexArray> selectionVertexArray = VertexArray::Create();
     auto selectionVertexBuffer = VertexBuffer::Create(reinterpret_cast<float*>(selectionVertices.data()),
@@ -524,17 +868,30 @@ void Object2D::RebuildSelectedSubElementGeometry()
         return;
 
     const Object2DElement& element = m_SubElements[(size_t)m_SelectedSubElementIndex];
-    std::vector<PatternVertex> vertices;
-    vertices.reserve(element.LineIndices.size() * 2);
-    float distance = 0.0f;
-    for (uint32_t lineIndex : element.LineIndices)
+    std::vector<VertexColor> rawVertices;
+    rawVertices.reserve(std::max(element.PrimitiveIndices.size(), element.LineIndices.size()) * 2);
+    if (element.PrimitiveIndices.empty() || !AppendElementPrimitiveLineVertices(element, m_Primitives, rawVertices))
     {
-        if (lineIndex >= m_Lines.size())
-            continue;
-        const Vector2DLine& line = m_Lines[lineIndex];
-        const float length = glm::length(line.End - line.Start);
-        vertices.push_back({ glm::vec3(line.Start - element.Center, 0.0f), glm::vec4(1.0f, 0.85f, 0.05f, 1.0f), distance });
-        vertices.push_back({ glm::vec3(line.End - element.Center, 0.0f), glm::vec4(1.0f, 0.85f, 0.05f, 1.0f), distance + length });
+        for (uint32_t lineIndex : element.LineIndices)
+        {
+            if (lineIndex >= m_Lines.size())
+                continue;
+            const Vector2DLine& line = m_Lines[lineIndex];
+            rawVertices.emplace_back(glm::vec3(line.Start, 0.0f), line.Color);
+            rawVertices.emplace_back(glm::vec3(line.End, 0.0f), line.Color);
+        }
+    }
+
+    std::vector<PatternVertex> vertices;
+    vertices.reserve(rawVertices.size());
+    float distance = 0.0f;
+    for (size_t i = 0; i + 1 < rawVertices.size(); i += 2)
+    {
+        const glm::vec2 start(rawVertices[i].Position.x, rawVertices[i].Position.y);
+        const glm::vec2 end(rawVertices[i + 1].Position.x, rawVertices[i + 1].Position.y);
+        const float length = glm::length(end - start);
+        vertices.push_back({ glm::vec3(start - element.Center, 0.0f), glm::vec4(1.0f, 0.85f, 0.05f, 1.0f), distance });
+        vertices.push_back({ glm::vec3(end - element.Center, 0.0f), glm::vec4(1.0f, 0.85f, 0.05f, 1.0f), distance + length });
         distance += length;
     }
     if (vertices.empty())

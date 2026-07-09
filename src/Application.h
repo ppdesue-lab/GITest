@@ -93,7 +93,9 @@ public:
 	void ZoomViewport2D(float wheelDelta);
 	void ResetViewport2D();
 	int ReadPickupPixel(int x, int y);
-	void RefreshPickupPass() { RenderPickupPass(); }
+	void InvalidatePickupPass() { m_PickupPassDirty = true; }
+	void InvalidateSelectedMask() { m_SelectedMaskValid = false; m_SelectedOutlineValid = false; }
+	void RefreshPickupPass() { InvalidatePickupPass(); RenderPickupPass(); }
 	int GetMSAASamples() const { return m_MSAASamples; }
 	void SetMSAASamples(int samples);
 	bool IsMSAAEnabled() const { return m_MSAASamples > 1; }
@@ -224,6 +226,8 @@ private:
 	bool m_ViewportHovered = false;
 	float m_SelectedEdgeWidth = 2.0f;
 	bool m_SelectedOutlineValid = false;
+	bool m_SelectedMaskValid = false;
+	bool m_PickupPassDirty = true;
 
 	// Gizmo state
 	int m_GizmoMode = 0;

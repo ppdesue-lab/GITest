@@ -1,6 +1,7 @@
 #include "Editor/ObjectInspector.h"
 
 #include <Import/GCode/GCodeObject.h>
+#include <Import/Vector2D/Object2D.h>
 #include <Renderer/TerrainCDLOD.h>
 #include <Renderer/VolumeObject.h>
 
@@ -123,6 +124,25 @@ public:
     }
 };
 
+class Object2DInspector : public ObjectInspector
+{
+public:
+    bool CanInspect(const Object3D& object) const override
+    {
+        return dynamic_cast<const Object2D*>(&object) != nullptr;
+    }
+
+    void Draw(Object3D& object) override
+    {
+        auto& object2D = static_cast<Object2D&>(object);
+        ImGui::SeparatorText("2D File");
+        ImGui::TextDisabled("%s", object2D.GetSourceName().c_str());
+        ImGui::Text("Lines: %zu", object2D.GetLineCount());
+        ImGui::Text("Elements: %zu", object2D.GetSubElementCount());
+        ImGui::Checkbox("Show Points", &object2D.bPointVisible);
+    }
+};
+
 class TerrainCDLODInspector : public ObjectInspector
 {
 public:
@@ -208,6 +228,7 @@ void ObjectInspectorRegistry::EnsureDefaultInspectors()
         return;
 
     Register(std::make_unique<GCodeInspector>());
+    Register(std::make_unique<Object2DInspector>());
     Register(std::make_unique<TerrainCDLODInspector>());
     Register(std::make_unique<VolumeObjectInspector>());
     Register(std::make_unique<MeshDisplayInspector>());

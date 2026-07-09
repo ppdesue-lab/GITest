@@ -11,7 +11,9 @@ public:
 	void Clear() override;
 	void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) override;
 	void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount) override;
+	void DrawPoints(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) override;
 	void SetLineWidth(float width) override;
+	void SetPointSize(float size) override;
 	void Enable(const std::string& capability) override;
 	void Disable(const std::string& capability) override;
 	void Cull(const std::string& face) override;
