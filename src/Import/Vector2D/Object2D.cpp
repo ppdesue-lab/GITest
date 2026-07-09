@@ -5,7 +5,63 @@
 #include <Renderer/Buffer.h>
 #include <Renderer/RenderCommand.h>
 
+#include <cmath>
 #include <limits>
+
+namespace
+{
+uint32_t HashString(const std::string& value)
+{
+    uint32_t hash = 2166136261u;
+    for (unsigned char c : value)
+    {
+        hash ^= c;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+glm::vec4 DisplayColorForFile(const Vector2DDocument& document)
+{
+    std::string seed;
+    try {
+        seed = document.SourcePath.empty() ? document.SourceName : document.SourcePath.u8string();
+    } catch (...) {
+        seed = document.SourceName;
+    }
+    if (seed.empty())
+        seed = "Vector2DDocument";
+
+    uint32_t value = HashString(seed) * 747796405u + 2891336453u;
+    value = ((value >> ((value >> 28u) + 4u)) ^ value) * 277803737u;
+    value = (value >> 22u) ^ value;
+
+    const float hue = (float)(value & 0xFFFFu) / 65535.0f;
+    const float saturation = 0.62f + (float)((value >> 16u) & 0xFFu) / 255.0f * 0.25f;
+    const float brightness = 0.82f + (float)((value >> 24u) & 0xFFu) / 255.0f * 0.16f;
+
+    const float h = hue * 6.0f;
+    const float c = brightness * saturation;
+    const float x = c * (1.0f - std::abs(std::fmod(h, 2.0f) - 1.0f));
+    const float m = brightness - c;
+
+    glm::vec3 rgb(0.0f);
+    if (h < 1.0f)
+        rgb = glm::vec3(c, x, 0.0f);
+    else if (h < 2.0f)
+        rgb = glm::vec3(x, c, 0.0f);
+    else if (h < 3.0f)
+        rgb = glm::vec3(0.0f, c, x);
+    else if (h < 4.0f)
+        rgb = glm::vec3(0.0f, x, c);
+    else if (h < 5.0f)
+        rgb = glm::vec3(x, 0.0f, c);
+    else
+        rgb = glm::vec3(c, 0.0f, x);
+
+    return glm::vec4(rgb + glm::vec3(m), 1.0f);
+}
+}
 
 Object2D::~Object2D()
 {
@@ -41,6 +97,19 @@ bool Object2D::LoadFromDocument(const Vector2DDocument& document)
             element.Name = sourceElement.Name;
             element.LineIndices = sourceElement.LineIndices;
             m_SubElements.push_back(std::move(element));
+        }
+    }
+
+    const glm::vec4 displayColor = DisplayColorForFile(document);
+    const glm::vec4 arcDisplayColor(1.0f);
+    for (uint32_t elementIndex = 0; elementIndex < (uint32_t)m_SubElements.size(); ++elementIndex)
+    {
+        for (uint32_t lineIndex : m_SubElements[(size_t)elementIndex].LineIndices)
+        {
+            if (lineIndex >= m_Lines.size())
+                continue;
+            m_Lines[(size_t)lineIndex].ElementIndex = elementIndex;
+            m_Lines[(size_t)lineIndex].Color = m_Lines[(size_t)lineIndex].DisplayAsArc ? arcDisplayColor : displayColor;
         }
     }
 
@@ -232,12 +301,43 @@ bool Object2D::IsSubElementSelected(int index) const
     return std::find(m_SelectedSubElementIndices.begin(), m_SelectedSubElementIndices.end(), index) != m_SelectedSubElementIndices.end();
 }
 
+bool Object2D::GetObjectBounds(glm::vec3& minimum, glm::vec3& maximum) const
+{
+    minimum = glm::vec3(std::numeric_limits<float>::max());
+    maximum = glm::vec3(std::numeric_limits<float>::lowest());
+    bool hasPoint = false;
+
+    const glm::mat4 objectTransform = Transfm.GetMatrix();
+    for (const Object2DElement& element : m_SubElements)
+    {
+        if (!element.Visible)
+            continue;
+
+        const glm::mat4 transform = objectTransform * element.Transfm.GetMatrix();
+        for (uint32_t lineIndex : element.LineIndices)
+        {
+            if (lineIndex >= m_Lines.size())
+                continue;
+
+            const Vector2DLine& line = m_Lines[(size_t)lineIndex];
+            const glm::vec3 start = glm::vec3(transform * glm::vec4(glm::vec3(line.Start - element.Center, 0.0f), 1.0f));
+            const glm::vec3 end = glm::vec3(transform * glm::vec4(glm::vec3(line.End - element.Center, 0.0f), 1.0f));
+            minimum = glm::min(minimum, glm::min(start, end));
+            maximum = glm::max(maximum, glm::max(start, end));
+            hasPoint = true;
+        }
+    }
+
+    return hasPoint;
+}
+
 bool Object2D::GetSelectedSubElementBounds(glm::vec3& minimum, glm::vec3& maximum) const
 {
     minimum = glm::vec3(std::numeric_limits<float>::max());
     maximum = glm::vec3(std::numeric_limits<float>::lowest());
     bool hasPoint = false;
 
+    const glm::mat4 objectTransform = Transfm.GetMatrix();
     for (int selectedIndex : m_SelectedSubElementIndices)
     {
         if (selectedIndex < 0 || selectedIndex >= (int)m_SubElements.size())
@@ -247,7 +347,7 @@ bool Object2D::GetSelectedSubElementBounds(glm::vec3& minimum, glm::vec3& maximu
         if (!element.Visible)
             continue;
 
-        const glm::mat4 elementTransform = element.Transfm.GetMatrix();
+        const glm::mat4 elementTransform = objectTransform * element.Transfm.GetMatrix();
         for (uint32_t lineIndex : element.LineIndices)
         {
             if (lineIndex >= m_Lines.size())

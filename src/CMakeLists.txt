@@ -36,6 +36,13 @@ list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/tanim/.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/entt/.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/imgui_compat/.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/dime/.*")
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/GeometryProcess/.*")
+list(APPEND SRC_FILES
+  ${CMAKE_CURRENT_SOURCE_DIR}/Import/GeometryProcess/SlicePreviewObject.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/Import/GeometryProcess/SlicePreviewObject.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/Import/Image/TexturePlaneObject.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/Import/Image/TexturePlaneObject.h
+)
 
 #------------------third party
 include(FetchContent)
@@ -63,6 +70,16 @@ set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
 
 
 FetchContent_MakeAvailable(assimp)
+
+add_library(GeometryProcess STATIC
+  ${CMAKE_SOURCE_DIR}/src/GeometryProcess/glm-aabb/aabb.cpp
+)
+target_include_directories(GeometryProcess PUBLIC
+  ${CMAKE_SOURCE_DIR}/src/GeometryProcess
+  ${KENGINE_GLM_ROOT}
+)
+target_link_libraries(GeometryProcess PUBLIC assimp)
+
 #glfw
 FetchContent_Declare(
   glfw
@@ -194,6 +211,7 @@ set(third_party_libs
   libimgui
   tanim
   dime
+  GeometryProcess
   EnTT::EnTT
   ${KENGINE_OPENCL_LIBRARY}
   ${KENGINE_OCCT_LIBRARIES}

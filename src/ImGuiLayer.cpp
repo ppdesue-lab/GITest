@@ -453,6 +453,7 @@ void ImGuiLayer::OnImGuiRender()
     Application& app = Application::Get();
     app.GetTimelineAnimation().OnImGuiRender(app.GetScene(), app.GetDeltaTime());
     app.GetCameraAnimation().OnImGuiRender(app.GetCamera(), app.GetDeltaTime());
+    DrawDxfImportOptionsModal();
 
 }
 
@@ -1001,6 +1002,19 @@ void ImGuiLayer::DrawMenuBar()
             ImGui::EndMenu();
         }
 
+        if (ImGui::BeginMenu("Setting"))
+        {
+            Application& app = Application::Get();
+            const int frameRateLimit = app.GetFrameRateLimit();
+            if (ImGui::MenuItem("NoLimit(FPS)", nullptr, frameRateLimit == 0))
+                app.SetFrameRateLimit(0);
+            if (ImGui::MenuItem("Limit(60FPS)", nullptr, frameRateLimit == 60))
+                app.SetFrameRateLimit(60);
+            if (ImGui::MenuItem("Limit(30FPS)", nullptr, frameRateLimit == 30))
+                app.SetFrameRateLimit(30);
+            ImGui::EndMenu();
+        }
+
         if (ImGui::BeginMenu("Windows"))
         {
             ImGui::MenuItem("NodeEditor", nullptr, &m_ShowNodeEditor);
@@ -1018,6 +1032,24 @@ void ImGuiLayer::DrawMenuBar()
                 if (showCameraTimeline)
                     Application::Get().GetTimelineAnimation().SetVisible(false);
             }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("GeometryProcess"))
+        {
+            Application& app = Application::Get();
+            const bool hasSelection = app.GetSelectedObjectIndex() >= 0;
+            if (!hasSelection)
+                ImGui::BeginDisabled();
+
+            if (ImGui::MenuItem("Slice"))
+            {
+                auto slices = app.SliceSelectedModel();
+                TRACE("Sliced selected model: {}", slices ? "success" : "failed");
+            }
+
+            if (!hasSelection)
+                ImGui::EndDisabled();
             ImGui::EndMenu();
         }
 
@@ -1204,8 +1236,11 @@ void ImGuiLayer::DrawPropertiesPanel()
     Application& app = Application::Get();
     Transform* targetTransform = app.GetGizmoTargetTransform();
     const int selectedCount = app.GetSelectedObjectCount();
+    Transform* inspectorTransform = targetTransform;
+    if (app.IsViewport2D() && !app.IsViewport2DEditMode() && selectedCount == 1)
+        inspectorTransform = app.GetScene().GetSelectedTransform();
 
-    if (!targetTransform)
+    if (!targetTransform && !inspectorTransform)
     {
         ImGui::TextDisabled("No object selected");
     }
@@ -1224,24 +1259,24 @@ void ImGuiLayer::DrawPropertiesPanel()
         {
             ImGui::SeparatorText("Transform");
 
-            float translation[3] = { targetTransform->translation.x, targetTransform->translation.y, targetTransform->translation.z };
+            float translation[3] = { inspectorTransform->translation.x, inspectorTransform->translation.y, inspectorTransform->translation.z };
             if (ImGui::DragFloat3("Translation", translation, 0.1f))
             {
-                targetTransform->translation = glm::vec3(translation[0], translation[1], translation[2]);
+                inspectorTransform->translation = glm::vec3(translation[0], translation[1], translation[2]);
             }
 
-            glm::vec3 euler = glm::degrees(quatToEulerSafe(targetTransform->rotation));
+            glm::vec3 euler = glm::degrees(quatToEulerSafe(inspectorTransform->rotation));
             float rotationDeg[3] = { euler.x, euler.y, euler.z };
             if (ImGui::InputFloat3("Rotation (deg)", rotationDeg, "%.2f"))
             {
                 glm::vec3 rad = glm::radians(glm::vec3(rotationDeg[0], rotationDeg[1], rotationDeg[2]));
-                targetTransform->rotation = glm::yawPitchRoll(rad.y, rad.x, rad.z);
+                inspectorTransform->rotation = glm::yawPitchRoll(rad.y, rad.x, rad.z);
             }
 
-            float scale[3] = { targetTransform->scale.x, targetTransform->scale.y, targetTransform->scale.z };
+            float scale[3] = { inspectorTransform->scale.x, inspectorTransform->scale.y, inspectorTransform->scale.z };
             if (ImGui::DragFloat3("Scale", scale, 0.1f))
             {
-                targetTransform->scale = glm::vec3(scale[0], scale[1], scale[2]);
+                inspectorTransform->scale = glm::vec3(scale[0], scale[1], scale[2]);
             }
 
             Scene::Entry* selectedEntry = app.GetScene().GetSelectedEntry();
@@ -1330,7 +1365,9 @@ void ImGuiLayer::DrawPropertiesPanel()
         if (ImGui::Checkbox("View", &view))
             app.GetGizmoView() = view;
 
-        if (multi2DSubElements)
+        const bool show2DPivot = (app.IsViewport2D() && app.IsViewport2DEditMode() && targetTransform) ||
+            (app.IsViewport2D() && !app.IsViewport2DEditMode() && selectedCount == 1);
+        if (show2DPivot)
         {
             ImGui::SeparatorText("2D Pivot");
             int pivotIndex = app.GetViewport2DPivotIndex();
@@ -1365,9 +1402,9 @@ void ImGuiLayer::DrawPropertiesPanel()
 
         if (selectedCount <= 1 && ImGui::Button("Reset"))
         {
-            targetTransform->translation = glm::vec3(0.0f);
-            targetTransform->rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-            targetTransform->scale = glm::vec3(0.1f);
+            inspectorTransform->translation = glm::vec3(0.0f);
+            inspectorTransform->rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+            inspectorTransform->scale = glm::vec3(0.1f);
         }
         if (selectedCount <= 1)
         {
@@ -1541,6 +1578,8 @@ void ImGuiLayer::DrawContentBrowser()
     auto iconForFile = [&](const std::filesystem::path& path) -> Ref<Texture> {
         if (isTextFile(path) && txtIcon)
             return txtIcon;
+        if (IsSupportedImageFile(path))
+            return TextureLibrary::GetTexture(path.u8string());
         if (isModelIconFile(path) && modelIcon)
             return modelIcon;
         if (IsSupported2DFile(path) && dxfIcon)
@@ -1668,6 +1707,7 @@ void ImGuiLayer::DrawContentBrowser()
             const bool isModel = IsSupportedModelFile(path);
             const bool is2D = IsSupported2DFile(path);
             const bool isGCode = IsSupportedGCodeFile(path);
+            const bool isImage = IsSupportedImageFile(path);
             Ref<Texture> icon = iconForFile(path);
 
             if (i > 0 && (i % columns) != 0)
@@ -1689,13 +1729,17 @@ void ImGuiLayer::DrawContentBrowser()
             }
             if (doubleClicked && is2D)
             {
-                if (!Application::Get().LoadFileByExtension(path))
-                    WARN("Failed to load 2D file: {}", path.u8string());
+                QueueDxfImport(path);
             }
             if (doubleClicked && isGCode)
             {
                 if (!Application::Get().LoadGCode(path))
                     WARN("Failed to load GCode: {}", path.u8string());
+            }
+            if (doubleClicked && isImage)
+            {
+                if (!Application::Get().LoadFileByExtension(path))
+                    WARN("Failed to load image: {}", path.u8string());
             }
 
             ImVec2 tileMax(tileMin.x + tileWidth, tileMin.y + tileHeight);
@@ -1717,6 +1761,8 @@ void ImGuiLayer::DrawContentBrowser()
                 drawFallbackIcon(drawList, iconMin, iconMax, "2D", IM_COL32(76, 191, 255, 255));
             else if (isGCode)
                 drawFallbackIcon(drawList, iconMin, iconMax, "NC", IM_COL32(88, 220, 145, 255));
+            else if (isImage)
+                drawFallbackIcon(drawList, iconMin, iconMax, "IMG", IM_COL32(255, 190, 92, 255));
             else if (isTextFile(path))
                 drawFallbackIcon(drawList, iconMin, iconMax, "TXT", IM_COL32(88, 166, 255, 255));
             else
@@ -1727,7 +1773,8 @@ void ImGuiLayer::DrawContentBrowser()
             ImVec2 textPos(tileMin.x + (tileWidth - textSize.x) * 0.5f, tileMin.y + 80.0f);
             ImU32 textColor = isModel ? IM_COL32(150, 204, 255, 255) :
                 (is2D ? IM_COL32(143, 222, 255, 255) :
-                (isGCode ? IM_COL32(128, 230, 150, 255) : IM_COL32(225, 228, 235, 255)));
+                (isGCode ? IM_COL32(128, 230, 150, 255) :
+                (isImage ? IM_COL32(255, 210, 128, 255) : IM_COL32(225, 228, 235, 255))));
             drawList->AddText(textPos, textColor, visibleName.c_str());
 
             if (hovered)
@@ -1907,6 +1954,74 @@ void ImGuiLayer::DrawViewportPanel()
 // pfd returns UTF-8 on Windows; keep as UTF-8, use u8path for filesystem API
 // (no ANSI conversion needed - std::filesystem::u8path handles UTF-8 directly)
 
+void ImGuiLayer::QueueDxfImport(const std::filesystem::path& filepath)
+{
+    m_PendingDxfImportPath = filepath;
+    m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
+    m_DxfImportPopupRequested = true;
+}
+
+void ImGuiLayer::DrawDxfImportOptionsModal()
+{
+    constexpr const char* popupName = "DXF Import Mode";
+    if (m_DxfImportPopupRequested)
+    {
+        ImGui::OpenPopup(popupName);
+        m_DxfImportPopupRequested = false;
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal(popupName, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    const std::string filename = m_PendingDxfImportPath.empty() ?
+        std::string() : m_PendingDxfImportPath.filename().u8string();
+    ImGui::TextUnformatted("Select how to import this DXF file.");
+    if (!filename.empty())
+        ImGui::TextDisabled("%s", filename.c_str());
+    ImGui::Separator();
+
+    int mode = 1;
+    if (m_SelectedDxfImportMode == DxfImportMode::LinesOnly)
+        mode = 0;
+    else if (m_SelectedDxfImportMode == DxfImportMode::NativePrimitives)
+        mode = 2;
+
+    ImGui::RadioButton("Convert all DXF geometry to line segments", &mode, 0);
+    ImGui::RadioButton("Convert to line segments, then fit arcs", &mode, 1);
+    ImGui::RadioButton("Import native DXF primitives when available", &mode, 2);
+
+    if (mode == 0)
+        m_SelectedDxfImportMode = DxfImportMode::LinesOnly;
+    else if (mode == 2)
+        m_SelectedDxfImportMode = DxfImportMode::NativePrimitives;
+    else
+        m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
+
+    ImGui::Separator();
+    if (ImGui::Button("Import", ImVec2(120.0f, 0.0f)))
+    {
+        if (!m_PendingDxfImportPath.empty() &&
+            !Application::Get().LoadVector2D(m_PendingDxfImportPath, m_SelectedDxfImportMode))
+        {
+            ::Log::GetCoreLogger()->error("Failed to load DXF file: {}",
+                m_PendingDxfImportPath.u8string());
+        }
+        m_PendingDxfImportPath.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)))
+    {
+        m_PendingDxfImportPath.clear();
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+}
+
 void ImGuiLayer::OpenModelFile()
 {
     auto selectedFiles = pfd::open_file(
@@ -1914,6 +2029,7 @@ void ImGuiLayer::OpenModelFile()
         "",
         {
             "3D Model Files", "*.obj *.stl *.ply *.gltf *.glb *.pmx *.pmd *.step *.stp",
+            "Image Files", "*.jpg *.jpeg *.png *.bmp",
             "2D Drawing Files", "*.dxf",
             "All Files", "*"
         }).result();
@@ -1925,7 +2041,7 @@ void ImGuiLayer::OpenModelFile()
     const std::string& utf8path = selectedFiles[0];
     auto fspath = std::filesystem::u8path(utf8path);
 
-    if (!IsSupportedModelFile(fspath) && !IsSupported2DFile(fspath))
+    if (!IsSupportedModelFile(fspath) && !IsSupported2DFile(fspath) && !IsSupportedImageFile(fspath))
     {
         WARN("Unsupported file: {}", utf8path);
         return;
@@ -1935,6 +2051,12 @@ void ImGuiLayer::OpenModelFile()
     if (!std::filesystem::exists(fspath))
     {
         ::Log::GetCoreLogger()->error("File does not exist: {}", utf8path);
+        return;
+    }
+
+    if (IsSupported2DFile(fspath))
+    {
+        QueueDxfImport(fspath);
         return;
     }
 
@@ -1999,6 +2121,16 @@ bool ImGuiLayer::IsSupportedGCodeFile(const std::filesystem::path& filepath) con
         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
     return extension == ".gcode" || extension == ".nc" || extension == ".cnc" || extension == ".tap";
+}
+
+bool ImGuiLayer::IsSupportedImageFile(const std::filesystem::path& filepath) const
+{
+    std::string extension = filepath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    return extension == ".jpg" || extension == ".jpeg" ||
+           extension == ".png" || extension == ".bmp";
 }
 
 void ImGuiLayer::OnEvent(Event& event)

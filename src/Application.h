@@ -27,6 +27,7 @@
 #include <Object3D.h>
 #include <Animation/CameraAnimation.h>
 #include <Animation/TimelineAnimation.h>
+#include <Import/Vector2D/DxfLoader.h>
 
 class Application
 {
@@ -59,12 +60,15 @@ public:
 	// Scene management
 	Scene& GetScene() { return m_Scene; }
 	Ref<Object3D> LoadObject3D(const std::filesystem::path& filepath);
+	Ref<Object3D> LoadTexturePlane(const std::filesystem::path& filepath);
 	Ref<Object3D> LoadGCode(const std::filesystem::path& filepath);
-	Ref<Object3D> LoadVector2D(const std::filesystem::path& filepath);
+	Ref<Object3D> LoadVector2D(const std::filesystem::path& filepath,
+		DxfImportMode mode = DxfImportMode::LinesWithArcFit);
 	Ref<Object3D> LoadManixVolume();
 	Ref<Object3D> LoadDefaultTerrainCDLOD();
 	Ref<Object3D> LoadTerrainHeightMap();
 	Ref<Object3D> LoadWaterNode();
+	Ref<Object3D> SliceSelectedModel(float layerHeight = 0.1f);
 	bool LoadFileByExtension(const std::filesystem::path& filepath);
 	void NewProject();
 	void ClearObject3Ds();
@@ -133,6 +137,8 @@ public:
 	int& GetBackgroundMode() { return m_BackgroundMode; }
 	bool GetDebugCascadeView() const { return m_DebugCascadeView; }
 	void SetDebugCascadeView(bool enabled) { m_DebugCascadeView = enabled; }
+	int GetFrameRateLimit() const { return m_FrameRateLimit; }
+	void SetFrameRateLimit(int fps) { m_FrameRateLimit = fps <= 0 ? 0 : (fps <= 30 ? 30 : 60); }
 
 	void ProcessKeyboardInput(float deltaTime);
 
@@ -161,7 +167,9 @@ private:
 	uint64_t CompositeSelectedOutline(uint64_t sceneColorTexture);
 	void DrawViewport2DGrid(const glm::mat4& view, const glm::mat4& projection);
 	void ApplyGizmoDeltaToSelection(const Transform& before, const Transform& after);
+	void ApplyGizmoDeltaToSelectedObject2DPivot(const Transform& before, const Transform& after);
 	void ApplyGizmoDeltaToSelected2DSubElements(const Transform& before, const Transform& after);
+	void UpdateViewport2DObjectGizmoTarget(bool forceRecenter = false);
 	void Update2DSubElementGizmoTarget(bool forceRecenter = false);
 
     WindowInterface* m_WindowInterface = nullptr;
@@ -198,6 +206,7 @@ private:
 	uint32_t m_OITCompositeFBO = 0;
 	uint32_t m_OITCompositeTexture = 0;
 	uint32_t m_OITQuadVAO = 0;
+	bool m_OITCompositeValid = false;
 	uint32_t m_SelectedOutlineFBO = 0;
 	uint32_t m_SelectedOutlineTexture = 0;
 	uint32_t m_SelectedOutlineQuadVAO = 0;
@@ -224,6 +233,7 @@ private:
 	float m_GizmoLineWidth = 2.5f;
 	bool m_LeftDownGizmo = false;
 	bool m_LeftDownCamera = false;
+	int m_FrameRateLimit = 60;
 
 	Ref<CSM> m_CSM;
 	Ref<ProbeGI> m_ProbeGI;

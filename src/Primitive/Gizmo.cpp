@@ -504,9 +504,11 @@ bool DrawGizmo3D(const glm::mat4& camView,const glm::mat4& camProj,
 
 	//------------------------------------------------------------------------
 
+	const bool drawTranslateAxis = (data.flags & GIZMO_TRANSLATE) ||
+		((data.flags & GIZMO_ROTATE) && (data.flags & (GIZMO_TRANSLATE | GIZMO_SCALE)) == 0);
 	for (int i = 0; i < GIZMO_AXIS_COUNT; ++i)
 	{
-		if (data.flags & GIZMO_TRANSLATE)
+		if (drawTranslateAxis)
 		{
 			if (IsGizmoAxisVisible(&data, i))
 				DrawGizmoArrow(&data, i);
@@ -527,7 +529,7 @@ bool DrawGizmo3D(const glm::mat4& camView,const glm::mat4& camProj,
 				DrawGizmoCircle(&data, i);
 		}		
 	}
-	if ((data.flags & (GIZMO_SCALE | GIZMO_TRANSLATE)) != 0) 
+	if (drawTranslateAxis || (data.flags & GIZMO_SCALE) != 0) 
 	{
 		DrawGizmoCenter(&data);
 	}
@@ -859,7 +861,11 @@ static void DrawGizmoPlane(const GizmoData* data, int index)
 
 static void DrawGizmoArrow(const GizmoData* data, int axis)
 {
-	if (IsThisGizmoTransforming(data) && (!IsGizmoAxisActive(axis) || !IsGizmoTranslating()))
+	const bool rotateReferenceAxis = IsThisGizmoTransforming(data) &&
+		IsGizmoRotating() &&
+		(data->flags & GIZMO_ROTATE) &&
+		(data->flags & (GIZMO_TRANSLATE | GIZMO_SCALE)) == 0;
+	if (IsThisGizmoTransforming(data) && !rotateReferenceAxis && (!IsGizmoAxisActive(axis) || !IsGizmoTranslating()))
 	{
 		return;
 	}
@@ -919,24 +925,33 @@ static void DrawGizmoCenter(const GizmoData* data)
 	if (GIZMO.showXYZText)
 	{
 		//x
-		glm::vec3 originX = (data->curTransform->translation +
-			(data->axis[0] * data->gizmoSize * (1.0f - GIZMO.trArrowLengthFactor + 0.25f)));
 		const float fontscale = 0.05f * data->gizmoSize * (1.0f - GIZMO.trArrowLengthFactor + 0.2f);
-		RenderCommand::FlushLine(originX - fontscale * data->right - fontscale * data->up, originX + fontscale * data->right + fontscale * data->up, glm::vec4(1, 0, 0, 1));
-		RenderCommand::FlushLine(originX + fontscale * data->right - fontscale * data->up, originX - fontscale * data->right + fontscale * data->up, glm::vec4(1, 0, 0, 1));
+		if (IsGizmoAxisVisible(data, GZ_AXIS_X))
+		{
+			glm::vec3 originX = (data->curTransform->translation +
+				(data->axis[0] * data->gizmoSize * (1.0f - GIZMO.trArrowLengthFactor + 0.25f)));
+			RenderCommand::FlushLine(originX - fontscale * data->right - fontscale * data->up, originX + fontscale * data->right + fontscale * data->up, glm::vec4(1, 0, 0, 1));
+			RenderCommand::FlushLine(originX + fontscale * data->right - fontscale * data->up, originX - fontscale * data->right + fontscale * data->up, glm::vec4(1, 0, 0, 1));
+		}
 		//y
-		glm::vec3 originY = (data->curTransform->translation +
-			(data->axis[1] * data->gizmoSize * (1.0f - GIZMO.trArrowLengthFactor + 0.25f)));
-		RenderCommand::FlushLine(originY - fontscale * data->right + fontscale * data->up, originY, glm::vec4(0, 1, 0, 1));
-		RenderCommand::FlushLine(originY, originY + fontscale * data->right + fontscale * data->up, glm::vec4(0, 1, 0, 1));
-		RenderCommand::FlushLine(originY, originY - fontscale * data->up, glm::vec4(0, 1, 0, 1));
+		if (IsGizmoAxisVisible(data, GZ_AXIS_Y))
+		{
+			glm::vec3 originY = (data->curTransform->translation +
+				(data->axis[1] * data->gizmoSize * (1.0f - GIZMO.trArrowLengthFactor + 0.25f)));
+			RenderCommand::FlushLine(originY - fontscale * data->right + fontscale * data->up, originY, glm::vec4(0, 1, 0, 1));
+			RenderCommand::FlushLine(originY, originY + fontscale * data->right + fontscale * data->up, glm::vec4(0, 1, 0, 1));
+			RenderCommand::FlushLine(originY, originY - fontscale * data->up, glm::vec4(0, 1, 0, 1));
+		}
 
 		//z
-		glm::vec3 originZ = (data->curTransform->translation +
-			(data->axis[2] * data->gizmoSize * (1.0f - GIZMO.trArrowLengthFactor + 0.25f)));
-		RenderCommand::FlushLine(originZ - fontscale * data->right - fontscale * data->up, originZ + fontscale * data->right - fontscale * data->up, glm::vec4(0, 0, 1, 1));
-		RenderCommand::FlushLine(originZ - fontscale * data->right + fontscale * data->up, originZ + fontscale * data->right + fontscale * data->up, glm::vec4(0, 0, 1, 1));
-		RenderCommand::FlushLine(originZ - fontscale * data->right - fontscale * data->up, originZ + fontscale * data->right + fontscale * data->up, glm::vec4(0, 0, 1, 1));
+		if (IsGizmoAxisVisible(data, GZ_AXIS_Z))
+		{
+			glm::vec3 originZ = (data->curTransform->translation +
+				(data->axis[2] * data->gizmoSize * (1.0f - GIZMO.trArrowLengthFactor + 0.25f)));
+			RenderCommand::FlushLine(originZ - fontscale * data->right - fontscale * data->up, originZ + fontscale * data->right - fontscale * data->up, glm::vec4(0, 0, 1, 1));
+			RenderCommand::FlushLine(originZ - fontscale * data->right + fontscale * data->up, originZ + fontscale * data->right + fontscale * data->up, glm::vec4(0, 0, 1, 1));
+			RenderCommand::FlushLine(originZ - fontscale * data->right - fontscale * data->up, originZ + fontscale * data->right + fontscale * data->up, glm::vec4(0, 0, 1, 1));
+		}
 	}
 
 }

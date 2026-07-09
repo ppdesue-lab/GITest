@@ -6,6 +6,7 @@
 #include "KeyEvent.h"
 #include <Camera/Camera.h>
 #include <Transform.h>
+#include <Import/Vector2D/DxfLoader.h>
 #include <imgui.h>
 #include <deque>
 #include <string>
@@ -34,6 +35,7 @@ public:
 
     void Begin();
     void End();
+    void QueueDxfImport(const std::filesystem::path& filepath);
 
     static void AddConsoleMessage(const ImVec4& color, const std::string& message);
 
@@ -53,11 +55,13 @@ private:
     void DrawFXAADebugWindow();
     void DrawSVGFDenoiserWindow();
     void DrawPBRIBLDebugWindow();
+    void DrawDxfImportOptionsModal();
     void OpenModelFile();
     void OpenGCodeFile();
     bool IsSupportedModelFile(const std::filesystem::path& filepath) const;
     bool IsSupported2DFile(const std::filesystem::path& filepath) const;
     bool IsSupportedGCodeFile(const std::filesystem::path& filepath) const;
+    bool IsSupportedImageFile(const std::filesystem::path& filepath) const;
 
     bool OnMouseButtonDown(MouseButtonPressedEvent& e);
     bool OnMouseButtonUp(MouseButtonReleasedEvent& e);
@@ -94,6 +98,9 @@ private:
     std::vector<std::filesystem::path> m_ContentBrowserFiles;
     bool m_ContentBrowserNeedsRefresh = true;
     bool m_ShowNodeEditor = false;
+    bool m_DxfImportPopupRequested = false;
+    std::filesystem::path m_PendingDxfImportPath;
+    DxfImportMode m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
 
     // Console
     static std::deque<ConsoleMessage> s_ConsoleMessages;

@@ -6,6 +6,30 @@
 #include <algorithm>
 #include <filesystem>
 #include <chrono>
+#include <thread>
+#include <limits>
+#ifdef PLATFORM_WINDOWS
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifdef ERROR
+#undef ERROR
+#endif
+#include <Windows.h>
+#ifdef CreateWindow
+#undef CreateWindow
+#endif
+#ifdef ERROR
+#undef ERROR
+#endif
+#define ERROR(...)    ::Log::GetCoreLogger()->error(__VA_ARGS__)
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+#endif
 #ifdef G_OPENGL
 #include <glad/glad.h>
 #endif
@@ -23,12 +47,43 @@
 #include "Camera/OrthographicCamera2D.h"
 
 #include <Primitive/Gizmo.h>
+#include <GeometryProcess/GeometryProcess.h>
+#include <Import/GeometryProcess/SlicePreviewObject.h>
 #include <Import/GCode/GCodeObject.h>
+#include <Import/Image/TexturePlaneObject.h>
 #include <Import/Vector2D/DxfLoader.h>
 #include <Import/Vector2D/Object2D.h>
 
 namespace
 {
+void SleepUntilFrameLimit(std::chrono::steady_clock::time_point targetTime)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= targetTime)
+        return;
+
+#ifdef PLATFORM_WINDOWS
+    using HundredNanoseconds = std::chrono::duration<long long, std::ratio<1, 10000000>>;
+    static HANDLE waitableTimer = CreateWaitableTimerExW(
+        nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!waitableTimer)
+        waitableTimer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+
+    if (waitableTimer)
+    {
+        LARGE_INTEGER dueTime;
+        dueTime.QuadPart = -std::chrono::duration_cast<HundredNanoseconds>(targetTime - now).count();
+        if (SetWaitableTimer(waitableTimer, &dueTime, 0, nullptr, nullptr, FALSE))
+        {
+            WaitForSingleObject(waitableTimer, INFINITE);
+            return;
+        }
+    }
+#endif
+
+    std::this_thread::sleep_until(targetTime);
+}
+
 glm::vec3 PivotPointFromBounds(const glm::vec3& minimum, const glm::vec3& maximum, int pivotIndex)
 {
     pivotIndex = std::clamp(pivotIndex, 0, 8);
@@ -38,6 +93,47 @@ glm::vec3 PivotPointFromBounds(const glm::vec3& minimum, const glm::vec3& maximu
     const float x = column == 0 ? minimum.x : (column == 1 ? (minimum.x + maximum.x) * 0.5f : maximum.x);
     const float y = row == 0 ? maximum.y : (row == 1 ? (minimum.y + maximum.y) * 0.5f : minimum.y);
     return glm::vec3(x, y, 0.0f);
+}
+
+bool ObjectXYBounds(const Object3D& object, glm::vec3& minimum, glm::vec3& maximum)
+{
+    if (const Object2D* object2D = dynamic_cast<const Object2D*>(&object))
+    {
+        if (object2D->GetObjectBounds(minimum, maximum))
+        {
+            minimum.z = maximum.z = object.Transfm.translation.z;
+            return true;
+        }
+    }
+
+    bool hasBounds = false;
+    minimum = glm::vec3(std::numeric_limits<float>::max());
+    maximum = glm::vec3(std::numeric_limits<float>::lowest());
+
+    for (const Ref<Mesh>& mesh : object.Meshes)
+    {
+        if (!mesh || mesh->TraceVertices.empty())
+            continue;
+
+        const glm::mat4 transform = object.Transfm.GetMatrix() * mesh->Transfm.GetMatrix();
+        for (const VertexNormalTexture& vertex : mesh->TraceVertices)
+        {
+            const glm::vec3 position = glm::vec3(transform * glm::vec4(vertex.Position, 1.0f));
+            minimum = glm::min(minimum, position);
+            maximum = glm::max(maximum, position);
+            hasBounds = true;
+        }
+    }
+
+    if (!hasBounds)
+    {
+        minimum = object.Transfm.translation;
+        maximum = object.Transfm.translation;
+        hasBounds = true;
+    }
+
+    minimum.z = maximum.z = object.Transfm.translation.z;
+    return hasBounds;
 }
 
 class Frustum
@@ -151,13 +247,15 @@ Application::Application(int w,int h)
 void Application::Run()
 {
     using clock = std::chrono::steady_clock;
+    constexpr auto frameLimitTolerance = std::chrono::duration<float>(0.002f);
     auto lastTime = clock::now();
     float titleElapsed = 0.0f;
     uint32_t titleFrames = 0;
 
     while (m_Running && !m_WindowInterface->ShouldClose())
     {
-        auto currentTime = clock::now();
+        auto frameStartTime = clock::now();
+        auto currentTime = frameStartTime;
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
         m_DeltaTime = deltaTime;
         lastTime = currentTime;
@@ -329,6 +427,18 @@ void Application::Run()
 
         // Draw visible objects intersecting the active camera frustum.
         const Frustum cameraFrustum(viewportCamera->GetProjectionMatrix() * viewportCamera->GetViewMatrix());
+        bool hasVisibleTransparentObject = false;
+        m_OITCompositeValid = false;
+        for (const auto& entry : m_Scene.GetObjects())
+        {
+            if (entry.Visible && entry.Object &&
+                entry.Object->Opacity > 0.001f && entry.Object->Opacity < 0.999f &&
+                cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
+            {
+                hasVisibleTransparentObject = true;
+                break;
+            }
+        }
 #ifdef G_OPENGL
         for (const auto& entry : m_Scene.GetObjects())
         {
@@ -411,6 +521,8 @@ void Application::Run()
                 m_ProbeGI->DrawDebug();
             if (viewport2D && m_Viewport2DEditMode && !m_LeftDownGizmo)
                 Update2DSubElementGizmoTarget();
+            else if (viewport2D && !m_Viewport2DEditMode && !m_LeftDownGizmo)
+                UpdateViewport2DObjectGizmoTarget();
             Transform* targetTransform = m_GizmoTargetTransform;
             if (targetTransform)
             {
@@ -441,6 +553,8 @@ void Application::Run()
                 {
                     if (viewport2D && m_Viewport2DEditMode)
                         ApplyGizmoDeltaToSelected2DSubElements(beforeGizmo, *targetTransform);
+                    else if (viewport2D && targetTransform == &m_Viewport2DPivotTransform)
+                        ApplyGizmoDeltaToSelectedObject2DPivot(beforeGizmo, *targetTransform);
                     else
                         ApplyGizmoDeltaToSelection(beforeGizmo, *targetTransform);
                     m_TimelineAnimation.RecordSelectedTransformChange(m_Scene);
@@ -472,42 +586,48 @@ void Application::Run()
             uint64_t shadedOpaqueColor = useSSAO ? m_SSAO->GetOutputTexture() : opaqueColor;
 
 #ifdef G_OPENGL
-            // Render transparent geometry after SSAO, reusing the opaque G-buffer depth attachment.
-            RenderTransparentDepthPrepass();
-            m_ViewportFBO->Bind(false);
-            const GLenum transparentBuffers[2] = { GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4 };
-            const float zero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-            const float one[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-            glDrawBuffers(2, transparentBuffers);
-            glClearBufferfv(GL_COLOR, 0, zero);
-            glClearBufferfv(GL_COLOR, 1, one);
-            glDepthMask(GL_FALSE);
-            glEnable(GL_DEPTH_TEST);
-            glEnable(GL_BLEND);
-            glBlendEquation(GL_FUNC_ADD);
-            glBlendFunci(0, GL_ONE, GL_ONE);
-            glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
+            if (hasVisibleTransparentObject)
+            {
+                // Render transparent geometry after SSAO, reusing the opaque G-buffer depth attachment.
+                RenderTransparentDepthPrepass();
+                m_ViewportFBO->Bind(false);
+                const GLenum transparentBuffers[2] = { GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4 };
+                const float zero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+                const float one[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+                glDrawBuffers(2, transparentBuffers);
+                glClearBufferfv(GL_COLOR, 0, zero);
+                glClearBufferfv(GL_COLOR, 1, one);
+                glDepthMask(GL_FALSE);
+                glEnable(GL_DEPTH_TEST);
+                glEnable(GL_BLEND);
+                glBlendEquation(GL_FUNC_ADD);
+                glBlendFunci(0, GL_ONE, GL_ONE);
+                glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
 
-            for (const auto& entry : m_Scene.GetObjects())
-                if (entry.Visible && entry.Object && entry.Object->Opacity > 0.001f &&
-                    entry.Object->Opacity < 0.999f &&
-                    cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
-                    entry.Object->Draw(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix(), true);
+                for (const auto& entry : m_Scene.GetObjects())
+                    if (entry.Visible && entry.Object && entry.Object->Opacity > 0.001f &&
+                        entry.Object->Opacity < 0.999f &&
+                        cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
+                        entry.Object->Draw(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix(), true);
 
-            glDepthMask(GL_TRUE);
-            glBlendFunci(0, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glBlendFunci(1, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            const GLenum opaqueBuffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
-            glDrawBuffers(3, opaqueBuffers);
-            m_ViewportFBO->Unbind();
+                glDepthMask(GL_TRUE);
+                glBlendFunci(0, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glBlendFunci(1, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                const GLenum opaqueBuffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
+                glDrawBuffers(3, opaqueBuffers);
+                m_ViewportFBO->Unbind();
+            }
 #endif
-            if (IsMSAAEnabled())
+            if (hasVisibleTransparentObject && IsMSAAEnabled())
                 m_ViewportFBO->ResolveTo(m_ViewportResolvedFBO, { 3, 4 }, false);
-            uint64_t sceneColor = CompositeWeightedBlendedOIT(
-                shadedOpaqueColor,
-                postProcessFBO->GetColorAttachmentRendererID(3),
-                postProcessFBO->GetColorAttachmentRendererID(4));
-            RenderTransparentStepEdges(postProcessFBO->GetDepthAttachmentRendererID());
+            uint64_t sceneColor = hasVisibleTransparentObject
+                ? CompositeWeightedBlendedOIT(
+                    shadedOpaqueColor,
+                    postProcessFBO->GetColorAttachmentRendererID(3),
+                    postProcessFBO->GetColorAttachmentRendererID(4))
+                : shadedOpaqueColor;
+            if (hasVisibleTransparentObject)
+                RenderTransparentStepEdges(postProcessFBO->GetDepthAttachmentRendererID());
             if (m_ViewportRenderMode == ViewportRenderMode::Editor && !viewport2D &&
                 !IsMSAAEnabled() && m_FXAA->Enabled())
             {
@@ -549,6 +669,16 @@ void Application::Run()
         RenderCommand::SetDepthRange(0,1);
 
         m_WindowInterface->PollEvents();
+
+        if (m_FrameRateLimit > 0)
+        {
+            const int frameRateLimit = std::clamp(m_FrameRateLimit, 30, 60);
+            const auto targetFrameDuration = std::chrono::duration<float>(1.0f / (float)frameRateLimit);
+            const auto targetFrameEndTime = frameStartTime + std::chrono::duration_cast<clock::duration>(targetFrameDuration);
+            const auto frameEndTime = clock::now();
+            if (frameEndTime + frameLimitTolerance < targetFrameEndTime)
+                SleepUntilFrameLimit(targetFrameEndTime);
+        }
     }
 }
 
@@ -664,6 +794,19 @@ bool Application::OnFileDrop(FileDropEvent& e)
             continue;
         }
 
+        std::string extension = filepath.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (extension == ".dxf")
+        {
+            if (m_ImGuiLayer)
+            {
+                m_ImGuiLayer->QueueDxfImport(filepath);
+                loadedAny = true;
+            }
+            continue;
+        }
+
         loadedAny |= LoadFileByExtension(filepath);
     }
     return loadedAny;
@@ -709,6 +852,27 @@ Ref<Object3D> Application::LoadObject3D(const std::filesystem::path& filepath)
     return object;
 }
 
+Ref<Object3D> Application::LoadTexturePlane(const std::filesystem::path& filepath)
+{
+    Ref<TexturePlaneObject> object = CreateRef<TexturePlaneObject>();
+    if (!object->LoadFromImageFile(filepath))
+        return nullptr;
+
+    std::string displayName;
+    try {
+        displayName = filepath.filename().u8string();
+    } catch (...) {
+        displayName = filepath.filename().string();
+    }
+
+    m_Scene.AddObject(object, displayName, filepath.u8string());
+    SetViewportViewMode(ViewportViewMode::View3D);
+    SetViewportRenderMode(ViewportRenderMode::Editor);
+    m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    m_SelectedOutlineValid = false;
+    return object;
+}
+
 Ref<Object3D> Application::LoadGCode(const std::filesystem::path& filepath)
 {
     Ref<GCodeObject> object = CreateRef<GCodeObject>();
@@ -728,7 +892,7 @@ Ref<Object3D> Application::LoadGCode(const std::filesystem::path& filepath)
     return object;
 }
 
-Ref<Object3D> Application::LoadVector2D(const std::filesystem::path& filepath)
+Ref<Object3D> Application::LoadVector2D(const std::filesystem::path& filepath, DxfImportMode mode)
 {
     std::string extension = filepath.extension().string();
     std::transform(extension.begin(), extension.end(), extension.begin(),
@@ -738,7 +902,7 @@ Ref<Object3D> Application::LoadVector2D(const std::filesystem::path& filepath)
     std::string error;
     bool loaded = false;
     if (extension == ".dxf")
-        loaded = DxfLoader::Load(filepath, document, error);
+        loaded = DxfLoader::Load(filepath, document, error, mode);
 
     if (!loaded)
     {
@@ -756,6 +920,91 @@ Ref<Object3D> Application::LoadVector2D(const std::filesystem::path& filepath)
     m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
     m_SelectedOutlineValid = false;
     return object;
+}
+
+Ref<Object3D> Application::SliceSelectedModel(float layerHeight)
+{
+    Scene::Entry* selectedEntry = m_Scene.GetSelectedEntry();
+    if (!selectedEntry || !selectedEntry->Object)
+    {
+        WARN("Slice failed: no selected model.");
+        return nullptr;
+    }
+
+    Ref<Object2D> object2D = std::dynamic_pointer_cast<Object2D>(selectedEntry->Object);
+    if (object2D)
+    {
+        WARN("Slice failed: selected object is 2D data, expected a 3D model.");
+        return nullptr;
+    }
+
+    std::vector<glm::vec3> triangleVertices;
+    for (const Ref<Mesh>& mesh : selectedEntry->Object->Meshes)
+    {
+        if (!mesh || mesh->TraceVertices.empty())
+            continue;
+
+        const glm::mat4 transform = selectedEntry->Object->Transfm.GetMatrix() * mesh->Transfm.GetMatrix();
+        auto pushVertex = [&](uint32_t index)
+        {
+            if (index >= mesh->TraceVertices.size())
+                return;
+            const glm::vec3 position = mesh->TraceVertices[index].Position;
+            triangleVertices.push_back(glm::vec3(transform * glm::vec4(position, 1.0f)));
+        };
+
+        if (!mesh->TraceIndices.empty())
+        {
+            for (size_t i = 0; i + 2 < mesh->TraceIndices.size(); i += 3)
+            {
+                pushVertex(mesh->TraceIndices[i]);
+                pushVertex(mesh->TraceIndices[i + 1]);
+                pushVertex(mesh->TraceIndices[i + 2]);
+            }
+        }
+        else
+        {
+            for (size_t i = 0; i + 2 < mesh->TraceVertices.size(); i += 3)
+            {
+                triangleVertices.push_back(glm::vec3(transform * glm::vec4(mesh->TraceVertices[i].Position, 1.0f)));
+                triangleVertices.push_back(glm::vec3(transform * glm::vec4(mesh->TraceVertices[i + 1].Position, 1.0f)));
+                triangleVertices.push_back(glm::vec3(transform * glm::vec4(mesh->TraceVertices[i + 2].Position, 1.0f)));
+            }
+        }
+    }
+
+    if (triangleVertices.size() < 3)
+    {
+        WARN("Slice failed: selected model has no triangle data.");
+        return nullptr;
+    }
+
+    GeometryProcess::SliceOptions options;
+    options.Normal = glm::vec3(0.0f, 0.0f, 1.0f);
+    options.LayerHeight = std::max(layerHeight, 0.0001f);
+    GeometryProcess::SliceContours contours = GeometryProcess::SliceTriangleVertices(triangleVertices, options);
+    if (contours.empty())
+    {
+        WARN("Slice failed: GeometryProcess returned no contours.");
+        return nullptr;
+    }
+
+    Ref<SlicePreviewObject> preview = CreateRef<SlicePreviewObject>();
+    if (!preview->LoadFromContours(contours))
+    {
+        WARN("Slice failed: unable to build slice preview geometry.");
+        return nullptr;
+    }
+
+    const std::string sourceName = selectedEntry->Name.empty() ? "Selected Model" : selectedEntry->Name;
+    m_Scene.AddObject(preview, sourceName + " Slices", selectedEntry->FilePath);
+    SetViewportViewMode(ViewportViewMode::View3D);
+    SetViewportRenderMode(ViewportRenderMode::Editor);
+    m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+    m_SelectedOutlineValid = false;
+
+    INFO("Sliced {} triangles into {} layers.", triangleVertices.size() / 3, contours.size());
+    return preview;
 }
 
 Ref<Object3D> Application::LoadManixVolume()
@@ -840,6 +1089,10 @@ bool Application::LoadFileByExtension(const std::filesystem::path& filepath)
 
     if (extension == ".dxf")
         return LoadVector2D(filepath) != nullptr;
+
+    if (extension == ".jpg" || extension == ".jpeg" ||
+        extension == ".png" || extension == ".bmp")
+        return LoadTexturePlane(filepath) != nullptr;
 
     if (extension == ".obj" || extension == ".stl" || extension == ".ply" ||
         extension == ".gltf" || extension == ".glb" ||
@@ -1010,6 +1263,7 @@ void Application::ResizeWeightedBlendedOIT(uint32_t width, uint32_t height)
 #ifdef G_OPENGL
     if (!m_OITCompositeFBO)
         return;
+    m_OITCompositeValid = false;
     if (m_OITCompositeTexture)
         glDeleteTextures(1, &m_OITCompositeTexture);
     glCreateTextures(GL_TEXTURE_2D, 1, &m_OITCompositeTexture);
@@ -1050,6 +1304,7 @@ uint64_t Application::CompositeWeightedBlendedOIT(uint64_t opaqueTexture, uint64
     glBindVertexArray(0);
     glEnable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
+    m_OITCompositeValid = true;
     return m_OITCompositeTexture;
 #else
     (void)accumulationTexture;
@@ -1523,6 +1778,8 @@ void Application::SetSelectedObjectIndex(int index)
     else
     {
         m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+        if (IsViewport2D())
+            UpdateViewport2DObjectGizmoTarget(true);
     }
     m_SelectedOutlineValid = false;
 }
@@ -1538,6 +1795,8 @@ void Application::AddSelectedObjectIndex(int index)
     else
     {
         m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+        if (IsViewport2D())
+            UpdateViewport2DObjectGizmoTarget(true);
     }
     m_SelectedOutlineValid = false;
 }
@@ -1572,6 +1831,30 @@ void Application::ApplyGizmoDeltaToSelection(const Transform& before, const Tran
     }
 }
 
+void Application::ApplyGizmoDeltaToSelectedObject2DPivot(const Transform& before, const Transform& after)
+{
+    if (!IsViewport2D() || m_Viewport2DEditMode || m_Scene.GetSelectedCount() != 1)
+        return;
+
+    Transform* transform = m_Scene.GetSelectedTransform();
+    if (!transform)
+        return;
+
+    const glm::quat rotationDelta = glm::normalize(after.rotation * glm::inverse(before.rotation));
+    glm::vec3 scaleRatio(1.0f);
+    for (int axis = 0; axis < 3; axis++)
+    {
+        const float beforeScale = before.scale[axis];
+        scaleRatio[axis] = std::abs(beforeScale) > 0.000001f ? after.scale[axis] / beforeScale : 1.0f;
+    }
+
+    const glm::vec3 relativeToPivot = transform->translation - before.translation;
+    transform->translation = after.translation + glm::rotate(rotationDelta, relativeToPivot * scaleRatio);
+    transform->rotation = glm::normalize(rotationDelta * transform->rotation);
+    transform->scale *= scaleRatio;
+    m_Viewport2DPivotTransform = after;
+}
+
 void Application::ApplyGizmoDeltaToSelected2DSubElements(const Transform& before, const Transform& after)
 {
     Scene::Entry* entry = m_Scene.GetSelectedEntry();
@@ -1580,10 +1863,15 @@ void Application::ApplyGizmoDeltaToSelected2DSubElements(const Transform& before
         return;
 
     const auto& selectedIndices = object2D->GetSelectedSubElementIndices();
-    if (selectedIndices.size() <= 1)
+    if (selectedIndices.empty())
         return;
 
     const glm::quat rotationDelta = glm::normalize(after.rotation * glm::inverse(before.rotation));
+    const glm::quat objectRotation = object2D->Transfm.rotation;
+    const glm::quat localRotationDelta = glm::normalize(glm::inverse(objectRotation) * rotationDelta * objectRotation);
+    const glm::mat4 inverseObjectTransform = glm::inverse(object2D->Transfm.GetMatrix());
+    const glm::vec3 localBeforePivot = glm::vec3(inverseObjectTransform * glm::vec4(before.translation, 1.0f));
+    const glm::vec3 localAfterPivot = glm::vec3(inverseObjectTransform * glm::vec4(after.translation, 1.0f));
     glm::vec3 scaleRatio(1.0f);
     for (int axis = 0; axis < 3; axis++)
     {
@@ -1597,9 +1885,9 @@ void Application::ApplyGizmoDeltaToSelected2DSubElements(const Transform& before
         if (!transform)
             continue;
 
-        const glm::vec3 relativeToPivot = transform->translation - before.translation;
-        transform->translation = after.translation + glm::rotate(rotationDelta, relativeToPivot * scaleRatio);
-        transform->rotation = glm::normalize(rotationDelta * transform->rotation);
+        const glm::vec3 relativeToPivot = transform->translation - localBeforePivot;
+        transform->translation = localAfterPivot + glm::rotate(localRotationDelta, relativeToPivot * scaleRatio);
+        transform->rotation = glm::normalize(localRotationDelta * transform->rotation);
         transform->scale *= scaleRatio;
     }
 
@@ -1625,6 +1913,33 @@ void Application::SetViewport2DPivotIndex(int index)
 {
     m_Viewport2DPivotIndex = std::clamp(index, 0, 8);
     Update2DSubElementGizmoTarget(true);
+    UpdateViewport2DObjectGizmoTarget(true);
+}
+
+void Application::UpdateViewport2DObjectGizmoTarget(bool forceRecenter)
+{
+    if (!IsViewport2D() || m_Viewport2DEditMode)
+        return;
+
+    Scene::Entry* entry = m_Scene.GetSelectedEntry();
+    if (!entry || !entry->Object || m_Scene.GetSelectedCount() != 1)
+    {
+        m_GizmoTargetTransform = m_Scene.GetSelectedTransform();
+        return;
+    }
+
+    if (forceRecenter || m_GizmoTargetTransform != &m_Viewport2DPivotTransform)
+    {
+        glm::vec3 minimum;
+        glm::vec3 maximum;
+        if (ObjectXYBounds(*entry->Object, minimum, maximum))
+        {
+            m_Viewport2DPivotTransform = entry->Object->Transfm;
+            m_Viewport2DPivotTransform.translation = PivotPointFromBounds(minimum, maximum, m_Viewport2DPivotIndex);
+        }
+    }
+
+    m_GizmoTargetTransform = &m_Viewport2DPivotTransform;
 }
 
 void Application::Update2DSubElementGizmoTarget(bool forceRecenter)
@@ -1647,13 +1962,7 @@ void Application::Update2DSubElementGizmoTarget(bool forceRecenter)
         return;
     }
 
-    if (selectedIndices.size() == 1)
-    {
-        m_GizmoTargetTransform = object2D->GetSubElementTransform(object2D->GetSelectedSubElementIndex());
-        return;
-    }
-
-    if (forceRecenter || !m_LeftDownGizmo)
+    if (forceRecenter || m_GizmoTargetTransform != &m_Viewport2DPivotTransform)
     {
         glm::vec3 minimum;
         glm::vec3 maximum;
@@ -1684,7 +1993,10 @@ void Application::SetViewportViewMode(ViewportViewMode mode)
 
     m_ViewportViewMode = mode;
     if (mode == ViewportViewMode::View2D)
+    {
         SetViewportRenderMode(ViewportRenderMode::Editor);
+        UpdateViewport2DObjectGizmoTarget(true);
+    }
     else
         SetViewport2DEditMode(false);
     m_SelectedOutlineValid = false;
@@ -1849,7 +2161,7 @@ uint64_t Application::GetViewportColorTextureID() const
         return m_PathTracer->GetOutputTexture();
     if (!IsViewport2D() && !IsMSAAEnabled() && m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
         return m_FXAA->GetOutputTexture();
-    if (m_OITCompositeTexture)
+    if (m_OITCompositeValid && m_OITCompositeTexture)
         return m_OITCompositeTexture;
     if (m_SSAO && m_SSAO->Enabled() && m_SSAO->GetOutputTexture())
         return m_SSAO->GetOutputTexture();

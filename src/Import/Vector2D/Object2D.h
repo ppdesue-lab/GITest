@@ -42,6 +42,7 @@ public:
     int GetSelectedSubElementIndex() const { return m_SelectedSubElementIndex; }
     bool IsSubElementSelected(int index) const;
     const std::vector<int>& GetSelectedSubElementIndices() const { return m_SelectedSubElementIndices; }
+    bool GetObjectBounds(glm::vec3& minimum, glm::vec3& maximum) const;
     bool GetSelectedSubElementBounds(glm::vec3& minimum, glm::vec3& maximum) const;
     void SetSelectedSubElementIndex(int index);
     void SetSelectedSubElementIndices(const std::vector<int>& indices);
