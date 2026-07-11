@@ -1,10 +1,18 @@
 #include "stdsfx.h"
 #include "PBRIBL.h"
 
+#if defined(G_OPENGL) || defined(G_DX11)
+#include "stb_image.h"
+#endif
+
 #ifdef G_OPENGL
 #include <glad/glad.h>
 #include <glm/gtc/matrix_transform.hpp>
-#include "stb_image.h"
+#endif
+
+#ifdef G_DX11
+#include <Platform/DX11/DX11Context.h>
+#endif
 
 namespace
 {
@@ -230,11 +238,12 @@ namespace
         void main() { o_BRDF = IntegrateBRDF(v_UV.x, v_UV.y); }
     )";
 }
-#endif
 
 PBRIBL::PBRIBL(const std::string& hdrPath)
 {
 #ifdef G_OPENGL
+    BuildEnvironment(hdrPath);
+#elif defined(G_DX11)
     BuildEnvironment(hdrPath);
 #else
     (void)hdrPath;
@@ -446,7 +455,61 @@ void PBRIBL::BuildEnvironment(const std::string& hdrPath)
     if (blendEnabled) glEnable(GL_BLEND); else glDisable(GL_BLEND);
     if (cullFaceEnabled) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
 #else
+#ifdef G_DX11
+    if (hdrPath.empty())
+        return;
+
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    stbi_set_flip_vertically_on_load(true);
+    float* hdrData = stbi_loadf(hdrPath.c_str(), &width, &height, &channels, 3);
+    if (!hdrData || width <= 0 || height <= 0)
+    {
+        ERROR("Failed to load DX11 PBR HDR environment: {}", hdrPath);
+        if (hdrData)
+            stbi_image_free(hdrData);
+        return;
+    }
+
+    std::vector<glm::vec4> pixels((size_t)width * (size_t)height);
+    for (size_t i = 0; i < pixels.size(); ++i)
+        pixels[i] = glm::vec4(hdrData[i * 3 + 0], hdrData[i * 3 + 1], hdrData[i * 3 + 2], 1.0f);
+    stbi_image_free(hdrData);
+
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width = (UINT)width;
+    desc.Height = (UINT)height;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA data = {};
+    data.pSysMem = pixels.data();
+    data.SysMemPitch = (UINT)(width * sizeof(glm::vec4));
+    auto device = DX11Context::GetDevice();
+    HRESULT hr = device->CreateTexture2D(&desc, &data, &m_DX11EnvironmentTexture);
+    if (FAILED(hr) || !m_DX11EnvironmentTexture)
+    {
+        ERROR("Failed to create DX11 PBR HDR environment texture: {}", hdrPath);
+        return;
+    }
+    device->CreateShaderResourceView(m_DX11EnvironmentTexture.Get(), nullptr, &m_DX11EnvironmentSRV);
+
+    D3D11_SAMPLER_DESC samplerDesc = {};
+    samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+    samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+    device->CreateSamplerState(&samplerDesc, &m_DX11EnvironmentSampler);
+    INFO("Loaded DX11 PBR HDR environment: {}", hdrPath);
+#else
     (void)hdrPath;
+#endif
 #endif
 }
 
@@ -468,7 +531,24 @@ void PBRIBL::Bind(const Ref<Shader>& shader) const
     glBindTextureUnit(4, m_PrefilterMap);
     glBindTextureUnit(5, m_BRDFLUT);
 #else
-    (void)shader;
+    if (!shader)
+        return;
+    shader->SetInt("u_iblEnabled", m_Enabled ? 1 : 0);
+    shader->SetInt("u_iblDiffuseEnabled", m_DiffuseEnabled ? 1 : 0);
+    shader->SetInt("u_iblSpecularEnabled", m_SpecularEnabled ? 1 : 0);
+    shader->SetFloat("u_iblDiffuseIntensity", m_DiffuseIntensity);
+    shader->SetFloat("u_iblSpecularIntensity", m_SpecularIntensity);
+    shader->SetInt("u_pbrDebugMode", m_DebugMode);
+#ifdef G_DX11
+    if (m_DX11EnvironmentSRV)
+    {
+        ID3D11ShaderResourceView* srv = m_DX11EnvironmentSRV.Get();
+        ID3D11SamplerState* sampler = m_DX11EnvironmentSampler.Get();
+        auto context = DX11Context::GetDeviceContext();
+        context->PSSetShaderResources(11, 1, &srv);
+        context->PSSetSamplers(11, 1, &sampler);
+    }
+#endif
 #endif
 }
 
@@ -480,6 +560,18 @@ void PBRIBL::BindEnvironment(const Ref<Shader>& shader) const
     shader->SetInt("u_EnvironmentMap", 0);
     glBindTextureUnit(0, m_EnvironmentMap);
 #else
-    (void)shader;
+    if (!shader)
+        return;
+    shader->SetInt("u_EnvironmentMap", 0);
+#ifdef G_DX11
+    if (m_DX11EnvironmentSRV)
+    {
+        ID3D11ShaderResourceView* srv = m_DX11EnvironmentSRV.Get();
+        ID3D11SamplerState* sampler = m_DX11EnvironmentSampler.Get();
+        auto context = DX11Context::GetDeviceContext();
+        context->PSSetShaderResources(0, 1, &srv);
+        context->PSSetSamplers(0, 1, &sampler);
+    }
+#endif
 #endif
 }

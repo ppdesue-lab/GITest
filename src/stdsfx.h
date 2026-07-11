@@ -1,6 +1,15 @@
 #ifndef STDSFX_H
 #define STDSFX_H
 
+#ifdef PLATFORM_WINDOWS
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 #include <iostream>
 #include <vector>
 #include <string>

@@ -14,6 +14,7 @@ public:
 	uint32_t GetHeight() const override { return m_Height; }
 	void Bind(uint32_t slot = 0) const override;
 	void Unbind() const override;
+	uint64_t GetImGuiTextureID() const override { return reinterpret_cast<uint64_t>(m_ShaderResourceView.Get()); }
 
 	ID3D11ShaderResourceView* GetShaderResourceView() const { return m_ShaderResourceView.Get(); }
 

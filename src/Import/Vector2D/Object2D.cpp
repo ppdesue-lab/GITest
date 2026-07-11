@@ -165,6 +165,7 @@ bool Mat4NearlyEqual(const glm::mat4& a, const glm::mat4& b)
     }
     return true;
 }
+
 }
 
 Object2D::~Object2D()
@@ -300,11 +301,15 @@ void Object2D::Draw(const glm::mat4& view, const glm::mat4 proj, bool transparen
     m_LineShader->SetMat4("u_Projection", proj);
 
     RenderCommand::EnableDepthTest(true);
-    RenderCommand::SetLineWidth(1.0f);
+    RenderCommand::SetLineWidth(2.0f);
     const glm::mat4 objectTransform = Transfm.GetMatrix();
     EnsureBatchedGeometries();
     Ref<VertexArray> batchedVertexArray = GeometryLibrary::Resolve(m_BatchedGeometry);
-    if (batchedVertexArray && m_BatchedVertexCount > 0)
+    const glm::vec2 viewportSize = Application::Get().GetViewportSize();
+    const bool drewInstancedLines = !m_BatchedLineInstances.empty() &&
+        RenderCommand::DrawInstancedLines(m_BatchedLineInstances.data(), (uint32_t)m_BatchedLineInstances.size(),
+            view, proj, objectTransform, viewportSize);
+    if (!drewInstancedLines && batchedVertexArray && m_BatchedVertexCount > 0)
     {
         m_LineShader->SetMat4("u_Model", objectTransform);
         RenderCommand::DrawLines(batchedVertexArray, m_BatchedVertexCount);
@@ -312,6 +317,9 @@ void Object2D::Draw(const glm::mat4& view, const glm::mat4 proj, bool transparen
 
     if (bPointVisible)
     {
+        m_LineShader->Bind();
+        m_LineShader->SetMat4("u_View", view);
+        m_LineShader->SetMat4("u_Projection", proj);
         RenderCommand::SetPointSize(5.0f);
         Ref<VertexArray> batchedPointVertexArray = GeometryLibrary::Resolve(m_BatchedPointGeometry);
         if (batchedPointVertexArray && m_BatchedPointVertexCount > 0)
@@ -354,7 +362,7 @@ void Object2D::Draw(const glm::mat4& view, const glm::mat4 proj, bool transparen
                 m_DashedLineShader->SetMat4("u_Model", objectTransform * selectedElement->Transfm.GetMatrix());
                 RenderCommand::DrawLines(selectedVertexArray, selectedElement->SelectionVertexCount);
             }
-            RenderCommand::SetLineWidth(1.0f);
+            RenderCommand::SetLineWidth(2.0f);
         }
     }
 }
@@ -387,7 +395,7 @@ void Object2D::DrawSelectedMask(const glm::mat4& view, const glm::mat4& proj,
 
     shader->SetInt("u_XZInput", 0);
     shader->SetFloat("u_XZInputY", 0.0f);
-    RenderCommand::SetLineWidth(1.0f);
+    RenderCommand::SetLineWidth(2.0f);
     const glm::mat4 objectTransform = Transfm.GetMatrix();
     EnsureBatchedGeometries();
     Ref<VertexArray> batchedVertexArray = GeometryLibrary::Resolve(m_BatchedGeometry);
@@ -626,6 +634,7 @@ void Object2D::ReleaseBatchedGeometries()
     m_BatchedPointGeometry = {};
     m_BatchedVertexCount = 0;
     m_BatchedPointVertexCount = 0;
+    m_BatchedLineInstances.clear();
     m_BatchedElementMatrices.clear();
     m_BatchedElementVisible.clear();
     m_BatchedGeometryDirty = true;
@@ -737,6 +746,16 @@ void Object2D::EnsureBatchedGeometries()
 
     if (!lineVertices.empty())
     {
+        m_BatchedLineInstances.reserve(lineVertices.size() / 2);
+        for (size_t i = 0; i + 1 < lineVertices.size(); i += 2)
+        {
+            RendererLineInstance instance;
+            instance.Start = glm::vec4(lineVertices[i].Position, 1.0f);
+            instance.End = glm::vec4(lineVertices[i + 1].Position, 1.0f);
+            instance.Color = lineVertices[i].Color;
+            m_BatchedLineInstances.push_back(instance);
+        }
+
         m_BatchedGeometry = GeometryLibrary::Register(BuildVertexArray(lineVertices));
         m_BatchedVertexCount = (uint32_t)lineVertices.size();
     }

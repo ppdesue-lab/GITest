@@ -1,7 +1,9 @@
 #include "VertexArray.h"
 
 #include <Renderer/Renderer.h>
+#ifdef G_OPENGL
 #include <Platform/OpenGL/VertexArrayOpenGL.h>
+#endif
 #ifdef G_DX11
 #include <Platform/DX11/DX11VertexArray.h>
 #endif
@@ -15,8 +17,10 @@ Ref<VertexArray> VertexArray::Create()
 {
     switch (Renderer::GetAPI())
     {
+#ifdef G_OPENGL
     case Renderer::API::OpenGL:
         return CreateRef<VertexArrayOpenGL>();
+#endif
 #ifdef G_DX11
     case Renderer::API::DX11:
         return CreateRef<DX11VertexArray>();

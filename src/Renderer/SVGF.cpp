@@ -4,7 +4,9 @@
 #include <Camera/Camera.h>
 #include <Renderer/PathTracer.h>
 
+#ifdef G_OPENGL
 #include <glad/glad.h>
+#endif
 #include <glm/glm.hpp>
 
 #include <tiny_ocl.h>
@@ -39,6 +41,7 @@ struct SVGF::Impl
 
     void CreateOutputTexture()
     {
+#ifdef G_OPENGL
         if (OutputTexture)
             glDeleteTextures(1, &OutputTexture);
         glCreateTextures(GL_TEXTURE_2D, 1, &OutputTexture);
@@ -47,6 +50,9 @@ struct SVGF::Impl
         glTextureParameteri(OutputTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTextureParameteri(OutputTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTextureParameteri(OutputTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+#else
+        OutputTexture = 0;
+#endif
     }
 
     void CreateBuffers()
@@ -108,8 +114,10 @@ SVGF::SVGF(uint32_t width, uint32_t height)
 
 SVGF::~SVGF()
 {
+#ifdef G_OPENGL
     if (m_Impl && m_Impl->OutputTexture)
         glDeleteTextures(1, &m_Impl->OutputTexture);
+#endif
 }
 
 void SVGF::Resize(uint32_t width, uint32_t height)
@@ -127,6 +135,11 @@ void SVGF::Resize(uint32_t width, uint32_t height)
 
 void SVGF::Render(const PathTracer& tracer, const Camera& camera)
 {
+#ifndef G_OPENGL
+    (void)tracer;
+    (void)camera;
+    return;
+#else
     if (!m_Enabled || !m_Impl->Initialize())
         return;
 
@@ -180,6 +193,7 @@ void SVGF::Render(const PathTracer& tracer, const Camera& camera)
 
     m_Impl->PreviousViewProjection = camera.GetProjectionMatrix() * camera.GetViewMatrix();
     m_Impl->HasHistory = true;
+#endif
 }
 
 void SVGF::ResetHistory()

@@ -6,6 +6,16 @@
 #ifdef G_OPENGL
 #include <glad/glad.h>
 #endif
+#ifdef G_DX11
+#include <Platform/DX11/DX11Context.h>
+#include <d3d11.h>
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+#endif
 
 void Material::Bind()
 {
@@ -94,6 +104,14 @@ void MaterialPBR::Bind()
     if (!metallicMap) glBindTextureUnit(8, 0);
     if (!roughnessMap) glBindTextureUnit(9, 0);
     if (!aoMap) glBindTextureUnit(10, 0);
+#elif defined(G_DX11)
+    ID3D11ShaderResourceView* nullSRV = nullptr;
+    auto context = DX11Context::GetDeviceContext();
+    if (!albedoMap) context->PSSetShaderResources(6, 1, &nullSRV);
+    if (!normalMap) context->PSSetShaderResources(7, 1, &nullSRV);
+    if (!metallicMap) context->PSSetShaderResources(8, 1, &nullSRV);
+    if (!roughnessMap) context->PSSetShaderResources(9, 1, &nullSRV);
+    if (!aoMap) context->PSSetShaderResources(10, 1, &nullSRV);
 #endif
 }
 

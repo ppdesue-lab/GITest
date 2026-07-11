@@ -12,6 +12,9 @@ public:
 	void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) override;
 	void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount) override;
 	void DrawPoints(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) override;
+	bool DrawInstancedLines(const RendererLineInstance* lines, uint32_t lineCount,
+		const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
+		const glm::vec2& viewportSize) override;
 	void SetLineWidth(float width) override;
 	void SetPointSize(float size) override;
 	void Enable(const std::string& capability) override;
@@ -24,6 +27,8 @@ private:
 	void ApplyRasterizerState();
 
 	glm::vec4 m_ClearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+	float m_LineWidth = 2.0f;
+	float m_PointSize = 1.0f;
 	bool m_CullEnabled = false;
 	std::string m_CullFace = "Back";
 };

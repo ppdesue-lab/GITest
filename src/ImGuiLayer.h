@@ -35,6 +35,7 @@ public:
 
     void Begin();
     void End();
+    void QueueFileImport(const std::filesystem::path& filepath);
     void QueueDxfImport(const std::filesystem::path& filepath);
 
     static void AddConsoleMessage(const ImVec4& color, const std::string& message);
@@ -55,7 +56,7 @@ private:
     void DrawFXAADebugWindow();
     void DrawSVGFDenoiserWindow();
     void DrawPBRIBLDebugWindow();
-    void DrawDxfImportOptionsModal();
+    void DrawImportOptionsModal();
     void OpenModelFile();
     void OpenGCodeFile();
     bool IsSupportedModelFile(const std::filesystem::path& filepath) const;
@@ -98,8 +99,9 @@ private:
     std::vector<std::filesystem::path> m_ContentBrowserFiles;
     bool m_ContentBrowserNeedsRefresh = true;
     bool m_ShowNodeEditor = false;
-    bool m_DxfImportPopupRequested = false;
-    std::filesystem::path m_PendingDxfImportPath;
+    bool m_ImportPopupRequested = false;
+    std::deque<std::filesystem::path> m_PendingImportPaths;
+    std::filesystem::path m_ActiveImportPath;
     DxfImportMode m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
 
     // Console

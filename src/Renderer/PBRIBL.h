@@ -3,6 +3,19 @@
 #include "base.h"
 #include "Shader.h"
 #include <string>
+#ifdef G_DX11
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <d3d11.h>
+#include <wrl/client.h>
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+#endif
 
 class PBRIBL
 {
@@ -37,4 +50,9 @@ private:
     uint32_t m_CubeVAO = 0;
     uint32_t m_CubeVBO = 0;
     uint32_t m_QuadVAO = 0;
+#ifdef G_DX11
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_DX11EnvironmentTexture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_DX11EnvironmentSRV;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> m_DX11EnvironmentSampler;
+#endif
 };

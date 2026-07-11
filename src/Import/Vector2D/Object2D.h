@@ -3,6 +3,7 @@
 #include "Vector2DDocument.h"
 
 #include <Object3D.h>
+#include <Renderer/Renderer.h>
 #include <Renderer/Shader.h>
 #include <Renderer/VertexArray.h>
 
@@ -81,6 +82,7 @@ private:
     GeometryHandle m_BatchedPointGeometry;
     uint32_t m_BatchedVertexCount = 0;
     uint32_t m_BatchedPointVertexCount = 0;
+    std::vector<RendererLineInstance> m_BatchedLineInstances;
     std::vector<glm::mat4> m_BatchedElementMatrices;
     std::vector<uint8_t> m_BatchedElementVisible;
     bool m_BatchedGeometryDirty = true;

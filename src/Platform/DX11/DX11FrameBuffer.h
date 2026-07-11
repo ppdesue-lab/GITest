@@ -34,4 +34,5 @@ private:
 	std::vector<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>> m_ColorSRVs;
 	Microsoft::WRL::ComPtr<ID3D11Texture2D> m_DepthTexture;
 	Microsoft::WRL::ComPtr<ID3D11DepthStencilView> m_DepthDSV;
+	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_DepthSRV;
 };

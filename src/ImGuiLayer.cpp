@@ -183,6 +183,28 @@ namespace
         return ImVec2(value.x, value.y);
     }
 
+    bool RendererUsesTopLeftTextureOrigin()
+    {
+        return Renderer::GetAPI() == Renderer::API::DX11;
+    }
+
+    ImVec2 ViewportUV0()
+    {
+        return RendererUsesTopLeftTextureOrigin() ? ImVec2(0, 0) : ImVec2(0, 1);
+    }
+
+    ImVec2 ViewportUV1()
+    {
+        return RendererUsesTopLeftTextureOrigin() ? ImVec2(1, 1) : ImVec2(1, 0);
+    }
+
+    int ViewportMouseToFramebufferY(float mouseY, float viewportHeight)
+    {
+        if (RendererUsesTopLeftTextureOrigin())
+            return (int)mouseY;
+        return (int)(viewportHeight - mouseY - 1.0f);
+    }
+
     ImU32 ApplyAlpha(ImU32 color, float alpha)
     {
         const int a = (color >> IM_COL32_A_SHIFT) & 0xff;
@@ -455,7 +477,7 @@ void ImGuiLayer::OnImGuiRender()
     Application& app = Application::Get();
     app.GetTimelineAnimation().OnImGuiRender(app.GetScene(), app.GetDeltaTime());
     app.GetCameraAnimation().OnImGuiRender(app.GetCamera(), app.GetDeltaTime());
-    DrawDxfImportOptionsModal();
+    DrawImportOptionsModal();
 
 }
 
@@ -761,7 +783,7 @@ void ImGuiLayer::DrawShadowDebugWindow()
         csm.SaveShadowMap("D:/shadow_cascade_" + std::to_string(debugCascade) + ".png", debugCascade);
     }
 
-    uint32_t texID = csm.GetDebugTextureID(debugCascade);
+    uint64_t texID = csm.GetDebugTextureID(debugCascade);
     if (texID)
     {
         ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -1123,7 +1145,7 @@ void ImGuiLayer::DrawProjectPanel()
         if (icon)
         {
             const ImVec4 tint = visible ? ImVec4(0.88f, 0.92f, 1.0f, 1.0f) : ImVec4(0.55f, 0.58f, 0.64f, 1.0f);
-            return ImGui::ImageButton(id, (ImTextureID)(uint64_t)icon->m_RendererID,
+            return ImGui::ImageButton(id, (ImTextureID)icon->GetImGuiTextureID(),
                 ImVec2(18.0f, 18.0f), ImVec2(0, 1), ImVec2(1, 0),
                 ImVec4(0.0f, 0.0f, 0.0f, 0.0f), tint);
         }
@@ -1602,7 +1624,7 @@ void ImGuiLayer::DrawContentBrowser()
     auto drawTextureIcon = [](ImDrawList* drawList, const Ref<Texture>& texture, const ImVec2& min, const ImVec2& max) {
         if (!texture)
             return;
-        drawList->AddImage((ImTextureID)(uint64_t)texture->m_RendererID, min, max, ImVec2(0, 1), ImVec2(1, 0));
+        drawList->AddImage((ImTextureID)texture->GetImGuiTextureID(), min, max, ImVec2(0, 1), ImVec2(1, 0));
     };
 
     // Path navigation
@@ -1644,7 +1666,7 @@ void ImGuiLayer::DrawContentBrowser()
             ImGui::BeginDisabled();
         if (drive.Icon)
         {
-            ImGui::ImageButton("##Drive", (ImTextureID)(uint64_t)drive.Icon->m_RendererID,
+            ImGui::ImageButton("##Drive", (ImTextureID)drive.Icon->GetImGuiTextureID(),
                 ImVec2(64.0f, 64.0f), ImVec2(0, 1), ImVec2(1, 0));
         }
         else
@@ -1724,25 +1746,8 @@ void ImGuiLayer::DrawContentBrowser()
 
             if (clicked)
                 m_SelectedFile = selectedKey;
-            if (doubleClicked && isModel)
-            {
-                if (!Application::Get().LoadFileByExtension(path))
-                    WARN("Failed to load: {}", path.u8string());
-            }
-            if (doubleClicked && is2D)
-            {
-                QueueDxfImport(path);
-            }
-            if (doubleClicked && isGCode)
-            {
-                if (!Application::Get().LoadGCode(path))
-                    WARN("Failed to load GCode: {}", path.u8string());
-            }
-            if (doubleClicked && isImage)
-            {
-                if (!Application::Get().LoadFileByExtension(path))
-                    WARN("Failed to load image: {}", path.u8string());
-            }
+            if (doubleClicked && (isModel || is2D || isGCode || isImage))
+                QueueFileImport(path);
 
             ImVec2 tileMax(tileMin.x + tileWidth, tileMin.y + tileHeight);
             ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -1885,7 +1890,7 @@ void ImGuiLayer::DrawViewportPanel()
         }
         else
         {
-            ImGui::Image((ImTextureID)textureID, viewportSize, ImVec2(0, 1), ImVec2(1, 0));
+            ImGui::Image((ImTextureID)textureID, viewportSize, ViewportUV0(), ViewportUV1());
 
             const bool imageHovered = ImGui::IsItemHovered();
             ImVec2 itemMin = ImGui::GetItemRectMin();
@@ -1956,20 +1961,32 @@ void ImGuiLayer::DrawViewportPanel()
 // pfd returns UTF-8 on Windows; keep as UTF-8, use u8path for filesystem API
 // (no ANSI conversion needed - std::filesystem::u8path handles UTF-8 directly)
 
-void ImGuiLayer::QueueDxfImport(const std::filesystem::path& filepath)
+void ImGuiLayer::QueueFileImport(const std::filesystem::path& filepath)
 {
-    m_PendingDxfImportPath = filepath;
-    m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
-    m_DxfImportPopupRequested = true;
+    m_PendingImportPaths.push_back(filepath);
+    m_ImportPopupRequested = true;
 }
 
-void ImGuiLayer::DrawDxfImportOptionsModal()
+void ImGuiLayer::QueueDxfImport(const std::filesystem::path& filepath)
 {
-    constexpr const char* popupName = "DXF Import Mode";
-    if (m_DxfImportPopupRequested)
+    QueueFileImport(filepath);
+}
+
+void ImGuiLayer::DrawImportOptionsModal()
+{
+    constexpr const char* popupName = "Import File";
+    if (m_ActiveImportPath.empty() && !m_PendingImportPaths.empty())
+    {
+        m_ActiveImportPath = m_PendingImportPaths.front();
+        m_PendingImportPaths.pop_front();
+        m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
+        m_ImportPopupRequested = true;
+    }
+
+    if (m_ImportPopupRequested)
     {
         ImGui::OpenPopup(popupName);
-        m_DxfImportPopupRequested = false;
+        m_ImportPopupRequested = false;
     }
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -1978,46 +1995,68 @@ void ImGuiLayer::DrawDxfImportOptionsModal()
     if (!ImGui::BeginPopupModal(popupName, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         return;
 
-    const std::string filename = m_PendingDxfImportPath.empty() ?
-        std::string() : m_PendingDxfImportPath.filename().u8string();
-    ImGui::TextUnformatted("Select how to import this DXF file.");
+    const std::string filename = m_ActiveImportPath.empty() ?
+        std::string() : m_ActiveImportPath.filename().u8string();
+    std::string extension = m_ActiveImportPath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const bool isDxf = extension == ".dxf";
+
+    ImGui::TextUnformatted(isDxf ? "Select how to import this DXF file." : "Import this file with default settings.");
     if (!filename.empty())
         ImGui::TextDisabled("%s", filename.c_str());
     ImGui::Separator();
 
-    int mode = 1;
-    if (m_SelectedDxfImportMode == DxfImportMode::LinesOnly)
-        mode = 0;
-    else if (m_SelectedDxfImportMode == DxfImportMode::NativePrimitives)
-        mode = 2;
+    if (isDxf)
+    {
+        int mode = 1;
+        if (m_SelectedDxfImportMode == DxfImportMode::LinesOnly)
+            mode = 0;
+        else if (m_SelectedDxfImportMode == DxfImportMode::NativePrimitives)
+            mode = 2;
 
-    ImGui::RadioButton("Convert all DXF geometry to line segments", &mode, 0);
-    ImGui::RadioButton("Convert to line segments, then fit arcs", &mode, 1);
-    ImGui::RadioButton("Import native DXF primitives when available", &mode, 2);
+        ImGui::RadioButton("Convert all DXF geometry to line segments", &mode, 0);
+        ImGui::RadioButton("Convert to line segments, then fit arcs", &mode, 1);
+        ImGui::RadioButton("Import native DXF primitives when available", &mode, 2);
 
-    if (mode == 0)
-        m_SelectedDxfImportMode = DxfImportMode::LinesOnly;
-    else if (mode == 2)
-        m_SelectedDxfImportMode = DxfImportMode::NativePrimitives;
+        if (mode == 0)
+            m_SelectedDxfImportMode = DxfImportMode::LinesOnly;
+        else if (mode == 2)
+            m_SelectedDxfImportMode = DxfImportMode::NativePrimitives;
+        else
+            m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
+    }
     else
-        m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
+    {
+        ImGui::Dummy(ImVec2(1.0f, 72.0f));
+    }
 
     ImGui::Separator();
-    if (ImGui::Button("Import", ImVec2(120.0f, 0.0f)))
+    if (ImGui::Button(isDxf ? "Import" : "OK", ImVec2(120.0f, 0.0f)))
     {
-        if (!m_PendingDxfImportPath.empty() &&
-            !Application::Get().LoadVector2D(m_PendingDxfImportPath, m_SelectedDxfImportMode))
+        bool loaded = true;
+        if (!m_ActiveImportPath.empty())
         {
-            ::Log::GetCoreLogger()->error("Failed to load DXF file: {}",
-                m_PendingDxfImportPath.u8string());
+            if (isDxf)
+                loaded = Application::Get().LoadVector2D(m_ActiveImportPath, m_SelectedDxfImportMode) != nullptr;
+            else
+                loaded = Application::Get().LoadFileByExtension(m_ActiveImportPath);
         }
-        m_PendingDxfImportPath.clear();
+
+        if (!loaded)
+            ::Log::GetCoreLogger()->error("Failed to load file: {}", m_ActiveImportPath.u8string());
+
+        m_ActiveImportPath.clear();
+        if (!m_PendingImportPaths.empty())
+            m_ImportPopupRequested = true;
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)))
     {
-        m_PendingDxfImportPath.clear();
+        m_ActiveImportPath.clear();
+        if (!m_PendingImportPaths.empty())
+            m_ImportPopupRequested = true;
         ImGui::CloseCurrentPopup();
     }
 
@@ -2056,14 +2095,7 @@ void ImGuiLayer::OpenModelFile()
         return;
     }
 
-    if (IsSupported2DFile(fspath))
-    {
-        QueueDxfImport(fspath);
-        return;
-    }
-
-    if (!Application::Get().LoadFileByExtension(fspath))
-        ::Log::GetCoreLogger()->error("Failed to load file: {}", fspath.u8string());
+    QueueFileImport(fspath);
 }
 
 void ImGuiLayer::OpenGCodeFile()
@@ -2091,8 +2123,7 @@ void ImGuiLayer::OpenGCodeFile()
         ::Log::GetCoreLogger()->error("File does not exist: {}", utf8path);
         return;
     }
-    if (!Application::Get().LoadGCode(fspath))
-        ::Log::GetCoreLogger()->error("Failed to load GCode file: {}", fspath.u8string());
+    QueueFileImport(fspath);
 }
 
 bool ImGuiLayer::IsSupportedModelFile(const std::filesystem::path& filepath) const
@@ -2287,7 +2318,7 @@ bool ImGuiLayer::OnMouseButtonDown(MouseButtonPressedEvent& e)
             const glm::vec2& viewportMouse = app.GetViewportMousePos();
             const glm::vec2& viewportSize = app.GetViewportSize();
             const int x = (int)viewportMouse.x;
-            const int y = (int)(viewportSize.y - viewportMouse.y - 1.0f);
+            const int y = ViewportMouseToFramebufferY(viewportMouse.y, viewportSize.y);
 
             if (app.IsViewport2DEditMode())
             {
@@ -2330,7 +2361,7 @@ bool ImGuiLayer::OnMouseButtonDown(MouseButtonPressedEvent& e)
             const glm::vec2& viewportMouse = app.GetViewportMousePos();
             const glm::vec2& viewportSize = app.GetViewportSize();
             const int x = (int)viewportMouse.x;
-            const int y = (int)(viewportSize.y - viewportMouse.y - 1.0f);
+            const int y = ViewportMouseToFramebufferY(viewportMouse.y, viewportSize.y);
             const int subElementIndex = app.ReadPickupPixel(x, y) - 1;
             if (subElementIndex < 0 && viewport2DLeftDoubleClick)
                 app.SetViewport2DEditMode(false);
@@ -2349,7 +2380,7 @@ bool ImGuiLayer::OnMouseButtonDown(MouseButtonPressedEvent& e)
             const glm::vec2& viewportMouse = app.GetViewportMousePos();
             const glm::vec2& viewportSize = app.GetViewportSize();
             const int x = (int)viewportMouse.x;
-            const int y = (int)(viewportSize.y - viewportMouse.y - 1.0f);
+            const int y = ViewportMouseToFramebufferY(viewportMouse.y, viewportSize.y);
             const int objectID = app.ReadPickupPixel(x, y);
             const int objectIndex = objectID - 1;
             const bool hasPickedObject = objectIndex >= 0 && objectIndex < app.GetScene().GetCount();
@@ -2378,7 +2409,7 @@ bool ImGuiLayer::OnMouseButtonDown(MouseButtonPressedEvent& e)
             const glm::vec2& viewportMouse = app.GetViewportMousePos();
             const glm::vec2& viewportSize = app.GetViewportSize();
             const int x = (int)viewportMouse.x;
-            const int y = (int)(viewportSize.y - viewportMouse.y - 1.0f);
+            const int y = ViewportMouseToFramebufferY(viewportMouse.y, viewportSize.y);
             const int objectID = app.ReadPickupPixel(x, y);
             const int objectIndex = objectID - 1;
             const bool hasPickedObject = objectIndex >= 0 && objectIndex < app.GetScene().GetCount();
@@ -2510,7 +2541,7 @@ void ImGuiLayer::SelectObjectsInViewportRect(const glm::vec2& start, const glm::
             const float tx = samplesX == 1 ? 0.5f : (float)x / (float)(samplesX - 1);
             const glm::vec2 sample = glm::mix(minPoint, maxPoint, glm::vec2(tx, ty));
             const int pickupX = (int)sample.x;
-            const int pickupY = (int)(viewportSize.y - sample.y - 1.0f);
+            const int pickupY = ViewportMouseToFramebufferY(sample.y, viewportSize.y);
             const int objectIndex = app.ReadPickupPixel(pickupX, pickupY) - 1;
             if (objectIndex >= 0 && objectIndex < app.GetScene().GetCount() &&
                 std::find(pickedObjects.begin(), pickedObjects.end(), objectIndex) == pickedObjects.end())
@@ -2569,7 +2600,7 @@ void ImGuiLayer::Select2DSubElementsInViewportRect(const glm::vec2& start, const
             const float tx = samplesX == 1 ? 0.5f : (float)x / (float)(samplesX - 1);
             const glm::vec2 sample = glm::mix(minPoint, maxPoint, glm::vec2(tx, ty));
             const int pickupX = (int)sample.x;
-            const int pickupY = (int)(viewportSize.y - sample.y - 1.0f);
+            const int pickupY = ViewportMouseToFramebufferY(sample.y, viewportSize.y);
             const int subElementIndex = app.ReadPickupPixel(pickupX, pickupY) - 1;
             if (subElementIndex >= 0 && subElementIndex < (int)object2D->GetSubElementCount() &&
                 std::find(pickedSubElements.begin(), pickedSubElements.end(), subElementIndex) == pickedSubElements.end())

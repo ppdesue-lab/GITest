@@ -809,6 +809,7 @@ void FitLineRunToPrimitives(Vector2DDocument& document, uint32_t elementIndex,
     std::vector<float> crossTurnPrefix(points.size() + 1, 0.0f);
     std::vector<float> angleTurnPrefix(points.size() + 1, 0.0f);
     std::vector<float> absAngleTurnPrefix(points.size() + 1, 0.0f);
+    std::vector<float> absPointTurn(points.size(), 0.0f);
     for (size_t prefixIndex = 1; prefixIndex <= points.size(); ++prefixIndex)
     {
         crossTurnPrefix[prefixIndex] = crossTurnPrefix[prefixIndex - 1];
@@ -821,9 +822,10 @@ void FitLineRunToPrimitives(Vector2DDocument& document, uint32_t elementIndex,
             const glm::vec2 previous = points[pointIndex] - points[pointIndex - 1];
             const glm::vec2 next = points[pointIndex + 1] - points[pointIndex];
             const float turnAngle = SignedTurnAngle(previous, next);
+            absPointTurn[pointIndex] = std::abs(turnAngle);
             crossTurnPrefix[prefixIndex] += previous.x * next.y - previous.y * next.x;
             angleTurnPrefix[prefixIndex] += turnAngle;
-            absAngleTurnPrefix[prefixIndex] += std::abs(turnAngle);
+            absAngleTurnPrefix[prefixIndex] += absPointTurn[pointIndex];
         }
     }
 
@@ -843,8 +845,24 @@ void FitLineRunToPrimitives(Vector2DDocument& document, uint32_t elementIndex,
     {
         Vector2DArc bestArc;
         size_t bestEnd = i;
+        float maxInteriorTurn = 0.0f;
         for (size_t candidateEnd = i + minArcSegmentCount; candidateEnd < points.size(); ++candidateEnd)
         {
+            // A fitted arc may be smooth or gently segmented, but it must not swallow a real corner.
+            // This rejects cases such as a rectangular 90-degree corner being approximated by a large arc.
+            constexpr float maxArcInteriorTurn = 0.7853981634f;
+            if (candidateEnd == i + minArcSegmentCount)
+            {
+                for (size_t pointIndex = i + 1; pointIndex < candidateEnd; ++pointIndex)
+                    maxInteriorTurn = std::max(maxInteriorTurn, absPointTurn[pointIndex]);
+            }
+            else
+            {
+                maxInteriorTurn = std::max(maxInteriorTurn, absPointTurn[candidateEnd - 1]);
+            }
+            if (maxInteriorTurn > maxArcInteriorTurn)
+                break;
+
             const float candidateTurn = PrefixRangeSum(angleTurnPrefix, i, candidateEnd);
             if (std::abs(candidateTurn) > maxCandidateTurn)
                 break;

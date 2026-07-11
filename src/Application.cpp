@@ -33,11 +33,15 @@
 #ifdef G_OPENGL
 #include <glad/glad.h>
 #endif
+#ifdef G_DX11
+#include <Platform/DX11/DX11Context.h>
+#endif
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3.h>
 
 #include "Renderer/Renderer.h"
 #include "Renderer/RenderCommand.h"
+#include "Renderer/ProfileTimer.h"
 #include "Renderer/Buffer.h"
 #include "Renderer/VolumeObject.h"
 #include "Renderer/TerrainCDLOD.h"
@@ -254,6 +258,7 @@ void Application::Run()
 
     while (m_Running && !m_WindowInterface->ShouldClose())
     {
+        PROFILE_BEGIN_FRAME();
         auto frameStartTime = clock::now();
         auto currentTime = frameStartTime;
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
@@ -274,21 +279,26 @@ void Application::Run()
 
         Ref<Camera> viewportCamera = GetViewportCamera();
         const bool viewport2D = IsViewport2D();
+        const bool supportsOpenGLPostProcessing = Renderer::GetAPI() == Renderer::API::OpenGL;
 
-        // Process continuous keyboard input (velocity-based)
-        ProcessKeyboardInput(deltaTime);
-        for (const auto& entry : m_Scene.GetObjects())
         {
-            Ref<GCodeObject> gcodeObject = std::dynamic_pointer_cast<GCodeObject>(entry.Object);
-            if (gcodeObject)
-                gcodeObject->Update(deltaTime);
+            PROFILE_SCOPE("Frame.Update");
+            // Process continuous keyboard input (velocity-based)
+            ProcessKeyboardInput(deltaTime);
+            for (const auto& entry : m_Scene.GetObjects())
+            {
+                Ref<GCodeObject> gcodeObject = std::dynamic_pointer_cast<GCodeObject>(entry.Object);
+                if (gcodeObject)
+                    gcodeObject->Update(deltaTime);
+            }
+            m_TimelineAnimation.Update(m_Scene, deltaTime);
+            m_CameraAnimation.Update(m_Camera, deltaTime);
         }
-        m_TimelineAnimation.Update(m_Scene, deltaTime);
-        m_CameraAnimation.Update(m_Camera, deltaTime);
         // --- RESIZE FBO IF VIEWPORT SIZE CHANGED SINCE LAST FRAME ---
         if (m_ViewportFBO && (m_ViewportFBO->GetSpecification().Width != (uint32_t)m_ViewportSize.x ||
                               m_ViewportFBO->GetSpecification().Height != (uint32_t)m_ViewportSize.y))
         {
+            PROFILE_SCOPE("Frame.ResizeResources");
             m_ViewportFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
             if (m_ViewportResolvedFBO)
                 m_ViewportResolvedFBO->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
@@ -305,9 +315,16 @@ void Application::Run()
             ResizeSelectedOutlineResources((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
         }
 
-        // --- CSM SHADOW MAP UPDATE ---
-        if (m_CSM->Enabled())
+        if (m_AppMode == AppMode::Editor)
         {
+            PROFILE_SCOPE("Editor.GizmoUpdate");
+            UpdateAndQueueViewportGizmo(viewportCamera, viewport2D);
+        }
+
+        // --- CSM SHADOW MAP UPDATE ---
+        if (m_CSM->Enabled() && !viewport2D)
+        {
+            PROFILE_SCOPE("CSM.Total");
             m_CSM->Update(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix(), viewportCamera->getNearPlane(), viewportCamera->getFarPlane());
 
             auto depthShader = GetShaderLibrary()->Get("ShadowDepth");
@@ -317,10 +334,10 @@ void Application::Run()
             {
                 m_CSM->BeginShadowPass(i);
                 depthShader->Bind();
+                depthShader->SetMat4("u_LightViewProj", lightViewProj[i]);
                 for (const auto& entry : m_Scene.GetObjects())
                 {
                     if (!entry.Visible || !entry.Object || entry.Object->Opacity <= 0.001f) continue;
-                    depthShader->SetMat4("u_LightViewProj", lightViewProj[i]);
                     for (auto& mesh : entry.Object->Meshes)
                     {
                         Ref<VertexArray> vertexObject = mesh ? GeometryLibrary::Resolve(mesh->VertexObject) : nullptr;
@@ -337,7 +354,10 @@ void Application::Run()
         // --- PROBE GI UPDATE ---
         // The initial implementation maintains an irradiance volume on the CPU.
         // Its interface is ready for a future capture/projection update pass.
-        m_ProbeGI->Update(m_CSM->GetLight());
+        {
+            PROFILE_SCOPE("ProbeGI.Update");
+            m_ProbeGI->Update(m_CSM->GetLight());
+        }
 
         // --- SCENE RENDERING (common to both modes) ---
         // Determine target: Editor → FBO, Game → default framebuffer
@@ -368,6 +388,7 @@ void Application::Run()
         // Draw selected environment background without writing depth.
         if (!viewport2D)
         {
+            PROFILE_SCOPE("Scene.Background");
             RenderCommand::SetDepthRange(0.99f, 1.0f);
 #ifdef G_OPENGL
             glDepthMask(GL_FALSE);
@@ -399,15 +420,9 @@ void Application::Run()
 #endif
         }
 
-        // Update layers (draws axis, ground, etc.)
-        if (!viewport2D)
-        {
-            for (auto& layer : m_LayerStack)
-                layer->OnUpdate();
-        }
-
         if (viewport2D && m_AppMode == AppMode::Editor)
         {
+            PROFILE_SCOPE("Scene.Grid2D");
             auto gridShader = GetShaderLibrary()->Get("DefaultColor");
             gridShader->Bind();
             gridShader->SetMat4("u_View", viewportCamera->GetViewMatrix());
@@ -429,14 +444,17 @@ void Application::Run()
         const Frustum cameraFrustum(viewportCamera->GetProjectionMatrix() * viewportCamera->GetViewMatrix());
         bool hasVisibleTransparentObject = false;
         m_OITCompositeValid = false;
-        for (const auto& entry : m_Scene.GetObjects())
         {
-            if (entry.Visible && entry.Object &&
-                entry.Object->Opacity > 0.001f && entry.Object->Opacity < 0.999f &&
-                cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
+            PROFILE_SCOPE("Scene.CullTransparent");
+            for (const auto& entry : m_Scene.GetObjects())
             {
-                hasVisibleTransparentObject = true;
-                break;
+                if (entry.Visible && entry.Object &&
+                    entry.Object->Opacity > 0.001f && entry.Object->Opacity < 0.999f &&
+                    cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
+                {
+                    hasVisibleTransparentObject = true;
+                    break;
+                }
             }
         }
 #ifdef G_OPENGL
@@ -446,23 +464,39 @@ void Application::Run()
             if (entry.Visible && water && water->Opacity > 0.001f)
                 water->PrepareSceneTextures(m_Scene, *viewportCamera, m_ViewportSize);
         }
+#endif
 
         if (m_AppMode == AppMode::Editor)
         {
+            PROFILE_SCOPE("Scene.OpaqueDraw");
             for (const auto& entry : m_Scene.GetObjects())
-                if (entry.Visible && entry.Object && entry.Object->Opacity >= 0.999f &&
+                if (entry.Visible && entry.Object &&
+                    (!supportsOpenGLPostProcessing || entry.Object->Opacity >= 0.999f) &&
                     cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
                     entry.Object->Draw(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix());
         }
         else
-#endif
-        for (const auto& entry : m_Scene.GetObjects())
-            if (entry.Visible && entry.Object && entry.Object->Opacity > 0.001f &&
-                cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
-                entry.Object->Draw(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix());
+        {
+            PROFILE_SCOPE("Scene.OpaqueDraw");
+            for (const auto& entry : m_Scene.GetObjects())
+                if (entry.Visible && entry.Object && entry.Object->Opacity > 0.001f &&
+                    cameraFrustum.Intersects(entry.Object->GetWorldBoundingSphere()))
+                    entry.Object->Draw(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix());
+        }
 
             if (m_AppMode == AppMode::Editor)
             {
+                PROFILE_SCOPE("Editor.Overlays");
+                // Editor helper layers are drawn after scene geometry so helper
+                // axes stay visible above default planes and grids.
+                if (!viewport2D)
+                {
+                    RenderCommand::SetDepthRange(0, 0.001f);
+                    for (auto& layer : m_LayerStack)
+                        layer->OnUpdate();
+                    RenderCommand::SetDepthRange(0, 1);
+                }
+
                 if (!m_SelectedMaskValid && !IsViewport2DEditMode() && m_Scene.GetSelectedCount() > 0)
                     RenderSelectedMaskPass();
                 if (m_ViewportFBO) m_ViewportFBO->Bind(false);
@@ -516,53 +550,8 @@ void Application::Run()
                     }
                 }
 
-                // Draw gizmo
             if (!viewport2D)
                 m_ProbeGI->DrawDebug();
-            if (viewport2D && m_Viewport2DEditMode && !m_LeftDownGizmo)
-                Update2DSubElementGizmoTarget();
-            else if (viewport2D && !m_Viewport2DEditMode && !m_LeftDownGizmo)
-                UpdateViewport2DObjectGizmoTarget();
-            Transform* targetTransform = m_GizmoTargetTransform;
-            if (targetTransform)
-            {
-                int gizmoFlags = 0;
-                switch (m_GizmoMode)
-                {
-                case 0: gizmoFlags = GIZMO_TRANSLATE; break;
-                case 1: gizmoFlags = GIZMO_ROTATE;    break;
-                case 2: gizmoFlags = GIZMO_SCALE;     break;
-                case 3: gizmoFlags = GIZMO_ALL;       break;
-                default: gizmoFlags = GIZMO_TRANSLATE; break;
-                }
-                if (viewport2D)
-                    gizmoFlags |= GIZMO_XY_PLANE;
-                else
-                {
-                    if (m_GizmoLocal) gizmoFlags |= GIZMO_LOCAL;
-                    if (m_GizmoView)  gizmoFlags |= GIZMO_VIEW;
-                }
-
-                SetGizmoSize(viewport2D ? m_GizmoSize * 0.5f : m_GizmoSize);
-                SetGizmoLineWidth(m_GizmoLineWidth);
-                SetGizmoViewportSize((int)m_ViewportSize.x, (int)m_ViewportSize.y);
-
-                const Transform beforeGizmo = *targetTransform;
-                if (DrawGizmo3D(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix(),
-                    m_LeftDownGizmo, m_ViewportMousePos, gizmoFlags, targetTransform))
-                {
-                    if (viewport2D && m_Viewport2DEditMode)
-                        ApplyGizmoDeltaToSelected2DSubElements(beforeGizmo, *targetTransform);
-                    else if (viewport2D && targetTransform == &m_Viewport2DPivotTransform)
-                        ApplyGizmoDeltaToSelectedObject2DPivot(beforeGizmo, *targetTransform);
-                    else
-                        ApplyGizmoDeltaToSelection(beforeGizmo, *targetTransform);
-                    m_TimelineAnimation.RecordSelectedTransformChange(m_Scene);
-                    InvalidateSelectedMask();
-                    InvalidatePickupPass();
-                    if (viewportCamera->isInputEnabled()) viewportCamera->setInputEnabled(false);
-                }
-            }
 
             // Flush gizmo lines on top of everything (override depth)
             RenderCommand::SetDepthRange(0, 0.001f);
@@ -577,6 +566,7 @@ void Application::Run()
             const bool useSSAO = m_ViewportRenderMode == ViewportRenderMode::Editor && m_SSAO->Enabled();
             if (useSSAO)
             {
+                PROFILE_SCOPE("SSAO.Render");
                 m_SSAO->Render(
                     opaqueColor,
                     postProcessFBO->GetDepthAttachmentRendererID(),
@@ -587,7 +577,7 @@ void Application::Run()
             uint64_t shadedOpaqueColor = useSSAO ? m_SSAO->GetOutputTexture() : opaqueColor;
 
 #ifdef G_OPENGL
-            if (hasVisibleTransparentObject)
+            if (hasVisibleTransparentObject && supportsOpenGLPostProcessing)
             {
                 // Render transparent geometry after SSAO, reusing the opaque G-buffer depth attachment.
                 RenderTransparentDepthPrepass();
@@ -619,30 +609,34 @@ void Application::Run()
                 m_ViewportFBO->Unbind();
             }
 #endif
-            if (hasVisibleTransparentObject && IsMSAAEnabled())
+            if (hasVisibleTransparentObject && supportsOpenGLPostProcessing && IsMSAAEnabled())
                 m_ViewportFBO->ResolveTo(m_ViewportResolvedFBO, { 3, 4 }, false);
-            uint64_t sceneColor = hasVisibleTransparentObject
+            const bool useTransparentComposite = hasVisibleTransparentObject && supportsOpenGLPostProcessing;
+            uint64_t sceneColor = useTransparentComposite
                 ? CompositeWeightedBlendedOIT(
                     shadedOpaqueColor,
                     postProcessFBO->GetColorAttachmentRendererID(3),
                     postProcessFBO->GetColorAttachmentRendererID(4))
                 : shadedOpaqueColor;
-            if (hasVisibleTransparentObject)
+            if (useTransparentComposite)
                 RenderTransparentStepEdges(postProcessFBO->GetDepthAttachmentRendererID());
             if (m_ViewportRenderMode == ViewportRenderMode::Editor && !viewport2D &&
-                !IsMSAAEnabled() && m_FXAA->Enabled())
+                supportsOpenGLPostProcessing && !IsMSAAEnabled() && m_FXAA->Enabled())
             {
                 m_FXAA->Render(sceneColor);
             }
             if (m_ViewportRenderMode == ViewportRenderMode::Editor)
             {
+                PROFILE_SCOPE("Outline.Composite");
                 uint64_t outlineSource = sceneColor;
-                if (!viewport2D && !IsMSAAEnabled() && m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
+                if (supportsOpenGLPostProcessing && !viewport2D && !IsMSAAEnabled() &&
+                    m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
                     outlineSource = m_FXAA->GetOutputTexture();
                 CompositeSelectedOutline(outlineSource);
             }
             if (m_ViewportRenderMode == ViewportRenderMode::Rendering)
             {
+                PROFILE_SCOPE("PathTracing.Render");
                 InvalidateSelectedMask();
                 m_PathTracer->Render(m_Scene, *viewportCamera);
                 if (m_PathTracer->GetSampleCount() <= 1)
@@ -659,6 +653,7 @@ void Application::Run()
         // --- IMGUI (Editor only) ---
         if (m_AppMode == AppMode::Editor)
         {
+            PROFILE_SCOPE("ImGui.Render");
             m_ImGuiLayer->Begin();
             for (auto layer : m_LayerStack)
                 layer->OnImGuiRender();
@@ -669,10 +664,18 @@ void Application::Run()
         RenderCommand::Flush();
         RenderCommand::SetDepthRange(0,1);
 
-        m_WindowInterface->PollEvents();
+        {
+            PROFILE_SCOPE("Window.PresentPoll");
+            m_WindowInterface->PollEvents();
+        }
 
         if (m_FrameRateLimit > 0)
         {
+#ifdef SHOW_PROFILE
+            ProfileTimer::AddSample("Frame.ActiveNoSleep",
+                std::chrono::duration<double, std::milli>(clock::now() - frameStartTime).count());
+#endif
+            PROFILE_SCOPE("Frame.SleepLimit");
             const int frameRateLimit = std::clamp(m_FrameRateLimit, 30, 60);
             const auto targetFrameDuration = std::chrono::duration<float>(1.0f / (float)frameRateLimit);
             const auto targetFrameEndTime = frameStartTime + std::chrono::duration_cast<clock::duration>(targetFrameDuration);
@@ -680,6 +683,7 @@ void Application::Run()
             if (frameEndTime + frameLimitTolerance < targetFrameEndTime)
                 SleepUntilFrameLimit(targetFrameEndTime);
         }
+        PROFILE_END_FRAME();
     }
 }
 
@@ -799,20 +803,15 @@ bool Application::OnFileDrop(FileDropEvent& e)
             continue;
         }
 
-        std::string extension = filepath.extension().string();
-        std::transform(extension.begin(), extension.end(), extension.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (extension == ".dxf")
+        if (m_ImGuiLayer)
         {
-            if (m_ImGuiLayer)
-            {
-                m_ImGuiLayer->QueueDxfImport(filepath);
-                loadedAny = true;
-            }
-            continue;
+            m_ImGuiLayer->QueueFileImport(filepath);
+            loadedAny = true;
         }
-
-        loadedAny |= LoadFileByExtension(filepath);
+        else
+        {
+            loadedAny |= LoadFileByExtension(filepath);
+        }
     }
     return loadedAny;
 }
@@ -1278,6 +1277,7 @@ void Application::InitializeWeightedBlendedOIT()
 
 void Application::ResizeWeightedBlendedOIT(uint32_t width, uint32_t height)
 {
+    PROFILE_SCOPE("Resize.OIT");
 #ifdef G_OPENGL
     if (!m_OITCompositeFBO)
         return;
@@ -1391,6 +1391,7 @@ void Application::InitializeTransparentStepEdgeResources()
 
 void Application::ResizeTransparentStepEdgeResources(uint32_t width, uint32_t height)
 {
+    PROFILE_SCOPE("Resize.TransparentEdge");
 #ifdef G_OPENGL
     if (!m_TransparentDepthFBO)
         return;
@@ -1487,13 +1488,17 @@ void Application::InitializeSelectedOutlineResources()
     glCreateVertexArrays(1, &m_SelectedOutlineQuadVAO);
     glCreateFramebuffers(1, &m_SelectedOutlineFBO);
     ResizeSelectedOutlineResources((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+#else
+    m_SelectedEdgeShader = Shader::Create("SelectedEdgeComposite", std::string(), std::string());
+    ResizeSelectedOutlineResources((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 #endif
 }
 
 void Application::ResizeSelectedOutlineResources(uint32_t width, uint32_t height)
 {
-#ifdef G_OPENGL
+    PROFILE_SCOPE("Resize.SelectedOutline");
     InvalidateSelectedMask();
+#ifdef G_OPENGL
     if (!m_SelectedOutlineFBO)
         return;
     if (m_SelectedOutlineTexture)
@@ -1508,8 +1513,14 @@ void Application::ResizeSelectedOutlineResources(uint32_t width, uint32_t height
     if (glCheckNamedFramebufferStatus(m_SelectedOutlineFBO, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         ERROR("Selected outline framebuffer is incomplete!");
 #else
-    (void)width;
-    (void)height;
+    if (width == 0 || height == 0)
+        return;
+    FrameBufferSpecification specification{ width, height,
+        { FrameBufferTextureSpecification(FrameBufferTextureFormat::RGBA8) } };
+    if (!m_SelectedOutlineDX11FBO)
+        m_SelectedOutlineDX11FBO = FrameBuffer::Create(specification);
+    else
+        m_SelectedOutlineDX11FBO->Resize(width, height);
 #endif
 }
 
@@ -1617,18 +1628,20 @@ void Application::RenderTransparentStepEdges(uint64_t sceneDepthTexture)
 
 void Application::RenderPickupPass()
 {
-#ifdef G_OPENGL
+    PROFILE_SCOPE("Pickup.RenderPass");
     if (!m_PickupFBO || !m_PickupShader || !m_Camera)
         return;
 
     m_PickupFBO->Bind();
     m_PickupFBO->ClearAttachment(0, 0);
+#ifdef G_OPENGL
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);
+#endif
 
     Ref<Camera> viewportCamera = GetViewportCamera();
     const glm::mat4 view = viewportCamera->GetViewMatrix();
@@ -1649,7 +1662,9 @@ void Application::RenderPickupPass()
             object2D->DrawSubElementPickup(view, projection, m_PickupShader);
         }
         m_PickupFBO->Unbind();
+#ifdef G_OPENGL
         glEnable(GL_BLEND);
+#endif
         m_PickupPassDirty = false;
         return;
     }
@@ -1668,14 +1683,15 @@ void Application::RenderPickupPass()
     }
 
     m_PickupFBO->Unbind();
+#ifdef G_OPENGL
     glEnable(GL_BLEND);
-    m_PickupPassDirty = false;
 #endif
+    m_PickupPassDirty = false;
 }
 
 void Application::RenderSelectedMaskPass()
 {
-#ifdef G_OPENGL
+    PROFILE_SCOPE("SelectedMask.RenderPass");
     if (!m_SelectedMaskFBO || !m_SelectedMaskShader || !m_Camera)
         return;
 
@@ -1694,12 +1710,14 @@ void Application::RenderSelectedMaskPass()
 
     m_SelectedMaskFBO->Bind();
     m_SelectedMaskFBO->ClearAttachment(0, 0);
+#ifdef G_OPENGL
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);
+#endif
 
     Ref<Camera> viewportCamera = GetViewportCamera();
     const glm::mat4 view = viewportCamera->GetViewMatrix();
@@ -1723,14 +1741,16 @@ void Application::RenderSelectedMaskPass()
     }
 
     m_SelectedMaskFBO->Unbind();
+#ifdef G_OPENGL
     glDepthMask(GL_TRUE);
     glEnable(GL_BLEND);
-    m_SelectedMaskValid = true;
 #endif
+    m_SelectedMaskValid = true;
 }
 
 uint64_t Application::CompositeSelectedOutline(uint64_t sceneColorTexture)
 {
+    PROFILE_SCOPE("Outline.CompositeImpl");
 #ifdef G_OPENGL
     if (IsViewport2DEditMode())
     {
@@ -1778,7 +1798,55 @@ uint64_t Application::CompositeSelectedOutline(uint64_t sceneColorTexture)
     m_SelectedOutlineValid = true;
     return m_SelectedOutlineTexture;
 #else
-    return sceneColorTexture;
+    if (IsViewport2DEditMode())
+    {
+        m_SelectedOutlineValid = false;
+        return sceneColorTexture;
+    }
+    if (!sceneColorTexture || !m_SelectedMaskFBO || !m_SelectedEdgeShader || !m_SelectedOutlineDX11FBO)
+    {
+        m_SelectedOutlineValid = false;
+        return sceneColorTexture;
+    }
+    if (m_Scene.GetSelectedCount() == 0 || !m_SelectedMaskValid)
+    {
+        m_SelectedOutlineValid = false;
+        return sceneColorTexture;
+    }
+
+    m_SelectedOutlineDX11FBO->Bind(false);
+    RenderCommand::EnableDepthTest(false);
+    m_SelectedEdgeShader->Bind();
+    m_SelectedEdgeShader->SetFloat2("u_ViewportSize", m_ViewportSize);
+    m_SelectedEdgeShader->SetFloat("u_EdgeWidth", m_SelectedEdgeWidth);
+    m_SelectedEdgeShader->SetFloat4("u_EdgeColor", glm::vec4(1.0f, 0.85f, 0.05f, 1.0f));
+    m_SelectedEdgeShader->SetInt("u_FillSelectedPixels", IsViewport2D() ? 1 : 0);
+
+    auto context = DX11Context::GetDeviceContext();
+    ID3D11ShaderResourceView* srvs[2] = {
+        reinterpret_cast<ID3D11ShaderResourceView*>(sceneColorTexture),
+        reinterpret_cast<ID3D11ShaderResourceView*>(m_SelectedMaskFBO->GetColorAttachmentRendererID(0))
+    };
+    context->PSSetShaderResources(0, 2, srvs);
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler;
+    D3D11_SAMPLER_DESC samplerDesc = {};
+    samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+    DX11Context::GetDevice()->CreateSamplerState(&samplerDesc, &sampler);
+    ID3D11SamplerState* samplerPtr = sampler.Get();
+    context->PSSetSamplers(0, 1, &samplerPtr);
+    context->IASetInputLayout(nullptr);
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->Draw(3, 0);
+    ID3D11ShaderResourceView* nullSRVs[2] = {};
+    context->PSSetShaderResources(0, 2, nullSRVs);
+    m_SelectedOutlineDX11FBO->Unbind();
+    RenderCommand::EnableDepthTest(true);
+    m_SelectedOutlineValid = true;
+    return m_SelectedOutlineDX11FBO->GetColorAttachmentRendererID(0);
 #endif
 }
 
@@ -1798,6 +1866,58 @@ int Application::ReadPickupPixel(int x, int y)
     const int id = m_PickupFBO->ReadPixel(0, x, y);
     m_PickupFBO->Unbind();
     return id;
+}
+
+void Application::UpdateAndQueueViewportGizmo(const Ref<Camera>& viewportCamera, bool viewport2D)
+{
+    if (!viewportCamera)
+        return;
+
+    if (viewport2D && m_Viewport2DEditMode && !m_LeftDownGizmo)
+        Update2DSubElementGizmoTarget();
+    else if (viewport2D && !m_Viewport2DEditMode && !m_LeftDownGizmo)
+        UpdateViewport2DObjectGizmoTarget();
+
+    Transform* targetTransform = m_GizmoTargetTransform;
+    if (!targetTransform)
+        return;
+
+    int gizmoFlags = 0;
+    switch (m_GizmoMode)
+    {
+    case 0: gizmoFlags = GIZMO_TRANSLATE; break;
+    case 1: gizmoFlags = GIZMO_ROTATE;    break;
+    case 2: gizmoFlags = GIZMO_SCALE;     break;
+    case 3: gizmoFlags = GIZMO_ALL;       break;
+    default: gizmoFlags = GIZMO_TRANSLATE; break;
+    }
+    if (viewport2D)
+        gizmoFlags |= GIZMO_XY_PLANE;
+    else
+    {
+        if (m_GizmoLocal) gizmoFlags |= GIZMO_LOCAL;
+        if (m_GizmoView)  gizmoFlags |= GIZMO_VIEW;
+    }
+
+    SetGizmoSize(viewport2D ? m_GizmoSize * 0.5f : m_GizmoSize);
+    SetGizmoLineWidth(m_GizmoLineWidth);
+    SetGizmoViewportSize((int)m_ViewportSize.x, (int)m_ViewportSize.y);
+
+    const Transform beforeGizmo = *targetTransform;
+    if (DrawGizmo3D(viewportCamera->GetViewMatrix(), viewportCamera->GetProjectionMatrix(),
+        m_LeftDownGizmo, m_ViewportMousePos, gizmoFlags, targetTransform))
+    {
+        if (viewport2D && m_Viewport2DEditMode)
+            ApplyGizmoDeltaToSelected2DSubElements(beforeGizmo, *targetTransform);
+        else if (viewport2D && targetTransform == &m_Viewport2DPivotTransform)
+            ApplyGizmoDeltaToSelectedObject2DPivot(beforeGizmo, *targetTransform);
+        else
+            ApplyGizmoDeltaToSelection(beforeGizmo, *targetTransform);
+        m_TimelineAnimation.RecordSelectedTransformChange(m_Scene);
+        InvalidateSelectedMask();
+        InvalidatePickupPass();
+        if (viewportCamera->isInputEnabled()) viewportCamera->setInputEnabled(false);
+    }
 }
 
 void Application::SetSelectedObjectIndex(int index)
@@ -2197,6 +2317,8 @@ uint64_t Application::GetViewportColorTextureID() const
         return 0;
     if (m_ViewportRenderMode == ViewportRenderMode::Editor && m_SelectedOutlineValid && m_SelectedOutlineTexture)
         return m_SelectedOutlineTexture;
+    if (m_ViewportRenderMode == ViewportRenderMode::Editor && m_SelectedOutlineValid && m_SelectedOutlineDX11FBO)
+        return m_SelectedOutlineDX11FBO->GetColorAttachmentRendererID(0);
     if (m_ViewportRenderMode == ViewportRenderMode::Rendering && m_SVGF && m_SVGF->Enabled() &&
         m_SVGF->GetOutputTexture() && m_SVGF->HasHistory())
         return m_SVGF->GetOutputTexture();

@@ -6,6 +6,8 @@
 class OpenGLRenderer : public Renderer
 {
 public:
+    ~OpenGLRenderer() override;
+
     virtual void Init() override;
     virtual void SetViewport(uint32_t x,uint32_t y,uint32_t w,uint32_t h) override;
     virtual void SetClearColor(const glm::vec4& color)override;
@@ -15,6 +17,9 @@ public:
     virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount=0) override;
     virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount) override;
     virtual void DrawPoints(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) override;
+    virtual bool DrawInstancedLines(const RendererLineInstance* lines, uint32_t lineCount,
+        const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
+        const glm::vec2& viewportSize) override;
 
 
     virtual void SetLineWidth(float width) override;
@@ -26,4 +31,9 @@ public:
 	virtual void EnableDepthTest(bool enable) override;
     virtual void SetDepthRange(float min = 0.0f, float max = 1.0f) override;
 
+private:
+    Ref<Shader> m_InstancedLineShader;
+    uint32_t m_LineInstanceSSBO = 0;
+    uint32_t m_InstancedLineVAO = 0;
+    float m_LineWidth = 2.0f;
 };

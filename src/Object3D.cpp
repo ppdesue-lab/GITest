@@ -112,6 +112,7 @@ void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& pa
 		CSM& csm = app.GetCSM();
 		auto& lightViewProj = csm.GetLightViewProjMatrices();
 		auto& cascadeDists = csm.GetCascadeDistances();
+		auto& cascadeTexelSizes = csm.GetCascadeTexelSizes();
 		uint32_t cascadeCount = csm.Enabled() ? csm.GetCascadeCount() : 0;
 		auto lightDir = csm.GetLight().Direction;
 
@@ -127,7 +128,11 @@ void Mesh::Draw(const glm::mat4& view, const glm::mat4 proj, const glm::mat4& pa
 		{
 			shader->SetFloat("u_cascadeDistances[" + std::to_string(i) + "]", cascadeDists[i]);
 			if (i < cascadeCount)
+			{
+				if (i < cascadeTexelSizes.size())
+					shader->SetFloat("u_cascadeTexelSize[" + std::to_string(i) + "]", cascadeTexelSizes[i]);
 				shader->SetMat4("u_lightViewProj[" + std::to_string(i) + "]", lightViewProj[i]);
+			}
 		}
 
 		csm.BindShadowTexture(2);

@@ -6,6 +6,13 @@
 #include "VertexArray.h"
 #include "Shader.h"
 
+struct RendererLineInstance
+{
+    glm::vec4 Start = glm::vec4(0.0f);
+    glm::vec4 End = glm::vec4(0.0f);
+    glm::vec4 Color = glm::vec4(1.0f);
+};
+
 class Renderer
 {
 public:
@@ -29,6 +36,9 @@ public:
     virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) = 0;
     virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount) = 0;
     virtual void DrawPoints(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) = 0;
+    virtual bool DrawInstancedLines(const RendererLineInstance* lines, uint32_t lineCount,
+        const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
+        const glm::vec2& viewportSize) = 0;
 
 	virtual void SetLineWidth(float width) = 0;
     virtual void SetPointSize(float size) = 0;

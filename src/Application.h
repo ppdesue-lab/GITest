@@ -168,6 +168,7 @@ private:
 	void RenderSelectedMaskPass();
 	uint64_t CompositeSelectedOutline(uint64_t sceneColorTexture);
 	void DrawViewport2DGrid(const glm::mat4& view, const glm::mat4& projection);
+	void UpdateAndQueueViewportGizmo(const Ref<Camera>& viewportCamera, bool viewport2D);
 	void ApplyGizmoDeltaToSelection(const Transform& before, const Transform& after);
 	void ApplyGizmoDeltaToSelectedObject2DPivot(const Transform& before, const Transform& after);
 	void ApplyGizmoDeltaToSelected2DSubElements(const Transform& before, const Transform& after);
@@ -212,6 +213,7 @@ private:
 	uint32_t m_SelectedOutlineFBO = 0;
 	uint32_t m_SelectedOutlineTexture = 0;
 	uint32_t m_SelectedOutlineQuadVAO = 0;
+	Ref<FrameBuffer> m_SelectedOutlineDX11FBO;
 	Ref<Shader> m_TransparentDepthShader;
 	Ref<Shader> m_TransparentStepEdgeShader;
 	uint32_t m_TransparentDepthFBO = 0;

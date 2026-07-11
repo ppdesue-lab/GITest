@@ -1,5 +1,6 @@
 #include "stdsfx.h"
 #include "DX11Context.h"
+#include "Renderer/ProfileTimer.h"
 
 #include <GLFW/glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -72,11 +73,13 @@ void DX11Context::Init()
 
 void DX11Context::SwapBuffers()
 {
-	s_SwapChain->Present(1, 0);
+	PROFILE_SCOPE("DX11.Present");
+	s_SwapChain->Present(0, 0);
 }
 
 void DX11Context::ResizeBackBuffer(uint32_t width, uint32_t height)
 {
+	PROFILE_SCOPE("DX11.ResizeBackBuffer");
 	if (!s_SwapChain || width == 0 || height == 0)
 		return;
 

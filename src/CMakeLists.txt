@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.10)
 
+if(POLICY CMP0091)
+  cmake_policy(SET CMP0091 NEW)
+endif()
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "" FORCE)
+
 set(project_name "kengine")
 project(${project_name} VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
@@ -7,6 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(KENGINE_RENDERER_API "OpenGL" CACHE STRING "Renderer backend: OpenGL or DX11")
 #set_property(CACHE KENGINE_RENDERER_API PROPERTY STRINGS OpenGL DX11)
+option(KENGINE_SHOW_PROFILE "Enable render flow profiling logs" OFF)
 
 set(KENGINE_OPENCL_ROOT "D:/lib/opencl" CACHE PATH "OpenCL SDK root used by the path tracer")
 set(KENGINE_OPENCL_LIBRARY "${KENGINE_OPENCL_ROOT}/lib/x86_64/OpenCL.lib")
@@ -37,6 +43,11 @@ list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/entt/.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/imgui_compat/.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/thirdparty/dime/.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/GeometryProcess/.*")
+if(KENGINE_RENDERER_API STREQUAL "DX11")
+  list(FILTER SRC_FILES EXCLUDE REGEX ".*/Platform/OpenGL/.*")
+else()
+  list(FILTER SRC_FILES EXCLUDE REGEX ".*/Platform/DX11/.*")
+endif()
 list(APPEND SRC_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/Import/GeometryProcess/SlicePreviewObject.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Import/GeometryProcess/SlicePreviewObject.h
@@ -93,15 +104,17 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(glfw)
 
 #glad
-FetchContent_Declare(
-  glad
-  GIT_REPOSITORY https://github.com/Dav1dde/glad.git
-  GIT_TAG v0.1.36
-)
+if(NOT KENGINE_RENDERER_API STREQUAL "DX11")
+  FetchContent_Declare(
+    glad
+    GIT_REPOSITORY https://github.com/Dav1dde/glad.git
+    GIT_TAG v0.1.36
+  )
 
-set(GLAD_API gl=4.6 CACHE STRING "" FORCE)
+  set(GLAD_API gl=4.6 CACHE STRING "" FORCE)
 
-FetchContent_MakeAvailable(glad)
+  FetchContent_MakeAvailable(glad)
+endif()
 
 
 #stb image
@@ -206,7 +219,6 @@ target_link_libraries(tanim PUBLIC libimgui EnTT::EnTT)
 set(third_party_libs
   assimp
   glfw
-  glad
   spdlog
   libimgui
   tanim
@@ -245,6 +257,10 @@ set(all_compiler_definitions
   APP_ROOT_PATH=\"${CMAKE_SOURCE_DIR}\"
 )
 
+if(KENGINE_SHOW_PROFILE)
+  list(APPEND all_compiler_definitions SHOW_PROFILE)
+endif()
+
 
 #---------------------------------------------
 #add definitions and executable
@@ -254,6 +270,7 @@ if(KENGINE_RENDERER_API STREQUAL "DX11")
   list(APPEND third_party_libs d3d11 dxgi d3dcompiler)
 else()
   list(APPEND all_compiler_definitions G_OPENGL)
+  list(APPEND third_party_libs glad)
 endif()
 #add_executable(${project_name} ${SRC_FILES})
 

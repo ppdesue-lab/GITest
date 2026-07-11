@@ -2,7 +2,9 @@
 #include "Shader.h"
 #include "Renderer.h"
 
+#ifdef G_OPENGL
 #include <Platform/OpenGL/OpenGLShader.h>
+#endif
 #ifdef G_DX11
 #include <Platform/DX11/DX11Shader.h>
 #endif
@@ -18,7 +20,9 @@ Ref<Shader> Shader::Create(const std::string& filepath)
     switch(Renderer::GetAPI())
     {
         case Renderer::API::None:    ERROR("RendererAPI::None is currently not supported!"); return nullptr;
+#ifdef G_OPENGL
         case Renderer::API::OpenGL:  return CreateRef<OpenGLShader>(filepath);
+#endif
 #ifdef G_DX11
         case Renderer::API::DX11:    return CreateRef<DX11Shader>(filepath);
 #endif
@@ -33,7 +37,9 @@ Ref<Shader> Shader::Create(const std::string& name, const std::string& vertexSrc
     switch(Renderer::GetAPI())
     {
         case Renderer::API::None:    ERROR("RendererAPI::None is currently not supported!"); return nullptr;
+#ifdef G_OPENGL
         case Renderer::API::OpenGL:  return CreateRef<OpenGLShader>(name, vertexSrc, fragmentSrc);
+#endif
 #ifdef G_DX11
         case Renderer::API::DX11:    return CreateRef<DX11Shader>(name, vertexSrc, fragmentSrc);
 #endif
@@ -48,7 +54,9 @@ Ref<Shader> Shader::Create(const std::string& name, const std::string& source, S
     switch(Renderer::GetAPI())
     {
         case Renderer::API::None:    ERROR("RendererAPI::None is currently not supported!"); return nullptr;
+#ifdef G_OPENGL
         case Renderer::API::OpenGL:  return CreateRef<OpenGLShader>(name, source, type);
+#endif
 #ifdef G_DX11
         case Renderer::API::DX11:    return CreateRef<DX11Shader>(name, source, type);
 #endif

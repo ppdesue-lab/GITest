@@ -2,7 +2,9 @@
 #include "Texture.h"
 
 #include <Renderer/Renderer.h>
+#ifdef G_OPENGL
 #include <Platform/OpenGL/OpenGLTexture.h>
+#endif
 #ifdef G_DX11
 #include <Platform/DX11/DX11Texture.h>
 #endif
@@ -24,9 +26,11 @@ Ref<Texture> CreateTextureResource(const Ref<Image>& image)
 	{
 	case Renderer::API::None:
 		throw std::string("not implement!");
+#ifdef G_OPENGL
 	case Renderer::API::OpenGL:
 		tex = CreateRef<OpenGLTexture>(image);
 		break;
+#endif
 #ifdef G_DX11
 	case Renderer::API::DX11:
 		tex = CreateRef<DX11Texture>(image);
@@ -54,8 +58,10 @@ Ref<Texture> CreateTextureResourceFromFile(const std::string& filepath)
 	{
 	case Renderer::API::None:
 		throw std::string("not implement!");
+#ifdef G_OPENGL
 	case Renderer::API::OpenGL:
 		return CreateRef<OpenGLTexture>(filepath, srgb);
+#endif
 #ifdef G_DX11
 	case Renderer::API::DX11:
 		ERROR("DDS TextureLibrary loading is only wired for OpenGL currently: {}", filepath);

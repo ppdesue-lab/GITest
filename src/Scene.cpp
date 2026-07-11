@@ -17,9 +17,9 @@ SceneCube::SceneCube(float size)
         {-h, -h, -h}, { h, -h, -h}, { h,  h, -h}, {-h,  h, -h},
         {-h, -h,  h}, { h, -h,  h}, { h,  h,  h}, {-h,  h,  h}
     };
-    std::vector<VertexNormal> verts;
+    std::vector<VertexNormalTexture> verts;
     for (auto& p : positions)
-        verts.push_back(VertexNormal(p, glm::normalize(p)));
+        verts.emplace_back(p, glm::normalize(p), glm::vec2(0.0f));
     std::vector<uint32_t> idxs = {
         0,1,2, 2,3,0, 4,5,6, 6,7,4,
         0,1,5, 5,4,0, 2,3,7, 7,6,2,
@@ -27,8 +27,9 @@ SceneCube::SceneCube(float size)
     };
 
     auto va = VertexArray::Create();
-    auto vb = VertexBuffer::Create((float*)&verts[0].Position.x, verts.size() * sizeof(VertexNormal));
-    vb->SetLayout({ {ShaderDataType::Float3, "a_Position", false}, {ShaderDataType::Float3, "a_Normal", false} });
+    auto vb = VertexBuffer::Create((float*)&verts[0].Position.x, verts.size() * sizeof(VertexNormalTexture));
+    vb->SetLayout({ {ShaderDataType::Float3, "a_Position", false}, {ShaderDataType::Float3, "a_Normal", false},
+        {ShaderDataType::Float2, "a_TexCoord", false} });
     va->AddVertexBuffer(vb);
     auto ib = IndexBuffer::Create((uint32_t*)idxs.data(), (uint32_t)idxs.size());
     va->SetIndexBuffer(ib);
@@ -92,17 +93,18 @@ ScenePlane::ScenePlane(float size)
 {
     auto mesh = CreateRef<Mesh>();
     float h = size;
-    std::vector<VertexNormal> verts = {
-        {{-h, 0.0f, -h}, {0.0f, 1.0f, 0.0f}},
-        {{ h, 0.0f, -h}, {0.0f, 1.0f, 0.0f}},
-        {{ h, 0.0f,  h}, {0.0f, 1.0f, 0.0f}},
-        {{-h, 0.0f,  h}, {0.0f, 1.0f, 0.0f}},
+    std::vector<VertexNormalTexture> verts = {
+        {{-h, 0.0f, -h}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ h, 0.0f, -h}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ h, 0.0f,  h}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+        {{-h, 0.0f,  h}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
     };
     std::vector<uint32_t> idxs = {0, 1, 2, 2, 3, 0};
 
     auto va = VertexArray::Create();
-    auto vb = VertexBuffer::Create((float*)&verts[0].Position.x, verts.size() * sizeof(VertexNormal));
-    vb->SetLayout({ {ShaderDataType::Float3, "a_Position", false}, {ShaderDataType::Float3, "a_Normal", false} });
+    auto vb = VertexBuffer::Create((float*)&verts[0].Position.x, verts.size() * sizeof(VertexNormalTexture));
+    vb->SetLayout({ {ShaderDataType::Float3, "a_Position", false}, {ShaderDataType::Float3, "a_Normal", false},
+        {ShaderDataType::Float2, "a_TexCoord", false} });
     va->AddVertexBuffer(vb);
     auto ib = IndexBuffer::Create((uint32_t*)idxs.data(), (uint32_t)idxs.size());
     va->SetIndexBuffer(ib);

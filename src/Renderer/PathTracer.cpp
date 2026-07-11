@@ -6,7 +6,9 @@
 #include <Renderer/Material.h>
 
 #include <glm/gtc/matrix_inverse.hpp>
+#ifdef G_OPENGL
 #include <glad/glad.h>
+#endif
 #include <stb_image.h>
 
 #include <cstring>
@@ -85,6 +87,7 @@ struct PathTracer::Impl
 
     void CreateOutputTexture()
     {
+#ifdef G_OPENGL
         if (OutputTexture)
             glDeleteTextures(1, &OutputTexture);
         glCreateTextures(GL_TEXTURE_2D, 1, &OutputTexture);
@@ -93,6 +96,9 @@ struct PathTracer::Impl
         glTextureParameteri(OutputTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTextureParameteri(OutputTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTextureParameteri(OutputTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+#else
+        OutputTexture = 0;
+#endif
     }
 
     void CreateFrameBuffers()
@@ -332,8 +338,10 @@ PathTracer::PathTracer(uint32_t width, uint32_t height, const std::string& envir
 
 PathTracer::~PathTracer()
 {
+#ifdef G_OPENGL
     if (m_Impl && m_Impl->OutputTexture)
         glDeleteTextures(1, &m_Impl->OutputTexture);
+#endif
 }
 
 void PathTracer::Resize(uint32_t width, uint32_t height)
@@ -350,6 +358,11 @@ void PathTracer::Resize(uint32_t width, uint32_t height)
 
 void PathTracer::Render(const Scene& scene, const Camera& camera)
 {
+#ifndef G_OPENGL
+    (void)scene;
+    (void)camera;
+    return;
+#else
     if (!m_Impl->Initialize())
         return;
 
@@ -399,6 +412,7 @@ void PathTracer::Render(const Scene& scene, const Camera& camera)
     glTextureSubImage2D(m_Impl->OutputTexture, 0, 0, 0, m_Impl->Width, m_Impl->Height, GL_RGBA, GL_FLOAT,
         m_Impl->Pixels->GetHostPtr());
     ++m_Impl->SampleCount;
+#endif
 }
 
 void PathTracer::MarkSceneDirty()

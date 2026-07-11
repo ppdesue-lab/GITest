@@ -1,5 +1,10 @@
 ﻿cmake_minimum_required(VERSION 3.10)
 
+if(POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif()
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "" FORCE)
+
 set(project_name "GITest")
 project(${project_name} VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
@@ -29,14 +34,21 @@ foreach(occt_aux_dll ${KENGINE_OCCT_AUX_DLLS})
     endif()
 endforeach()
 
+set(KENGINE_GLAD_COPY_COMMANDS)
+if(NOT KENGINE_RENDERER_API STREQUAL "DX11")
+    list(APPEND KENGINE_GLAD_COPY_COMMANDS
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_BINARY_DIR}/_deps/glad-build/$<CONFIG>"
+            "$<TARGET_FILE_DIR:sandbox>"
+    )
+endif()
+
 # Copy dependency DLLs to sandbox output directory at build time
 add_custom_command(TARGET sandbox POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_BINARY_DIR}/_deps/assimp-build/bin/$<CONFIG>"
         "$<TARGET_FILE_DIR:sandbox>"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_BINARY_DIR}/_deps/glad-build/$<CONFIG>"
-        "$<TARGET_FILE_DIR:sandbox>"
+    ${KENGINE_GLAD_COPY_COMMANDS}
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_BINARY_DIR}/_deps/glfw-build/src/$<CONFIG>"
         "$<TARGET_FILE_DIR:sandbox>"
