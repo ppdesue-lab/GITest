@@ -315,7 +315,7 @@ void Application::Run()
             ResizeSelectedOutlineResources((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
         }
 
-        if (m_AppMode == AppMode::Editor)
+        if (m_AppMode == AppMode::Editor && !viewport2D)
         {
             PROFILE_SCOPE("Editor.GizmoUpdate");
             UpdateAndQueueViewportGizmo(viewportCamera, viewport2D);
@@ -440,6 +440,12 @@ void Application::Run()
             RenderCommand::EnableDepthTest(true);
         }
 
+        if (viewport2D && m_AppMode == AppMode::Editor)
+        {
+            PROFILE_SCOPE("Editor.GizmoUpdate2D");
+            UpdateAndQueueViewportGizmo(viewportCamera, viewport2D);
+        }
+
         // Draw visible objects intersecting the active camera frustum.
         const Frustum cameraFrustum(viewportCamera->GetProjectionMatrix() * viewportCamera->GetViewMatrix());
         bool hasVisibleTransparentObject = false;
@@ -554,9 +560,13 @@ void Application::Run()
                 m_ProbeGI->DrawDebug();
 
             // Flush gizmo lines on top of everything (override depth)
+            if (viewport2D)
+                RenderCommand::EnableDepthTest(false);
             RenderCommand::SetDepthRange(0, 0.001f);
             RenderCommand::Flush();
             RenderCommand::SetDepthRange(0, 1);
+            if (viewport2D)
+                RenderCommand::EnableDepthTest(true);
 
             if (m_ViewportFBO) m_ViewportFBO->Unbind();
             Ref<FrameBuffer> postProcessFBO = IsMSAAEnabled() ? m_ViewportResolvedFBO : m_ViewportFBO;
@@ -899,7 +909,7 @@ Ref<Object3D> Application::LoadGCode(const std::filesystem::path& filepath)
     return object;
 }
 
-Ref<Object3D> Application::LoadVector2D(const std::filesystem::path& filepath, DxfImportMode mode)
+Ref<Object3D> Application::LoadVector2D(const std::filesystem::path& filepath, DxfImportMode mode, bool bPostProcess)
 {
     std::string extension = filepath.extension().string();
     std::transform(extension.begin(), extension.end(), extension.begin(),
@@ -909,7 +919,7 @@ Ref<Object3D> Application::LoadVector2D(const std::filesystem::path& filepath, D
     std::string error;
     bool loaded = false;
     if (extension == ".dxf")
-        loaded = DxfLoader::Load(filepath, document, error, mode);
+        loaded = DxfLoader::Load(filepath, document, error, mode, bPostProcess);
 
     if (!loaded)
     {
@@ -930,7 +940,7 @@ Ref<Object3D> Application::LoadVector2D(const std::filesystem::path& filepath, D
     return object;
 }
 
-Ref<Object3D> Application::SliceSelectedModel(float layerHeight)
+Ref<Object3D> Application::SliceSelectedModel(float layerHeight, const glm::vec3& normal)
 {
     Scene::Entry* selectedEntry = m_Scene.GetSelectedEntry();
     if (!selectedEntry || !selectedEntry->Object)
@@ -988,9 +998,10 @@ Ref<Object3D> Application::SliceSelectedModel(float layerHeight)
     }
 
     GeometryProcess::SliceOptions options;
-    options.Normal = glm::vec3(0.0f, 0.0f, 1.0f);
+    options.Normal = normal;
     options.LayerHeight = std::max(layerHeight, 0.0001f);
-    GeometryProcess::SliceContours contours = GeometryProcess::SliceTriangleVertices(triangleVertices, options);
+    GeometryProcess::MeshSlicer slicer(options);
+    GeometryProcess::SliceContours contours = slicer.SliceTriangleVertices(triangleVertices);
     if (contours.empty())
     {
         WARN("Slice failed: GeometryProcess returned no contours.");

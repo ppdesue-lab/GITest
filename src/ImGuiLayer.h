@@ -56,7 +56,9 @@ private:
     void DrawFXAADebugWindow();
     void DrawSVGFDenoiserWindow();
     void DrawPBRIBLDebugWindow();
+    void DrawPath4DWindow();
     void DrawImportOptionsModal();
+    void DrawSliceOptionsModal();
     void OpenModelFile();
     void OpenGCodeFile();
     bool IsSupportedModelFile(const std::filesystem::path& filepath) const;
@@ -99,10 +101,15 @@ private:
     std::vector<std::filesystem::path> m_ContentBrowserFiles;
     bool m_ContentBrowserNeedsRefresh = true;
     bool m_ShowNodeEditor = false;
+    bool m_ShowPath4DWindow = false;
     bool m_ImportPopupRequested = false;
+    bool m_SlicePopupRequested = false;
+    int m_SelectedSliceAxis = 0;
+    float m_SliceLayerHeight = 0.5f;
     std::deque<std::filesystem::path> m_PendingImportPaths;
     std::filesystem::path m_ActiveImportPath;
     DxfImportMode m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
+    bool m_DxfPostProcess = true;
 
     // Console
     static std::deque<ConsoleMessage> s_ConsoleMessages;

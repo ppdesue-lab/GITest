@@ -76,17 +76,14 @@ void AddDisplaySegment(const glm::vec3& p0, const glm::vec3& p1, const glm::vec4
 
 SlicePreviewObject::~SlicePreviewObject()
 {
-    GeometryLibrary::Release(m_LineGeometry);
 }
 
 bool SlicePreviewObject::LoadFromContours(const GeometryProcess::SliceContours& contours)
 {
-    GeometryLibrary::Release(m_LineGeometry);
-    m_LineGeometry = {};
-    m_LineVertexCount = 0;
+    ReleaseObjectElements();
+    m_SubElementContours.clear();
     Bounds = {};
 
-    std::vector<VertexColor> vertices;
     glm::vec3 minimum((std::numeric_limits<float>::max)());
     glm::vec3 maximum(std::numeric_limits<float>::lowest());
     bool hasBounds = false;
@@ -105,27 +102,60 @@ bool SlicePreviewObject::LoadFromContours(const GeometryProcess::SliceContours& 
             if (polygon.size() < 2)
                 continue;
 
+            std::vector<VertexColor> vertices;
+            glm::vec3 elementMinimum((std::numeric_limits<float>::max)());
+            glm::vec3 elementMaximum(std::numeric_limits<float>::lowest());
+            bool hasElementBounds = false;
+
             for (size_t i = 1; i < polygon.size(); ++i)
-                AddDisplaySegment(polygon[i - 1], polygon[i], color, vertices, minimum, maximum, hasBounds);
+                AddDisplaySegment(polygon[i - 1], polygon[i], color, vertices, elementMinimum, elementMaximum, hasElementBounds);
 
             if (ShouldDrawClosingSegment(polygon))
-                AddDisplaySegment(polygon.back(), polygon.front(), color, vertices, minimum, maximum, hasBounds);
+                AddDisplaySegment(polygon.back(), polygon.front(), color, vertices, elementMinimum, elementMaximum, hasElementBounds);
+
+            if (vertices.empty())
+                continue;
+
+            Object3DElement element;
+            element.Name = "Layer " + std::to_string(layer + 1) + " Contour " + std::to_string(m_ObjectElements.size() + 1);
+            element.Geometry = GeometryLibrary::Register(BuildLineVertexArray(vertices));
+            element.VertexCount = (uint32_t)vertices.size();
+            element.LineCount = element.VertexCount / 2;
+            if (hasElementBounds)
+            {
+                element.Bounds.Center = (elementMinimum + elementMaximum) * 0.5f;
+                element.Bounds.Radius = 0.0f;
+                for (const VertexColor& vertex : vertices)
+                    element.Bounds.Radius = std::max(element.Bounds.Radius, glm::length(vertex.Position - element.Bounds.Center));
+                element.Bounds.Valid = true;
+            }
+            m_ObjectElements.push_back(std::move(element));
+            m_SubElementContours.push_back(polygon);
+
+            if (hasElementBounds)
+            {
+                minimum = glm::min(minimum, elementMinimum);
+                maximum = glm::max(maximum, elementMaximum);
+                hasBounds = true;
+            }
         }
         ++layerIndex;
     }
 
-    if (vertices.empty())
+    if (m_ObjectElements.empty())
         return false;
-
-    m_LineGeometry = GeometryLibrary::Register(BuildLineVertexArray(vertices));
-    m_LineVertexCount = (uint32_t)vertices.size();
 
     if (hasBounds)
     {
         Bounds.Center = (minimum + maximum) * 0.5f;
         Bounds.Radius = 0.0f;
-        for (const VertexColor& vertex : vertices)
-            Bounds.Radius = std::max(Bounds.Radius, glm::length(vertex.Position - Bounds.Center));
+        for (const Object3DElement& element : m_ObjectElements)
+        {
+            if (!element.Bounds.Valid)
+                continue;
+            Bounds.Radius = std::max(Bounds.Radius,
+                glm::length(element.Bounds.Center - Bounds.Center) + element.Bounds.Radius);
+        }
         Bounds.Valid = true;
     }
 
@@ -134,11 +164,7 @@ bool SlicePreviewObject::LoadFromContours(const GeometryProcess::SliceContours& 
 
 void SlicePreviewObject::Draw(const glm::mat4& view, const glm::mat4 proj, bool transparentPass)
 {
-    if (transparentPass || m_LineVertexCount == 0)
-        return;
-
-    Ref<VertexArray> lineGeometry = GeometryLibrary::Resolve(m_LineGeometry);
-    if (!lineGeometry)
+    if (transparentPass || GetVisibleVertexCount() == 0)
         return;
 
     auto shader = Application::Get().GetShaderLibrary()->Get("DefaultColor");
@@ -150,17 +176,21 @@ void SlicePreviewObject::Draw(const glm::mat4& view, const glm::mat4 proj, bool 
     shader->SetInt("u_TransparentPass", 0);
 
     RenderCommand::SetLineWidth(2.0f);
-    RenderCommand::DrawLines(lineGeometry, m_LineVertexCount);
+    for (const Object3DElement& element : m_ObjectElements)
+    {
+        if (!element.Visible || element.VertexCount == 0)
+            continue;
+
+        Ref<VertexArray> lineGeometry = GeometryLibrary::Resolve(element.Geometry);
+        if (lineGeometry)
+            RenderCommand::DrawLines(lineGeometry, element.VertexCount);
+    }
 }
 
 void SlicePreviewObject::DrawPickup(const glm::mat4& view, const glm::mat4& proj,
     const Ref<Shader>& shader, int objectID, bool xzInput, float xzInputY)
 {
-    if (!shader || m_LineVertexCount == 0)
-        return;
-
-    Ref<VertexArray> lineGeometry = GeometryLibrary::Resolve(m_LineGeometry);
-    if (!lineGeometry)
+    if (!shader || GetVisibleVertexCount() == 0)
         return;
 
     shader->SetMat4("u_View", view);
@@ -171,18 +201,22 @@ void SlicePreviewObject::DrawPickup(const glm::mat4& view, const glm::mat4& proj
     shader->SetFloat("u_XZInputY", xzInputY);
 
     RenderCommand::SetLineWidth(8.0f);
-    RenderCommand::DrawLines(lineGeometry, m_LineVertexCount);
+    for (const Object3DElement& element : m_ObjectElements)
+    {
+        if (!element.Visible || element.VertexCount == 0)
+            continue;
+
+        Ref<VertexArray> lineGeometry = GeometryLibrary::Resolve(element.Geometry);
+        if (lineGeometry)
+            RenderCommand::DrawLines(lineGeometry, element.VertexCount);
+    }
     RenderCommand::SetLineWidth(1.0f);
 }
 
 void SlicePreviewObject::DrawSelectedMask(const glm::mat4& view, const glm::mat4& proj,
     const Ref<Shader>& shader, bool xzInput, float xzInputY)
 {
-    if (!shader || m_LineVertexCount == 0)
-        return;
-
-    Ref<VertexArray> lineGeometry = GeometryLibrary::Resolve(m_LineGeometry);
-    if (!lineGeometry)
+    if (!shader || GetVisibleVertexCount() == 0)
         return;
 
     shader->SetMat4("u_View", view);
@@ -192,10 +226,34 @@ void SlicePreviewObject::DrawSelectedMask(const glm::mat4& view, const glm::mat4
     shader->SetFloat("u_XZInputY", xzInputY);
 
     RenderCommand::SetLineWidth(4.0f);
-    RenderCommand::DrawLines(lineGeometry, m_LineVertexCount);
+    for (const Object3DElement& element : m_ObjectElements)
+    {
+        if (!element.Visible || element.VertexCount == 0)
+            continue;
+
+        Ref<VertexArray> lineGeometry = GeometryLibrary::Resolve(element.Geometry);
+        if (lineGeometry)
+            RenderCommand::DrawLines(lineGeometry, element.VertexCount);
+    }
     RenderCommand::SetLineWidth(1.0f);
 }
 
 void SlicePreviewObject::UpdateBoundingSphere()
 {
+}
+
+const std::vector<glm::vec3>* SlicePreviewObject::GetSubElementContour(size_t index) const
+{
+    return index < m_SubElementContours.size() ? &m_SubElementContours[index] : nullptr;
+}
+
+uint32_t SlicePreviewObject::GetVisibleVertexCount() const
+{
+    uint32_t vertexCount = 0;
+    for (const Object3DElement& element : m_ObjectElements)
+    {
+        if (element.Visible)
+            vertexCount += element.VertexCount;
+    }
+    return vertexCount;
 }

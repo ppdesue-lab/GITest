@@ -684,6 +684,39 @@ bool FitArcToPoints(const std::vector<glm::vec2>& points, size_t startIndex, siz
     return true;
 }
 
+bool ArcCandidateSpansDeviatingLineMidpoint(const Vector2DDocument& document,
+    const std::vector<uint32_t>& lineIndices, size_t startOffset, size_t endOffset,
+    const Vector2DArc& arc, float tolerance)
+{
+    const float longLineThreshold = std::max(tolerance * 4.0f, 0.000001f);
+    const float absSweep = std::abs(arc.SweepAngle);
+    const bool ccw = arc.SweepAngle >= 0.0f;
+
+    for (size_t lineOffset = startOffset; lineOffset < endOffset && lineOffset < lineIndices.size(); ++lineOffset)
+    {
+        const uint32_t lineIndex = lineIndices[lineOffset];
+        if (lineIndex >= document.Lines.size())
+            continue;
+
+        const Vector2DLine& line = document.Lines[lineIndex];
+        if (glm::length(line.End - line.Start) <= longLineThreshold)
+            continue;
+
+        const glm::vec2 midpoint = (line.Start + line.End) * 0.5f;
+        const glm::vec2 offset = midpoint - arc.Center;
+        const float distance = glm::length(offset);
+        if (std::abs(distance - arc.Radius) > tolerance)
+            return true;
+
+        const float angle = std::atan2(offset.y, offset.x);
+        const float progress = ccw ? AngleDistanceCCW(arc.StartAngle, angle) : AngleDistanceCCW(angle, arc.StartAngle);
+        if (progress > absSweep + 0.001f)
+            return true;
+    }
+
+    return false;
+}
+
 bool FitLineToPoints(const std::vector<glm::vec2>& points, size_t startIndex, size_t endIndex,
     float tolerance)
 {
@@ -787,6 +820,179 @@ uint32_t AddPrimitiveArc(Vector2DDocument& document, uint32_t elementIndex, cons
     return primitiveIndex;
 }
 
+float PointLineDistance(const glm::vec2& point, const glm::vec2& start, const glm::vec2& end)
+{
+    const glm::vec2 direction = end - start;
+    const float length = glm::length(direction);
+    if (length <= 0.000001f)
+        return glm::length(point - start);
+
+    const glm::vec2 offset = point - start;
+    return std::abs(direction.x * offset.y - direction.y * offset.x) / length;
+}
+
+void MarkSimplifiedLinePoints(const std::vector<glm::vec2>& points, size_t startIndex, size_t endIndex,
+    float tolerance, const std::vector<bool>& forcedKeep, std::vector<bool>& keep)
+{
+    if (endIndex <= startIndex + 1)
+        return;
+
+    size_t bestIndex = startIndex;
+    float bestDistance = 0.0f;
+    for (size_t pointIndex = startIndex + 1; pointIndex < endIndex; ++pointIndex)
+    {
+        if (forcedKeep[pointIndex])
+        {
+            bestIndex = pointIndex;
+            bestDistance = tolerance + 1.0f;
+            break;
+        }
+
+        const float distance = PointLineDistance(points[pointIndex], points[startIndex], points[endIndex]);
+        if (distance > bestDistance)
+        {
+            bestDistance = distance;
+            bestIndex = pointIndex;
+        }
+    }
+
+    if (bestIndex == startIndex || bestDistance <= tolerance)
+        return;
+
+    keep[bestIndex] = true;
+    MarkSimplifiedLinePoints(points, startIndex, bestIndex, tolerance, forcedKeep, keep);
+    MarkSimplifiedLinePoints(points, bestIndex, endIndex, tolerance, forcedKeep, keep);
+}
+
+void PushSimplifiedLineRun(Vector2DDocument& document, uint32_t elementIndex,
+    const std::vector<Vector2DLine>& lineRun, float tolerance)
+{
+    if (lineRun.empty())
+        return;
+
+    std::vector<glm::vec2> points;
+    points.reserve(lineRun.size() + 1);
+    points.push_back(lineRun.front().Start);
+    for (const Vector2DLine& line : lineRun)
+        points.push_back(line.End);
+
+    if (points.size() <= 2)
+    {
+        AddPrimitiveLine(document, elementIndex, lineRun.front());
+        return;
+    }
+
+    constexpr float maxSimplifiedLineCornerTurn = 0.261799388f;
+    std::vector<bool> forcedKeep(points.size(), false);
+    for (size_t pointIndex = 1; pointIndex + 1 < points.size(); ++pointIndex)
+    {
+        const glm::vec2 previous = points[pointIndex] - points[pointIndex - 1];
+        const glm::vec2 next = points[pointIndex + 1] - points[pointIndex];
+        if (glm::length(previous) <= tolerance || glm::length(next) <= tolerance)
+            continue;
+        if (std::abs(SignedTurnAngle(previous, next)) > maxSimplifiedLineCornerTurn)
+            forcedKeep[pointIndex] = true;
+    }
+
+    std::vector<bool> keep(points.size(), false);
+    keep.front() = true;
+    keep.back() = true;
+    MarkSimplifiedLinePoints(points, 0, points.size() - 1, tolerance, forcedKeep, keep);
+
+    size_t previousKeptIndex = 0;
+    for (size_t pointIndex = 1; pointIndex < points.size(); ++pointIndex)
+    {
+        if (!keep[pointIndex])
+            continue;
+
+        Vector2DLine simplifiedLine = lineRun.front();
+        simplifiedLine.Start = points[previousKeptIndex];
+        simplifiedLine.End = points[pointIndex];
+        AddPrimitiveLine(document, elementIndex, simplifiedLine);
+        previousKeptIndex = pointIndex;
+    }
+}
+
+void MergeAdjacentFittedLinePrimitives(Vector2DDocument& document, float tolerance, float connectTolerance)
+{
+    const float postLineTolerance = tolerance * 3.0f;
+    const float postConnectTolerance = std::max(connectTolerance, tolerance * 3.0f);
+    const std::vector<Vector2DPrimitive> sourcePrimitives = document.Primitives;
+    std::vector<std::vector<uint32_t>> sourceElementPrimitiveIndices;
+    sourceElementPrimitiveIndices.reserve(document.Elements.size());
+    for (const Vector2DSubElement& element : document.Elements)
+        sourceElementPrimitiveIndices.push_back(element.PrimitiveIndices);
+    std::vector<bool> consumedPrimitives(sourcePrimitives.size(), false);
+
+    document.Primitives.clear();
+    for (Vector2DSubElement& element : document.Elements)
+        element.PrimitiveIndices.clear();
+
+    for (uint32_t elementIndex = 0; elementIndex < (uint32_t)document.Elements.size(); ++elementIndex)
+    {
+        const std::vector<uint32_t>& sourcePrimitiveIndices = sourceElementPrimitiveIndices[(size_t)elementIndex];
+        std::vector<Vector2DLine> lineRun;
+
+        auto flushLineRun = [&]()
+        {
+            if (!lineRun.empty())
+            {
+                PushSimplifiedLineRun(document, elementIndex, lineRun, postLineTolerance);
+                lineRun.clear();
+            }
+        };
+
+        for (uint32_t primitiveIndex : sourcePrimitiveIndices)
+        {
+            if (primitiveIndex >= sourcePrimitives.size())
+                continue;
+            if (consumedPrimitives[(size_t)primitiveIndex])
+            {
+                flushLineRun();
+                continue;
+            }
+            consumedPrimitives[(size_t)primitiveIndex] = true;
+
+            const Vector2DPrimitive& primitive = sourcePrimitives[(size_t)primitiveIndex];
+            if (primitive.Type != Vector2DPrimitiveType::Line)
+            {
+                flushLineRun();
+                AddPrimitiveArc(document, elementIndex, primitive.Arc);
+                continue;
+            }
+
+            if (lineRun.empty())
+            {
+                lineRun.push_back(primitive.Line);
+                continue;
+            }
+
+            if (ColorsEqual(lineRun.front().Color, primitive.Line.Color) &&
+                PointsConnected(lineRun.back().End, primitive.Line.Start, postConnectTolerance))
+            {
+                lineRun.push_back(primitive.Line);
+            }
+            else
+            {
+                flushLineRun();
+                lineRun.push_back(primitive.Line);
+            }
+        }
+
+        flushLineRun();
+    }
+
+    if (document.Primitives.size() > sourcePrimitives.size())
+    {
+        document.Primitives = sourcePrimitives;
+        for (size_t elementIndex = 0; elementIndex < document.Elements.size() &&
+            elementIndex < sourceElementPrimitiveIndices.size(); ++elementIndex)
+        {
+            document.Elements[elementIndex].PrimitiveIndices = sourceElementPrimitiveIndices[elementIndex];
+        }
+    }
+}
+
 void FitLineRunToPrimitives(Vector2DDocument& document, uint32_t elementIndex,
     const std::vector<uint32_t>& lineIndices, float tolerance)
 {
@@ -880,6 +1086,8 @@ void FitLineRunToPrimitives(Vector2DDocument& document, uint32_t elementIndex,
             Vector2DArc candidate;
             if (!FitArcToPoints(points, i, candidateEnd, tolerance, candidateCrossTurn, candidate))
                 continue;
+            if (ArcCandidateSpansDeviatingLineMidpoint(document, lineIndices, i, candidateEnd, candidate, tolerance))
+                continue;
 
             bestArc = candidate;
             bestEnd = candidateEnd;
@@ -909,7 +1117,7 @@ void FitLineRunToPrimitives(Vector2DDocument& document, uint32_t elementIndex,
     }
 }
 
-void BuildFittedPrimitives(Vector2DDocument& document)
+void BuildFittedPrimitives(Vector2DDocument& document, bool bPostProcess)
 {
     document.Primitives.clear();
     for (Vector2DLine& line : document.Lines)
@@ -964,6 +1172,9 @@ void BuildFittedPrimitives(Vector2DDocument& document)
 
         FitLineRunToPrimitives(document, elementIndex, run, tolerance);
     }
+
+    if (bPostProcess)
+        MergeAdjacentFittedLinePrimitives(document, tolerance, connectTolerance);
 }
 
 void BuildLinePrimitives(Vector2DDocument& document)
@@ -1204,7 +1415,7 @@ bool OpenDxfInput(const std::filesystem::path& filepath, dimeInput& input)
 }
 
 bool DxfLoader::Load(const std::filesystem::path& filepath, Vector2DDocument& document, std::string& error,
-    DxfImportMode mode)
+    DxfImportMode mode, bool bPostProcess)
 {
     document = {};
     document.SourcePath = filepath;
@@ -1241,7 +1452,7 @@ bool DxfLoader::Load(const std::filesystem::path& filepath, Vector2DDocument& do
         BuildLinePrimitives(document);
     else if (mode == DxfImportMode::LinesWithArcFit)
     {
-        BuildFittedPrimitives(document);
+        BuildFittedPrimitives(document, bPostProcess);
         LogArcFitSummary(document);
     }
 

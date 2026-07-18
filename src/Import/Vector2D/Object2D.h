@@ -10,23 +10,18 @@
 class Object2D : public Object3D
 {
 public:
-    struct Object2DElement
+    struct Object2DElement : public Object3DElement
     {
-        std::string Name;
-        Transform Transfm;
         std::vector<uint32_t> LineIndices;
         std::vector<uint32_t> PrimitiveIndices;
-        GeometryHandle Geometry;
         GeometryHandle PointGeometry;
         GeometryHandle SelectionGeometry;
-        uint32_t VertexCount = 0;
         uint32_t PointVertexCount = 0;
         uint32_t SelectionVertexCount = 0;
         glm::vec2 Center = glm::vec2(0.0f);
         glm::vec2 LocalMinimum = glm::vec2(0.0f);
         glm::vec2 LocalMaximum = glm::vec2(0.0f);
         bool HasBounds = false;
-        bool Visible = true;
     };
 
     Object2D() = default;
@@ -44,18 +39,22 @@ public:
 
     const std::string& GetSourceName() const { return m_SourceName; }
     size_t GetLineCount() const { return m_Lines.size(); }
-    size_t GetSubElementCount() const { return m_SubElements.size(); }
+    size_t GetSubElementCount() const override { return m_SubElements.size(); }
+    std::string GetSubElementName(size_t index) const override;
+    bool IsSubElementVisible(size_t index) const override;
+    void SetSubElementVisible(size_t index, bool visible) override;
+    size_t GetSubElementLineCount(size_t index) const override;
     Object2DElement* GetSubElement(size_t index);
     const Object2DElement* GetSubElement(size_t index) const;
     Transform* GetSubElementTransform(int index);
-    int GetSelectedSubElementIndex() const { return m_SelectedSubElementIndex; }
-    bool IsSubElementSelected(int index) const;
+    int GetSelectedSubElementIndex() const override { return m_SelectedSubElementIndex; }
+    bool IsSubElementSelected(int index) const override;
     const std::vector<int>& GetSelectedSubElementIndices() const { return m_SelectedSubElementIndices; }
     bool GetObjectBounds(glm::vec3& minimum, glm::vec3& maximum) const;
     bool GetSelectedSubElementBounds(glm::vec3& minimum, glm::vec3& maximum) const;
-    void SetSelectedSubElementIndex(int index);
+    void SetSelectedSubElementIndex(int index) override;
     void SetSelectedSubElementIndices(const std::vector<int>& indices);
-    void ClearSelectedSubElement() { SetSelectedSubElementIndex(-1); }
+    void ClearSelectedSubElement() override { SetSelectedSubElementIndex(-1); }
 
 private:
     struct PatternVertex

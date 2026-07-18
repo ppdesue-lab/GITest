@@ -63,12 +63,12 @@ public:
 	Ref<Object3D> LoadTexturePlane(const std::filesystem::path& filepath);
 	Ref<Object3D> LoadGCode(const std::filesystem::path& filepath);
 	Ref<Object3D> LoadVector2D(const std::filesystem::path& filepath,
-		DxfImportMode mode = DxfImportMode::LinesWithArcFit);
+		DxfImportMode mode = DxfImportMode::LinesWithArcFit, bool bPostProcess = true);
 	Ref<Object3D> LoadManixVolume();
 	Ref<Object3D> LoadDefaultTerrainCDLOD();
 	Ref<Object3D> LoadTerrainHeightMap();
 	Ref<Object3D> LoadWaterNode();
-	Ref<Object3D> SliceSelectedModel(float layerHeight = 0.1f);
+	Ref<Object3D> SliceSelectedModel(float layerHeight = 0.5f, const glm::vec3& normal = glm::vec3(1.0f, 0.0f, 0.0f));
 	bool LoadFileByExtension(const std::filesystem::path& filepath);
 	void NewProject();
 	void ClearObject3Ds();

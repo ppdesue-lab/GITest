@@ -16,5 +16,5 @@ class DxfLoader
 {
 public:
     static bool Load(const std::filesystem::path& filepath, Vector2DDocument& document, std::string& error,
-        DxfImportMode mode = DxfImportMode::LinesWithArcFit);
+        DxfImportMode mode = DxfImportMode::LinesWithArcFit, bool bPostProcess = true);
 };

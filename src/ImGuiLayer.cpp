@@ -5,6 +5,7 @@
 #include <imgui_internal.h>
 #include <ImNodesEz.h>
 
+#include <glm/gtc/constants.hpp>
 #include <glm/gtx/euler_angles.hpp>
 
 #include "Application.h"
@@ -13,6 +14,7 @@
 #include <Primitive/Gizmo.h>
 #include <Renderer/RenderCommand.h>
 #include <Renderer/Texture.h>
+#include <Import/GeometryProcess/SlicePreviewObject.h>
 #include <Import/Vector2D/Object2D.h>
 #include <GLFW/glfw3.h>
 
@@ -47,6 +49,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include <spdlog/sinks/base_sink.h>
@@ -104,6 +107,271 @@ namespace
         glm::vec3 Max = glm::vec3(std::numeric_limits<float>::lowest());
         bool Valid = false;
     };
+
+    struct DebugMDSRange
+    {
+        float Start = 0.0f;
+        float End = 0.0f;
+        bool Valid = false;
+    };
+
+    float AngleRadians(const glm::vec2& direction)
+    {
+        float angle = std::atan2(direction.y, direction.x);
+        return angle < 0.0f ? angle + glm::two_pi<float>() : angle;
+    }
+
+    glm::vec2 DirectionFromAngle(float angle)
+    {
+        return glm::vec2(std::cos(angle), std::sin(angle));
+    }
+
+    float DistancePointToSegment2D(const glm::vec2& point, const glm::vec2& a, const glm::vec2& b)
+    {
+        const glm::vec2 ab = b - a;
+        const float abLength2 = glm::dot(ab, ab);
+        if (abLength2 <= 0.0000001f)
+            return glm::length(point - a);
+
+        const float t = glm::clamp(glm::dot(point - a, ab) / abLength2, 0.0f, 1.0f);
+        return glm::length(point - (a + ab * t));
+    }
+
+    glm::vec3 ComputeContourNormal(const std::vector<glm::vec3>& contour)
+    {
+        glm::vec3 normal(0.0f);
+        for (size_t i = 0; i < contour.size(); ++i)
+        {
+            const glm::vec3& current = contour[i];
+            const glm::vec3& next = contour[(i + 1) % contour.size()];
+            normal.x += (current.y - next.y) * (current.z + next.z);
+            normal.y += (current.z - next.z) * (current.x + next.x);
+            normal.z += (current.x - next.x) * (current.y + next.y);
+        }
+        if (glm::length2(normal) <= 0.0000001f)
+            return glm::vec3(0.0f, 1.0f, 0.0f);
+        return glm::normalize(normal);
+    }
+
+    bool BuildContourBasis(const std::vector<glm::vec3>& contour, glm::vec3& origin, glm::vec3& u, glm::vec3& v)
+    {
+        if (contour.size() < 3)
+            return false;
+
+        origin = contour.front();
+        const glm::vec3 normal = ComputeContourNormal(contour);
+        u = glm::vec3(0.0f);
+        for (size_t i = 1; i < contour.size(); ++i)
+        {
+            glm::vec3 candidate = contour[i] - origin;
+            candidate -= normal * glm::dot(candidate, normal);
+            if (glm::length2(candidate) > 0.000001f)
+            {
+                u = glm::normalize(candidate);
+                break;
+            }
+        }
+
+        if (glm::length2(u) <= 0.000001f)
+            return false;
+
+        v = glm::normalize(glm::cross(normal, u));
+        return glm::length2(v) > 0.000001f;
+    }
+
+    float SignedArea2D(const std::vector<glm::vec2>& points)
+    {
+        float area = 0.0f;
+        for (size_t i = 0; i < points.size(); ++i)
+        {
+            const glm::vec2& a = points[i];
+            const glm::vec2& b = points[(i + 1) % points.size()];
+            area += a.x * b.y - a.y * b.x;
+        }
+        return area * 0.5f;
+    }
+
+    glm::vec2 ComputeOutwardNormal2D(const std::vector<glm::vec2>& points, size_t index, bool ccw)
+    {
+        const size_t count = points.size();
+        const glm::vec2 current = points[index];
+        const glm::vec2 prevDir = glm::normalize(current - points[(index + count - 1) % count]);
+        const glm::vec2 nextDir = glm::normalize(points[(index + 1) % count] - current);
+        auto edgeNormal = [&](const glm::vec2& dir) {
+            return ccw ? glm::vec2(dir.y, -dir.x) : glm::vec2(-dir.y, dir.x);
+        };
+
+        glm::vec2 normal = edgeNormal(prevDir) + edgeNormal(nextDir);
+        if (glm::length2(normal) <= 0.000001f)
+            normal = edgeNormal(nextDir);
+        return glm::length2(normal) > 0.000001f ? glm::normalize(normal) : glm::vec2(0.0f, 1.0f);
+    }
+
+    DebugMDSRange ComputeDebugMDSForPoint(const std::vector<glm::vec2>& points, size_t pointIndex,
+        float toolRadius, float toolHeight)
+    {
+        constexpr int kSampleCount = 72;
+        constexpr float kSampleStep = glm::two_pi<float>() / (float)kSampleCount;
+
+        const bool ccw = SignedArea2D(points) > 0.0f;
+        const glm::vec2 outward = ComputeOutwardNormal2D(points, pointIndex, ccw);
+        const glm::vec2 toolPosition = points[pointIndex] + outward * (toolRadius + 0.05f);
+
+        std::array<char, kSampleCount> valid{};
+        for (int sample = 0; sample < kSampleCount; ++sample)
+        {
+            const glm::vec2 direction = DirectionFromAngle((float)sample * kSampleStep);
+            const glm::vec2 segmentEnd = toolPosition + direction * toolHeight;
+            bool blocked = false;
+            for (size_t point = 0; point < points.size(); ++point)
+            {
+                if (point == pointIndex)
+                    continue;
+                const float distance = DistancePointToSegment2D(points[point], toolPosition, segmentEnd);
+                if (distance < toolRadius)
+                {
+                    blocked = true;
+                    break;
+                }
+            }
+            valid[(size_t)sample] = blocked ? 0 : 1;
+        }
+
+        int bestStart = -1;
+        int bestLength = 0;
+        int currentStart = -1;
+        int currentLength = 0;
+        for (int i = 0; i < kSampleCount * 2; ++i)
+        {
+            const int idx = i % kSampleCount;
+            if (valid[(size_t)idx])
+            {
+                if (currentStart < 0)
+                    currentStart = i;
+                ++currentLength;
+                if (currentLength > bestLength && currentLength <= kSampleCount)
+                {
+                    bestLength = currentLength;
+                    bestStart = currentStart;
+                }
+            }
+            else
+            {
+                currentStart = -1;
+                currentLength = 0;
+            }
+        }
+
+        if (bestStart < 0 || bestLength <= 0)
+            return {};
+
+        DebugMDSRange range;
+        range.Start = (float)(bestStart % kSampleCount) * kSampleStep;
+        range.End = (float)((bestStart + bestLength - 1) % kSampleCount) * kSampleStep;
+        range.Valid = true;
+        return range;
+    }
+
+    glm::vec3 FromContour2D(const glm::vec2& point, const glm::vec3& origin, const glm::vec3& u, const glm::vec3& v)
+    {
+        return origin + u * point.x + v * point.y;
+    }
+
+    bool ShowSelectedSliceMDS()
+    {
+        Application& app = Application::Get();
+        Scene::Entry* selected = app.GetScene().GetSelectedEntry();
+        Ref<SlicePreviewObject> sliceObject = selected && selected->Object ?
+            std::dynamic_pointer_cast<SlicePreviewObject>(selected->Object) : nullptr;
+        if (!sliceObject)
+        {
+            WARN("showSliceMDS failed: select a slice object first.");
+            return false;
+        }
+
+        int contourIndex = sliceObject->GetSelectedSubElementIndex();
+        if (contourIndex < 0 || !sliceObject->IsSubElementVisible((size_t)contourIndex))
+        {
+            contourIndex = -1;
+            for (size_t i = 0; i < sliceObject->GetSubElementCount(); ++i)
+            {
+                if (sliceObject->IsSubElementVisible(i))
+                {
+                    contourIndex = (int)i;
+                    break;
+                }
+            }
+        }
+
+        const std::vector<glm::vec3>* contour = contourIndex >= 0 ?
+            sliceObject->GetSubElementContour((size_t)contourIndex) : nullptr;
+        if (!contour || contour->size() < 3)
+        {
+            WARN("showSliceMDS failed: selected slice has no usable contour.");
+            return false;
+        }
+
+        std::vector<glm::vec3> points3D = *contour;
+        if (points3D.size() > 2 && glm::length2(points3D.front() - points3D.back()) <= 0.000001f)
+            points3D.pop_back();
+
+        glm::vec3 origin, u, v;
+        if (!BuildContourBasis(points3D, origin, u, v))
+        {
+            WARN("showSliceMDS failed: unable to build contour basis.");
+            return false;
+        }
+
+        std::vector<glm::vec2> points2D;
+        points2D.reserve(points3D.size());
+        for (const glm::vec3& point : points3D)
+        {
+            const glm::vec3 delta = point - origin;
+            points2D.emplace_back(glm::dot(delta, u), glm::dot(delta, v));
+        }
+
+        constexpr float toolRadius = 1.5875f;
+        constexpr float toolHeight = 10.0f;
+        const float debugLength = std::max(toolHeight * 0.35f, 1.0f);
+
+        GeometryProcess::SliceContours debugContours;
+        debugContours[0].push_back(points3D);
+        for (size_t i = 0; i < points2D.size(); ++i)
+        {
+            DebugMDSRange range = ComputeDebugMDSForPoint(points2D, i, toolRadius, toolHeight);
+            if (!range.Valid)
+                continue;
+
+            const float midAngle = AngleRadians(DirectionFromAngle(range.Start) + DirectionFromAngle(range.End));
+            const glm::vec2 toolPosition = points2D[i] +
+                ComputeOutwardNormal2D(points2D, i, SignedArea2D(points2D) > 0.0f) * (toolRadius + 0.05f);
+
+            const glm::vec3 toolWorld = FromContour2D(toolPosition, origin, u, v);
+            debugContours[1].push_back({
+                toolWorld,
+                FromContour2D(toolPosition + DirectionFromAngle(midAngle) * debugLength, origin, u, v)
+            });
+            debugContours[2].push_back({
+                toolWorld,
+                FromContour2D(toolPosition + DirectionFromAngle(range.Start) * (debugLength * 0.55f), origin, u, v)
+            });
+            debugContours[2].push_back({
+                toolWorld,
+                FromContour2D(toolPosition + DirectionFromAngle(range.End) * (debugLength * 0.55f), origin, u, v)
+            });
+        }
+
+        Ref<SlicePreviewObject> debugObject = CreateRef<SlicePreviewObject>();
+        if (!debugObject->LoadFromContours(debugContours))
+        {
+            WARN("showSliceMDS failed: unable to build debug display.");
+            return false;
+        }
+
+        app.GetScene().AddObject(debugObject, "showSliceMDS", selected->FilePath);
+        TRACE("showSliceMDS generated for contour {}.", contourIndex);
+        return true;
+    }
 
     void AddFocusSphere(FocusBounds& focus, const BoundingSphere& sphere)
     {
@@ -477,6 +745,8 @@ void ImGuiLayer::OnImGuiRender()
     Application& app = Application::Get();
     app.GetTimelineAnimation().OnImGuiRender(app.GetScene(), app.GetDeltaTime());
     app.GetCameraAnimation().OnImGuiRender(app.GetCamera(), app.GetDeltaTime());
+    DrawPath4DWindow();
+    DrawSliceOptionsModal();
     DrawImportOptionsModal();
 
 }
@@ -1059,7 +1329,7 @@ void ImGuiLayer::DrawMenuBar()
             ImGui::EndMenu();
         }
 
-        if (ImGui::BeginMenu("GeometryProcess"))
+        if (ImGui::BeginMenu("Geometry"))
         {
             Application& app = Application::Get();
             const bool hasSelection = app.GetSelectedObjectIndex() >= 0;
@@ -1068,12 +1338,20 @@ void ImGuiLayer::DrawMenuBar()
 
             if (ImGui::MenuItem("Slice"))
             {
-                auto slices = app.SliceSelectedModel();
-                TRACE("Sliced selected model: {}", slices ? "success" : "failed");
+                m_SelectedSliceAxis = 0;
+                m_SliceLayerHeight = 0.5f;
+                m_SlicePopupRequested = true;
             }
 
             if (!hasSelection)
                 ImGui::EndDisabled();
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Path"))
+        {
+            if (ImGui::MenuItem("4d"))
+                m_ShowPath4DWindow = true;
             ImGui::EndMenu();
         }
 
@@ -1163,7 +1441,9 @@ void ImGuiLayer::DrawProjectPanel()
         {
             const auto& entry = entries[i];
             Ref<Object2D> object2D = entry.Object ? std::dynamic_pointer_cast<Object2D>(entry.Object) : nullptr;
-            const bool hasSubElements = object2D && object2D->GetSubElementCount() > 0;
+            Object3D* object = entry.Object.get();
+            const bool hasSubElements = object && object->GetSubElementCount() > 0;
+            const bool isObject2D = object2D != nullptr;
             const bool editingThis2DObject = app.IsViewport2DEditMode() && app.GetSelectedObjectIndex() == i;
 
             ImGuiTreeNodeFlags flags = hasSubElements ? 0 :
@@ -1187,7 +1467,7 @@ void ImGuiLayer::DrawProjectPanel()
                 ImGui::SetTooltip(vis ? "Hide" : "Show");
             ImGui::SameLine();
 
-            if (hasSubElements)
+            if (isObject2D && hasSubElements)
                 ImGui::SetNextItemOpen(editingThis2DObject, ImGuiCond_Always);
             const bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)i, flags, "%s", entry.Name.c_str());
             if (ImGui::IsItemClicked())
@@ -1197,7 +1477,43 @@ void ImGuiLayer::DrawProjectPanel()
                 else
                     app.SetSelectedObjectIndex(i);
             }
-            if (hasSubElements && nodeOpen && !editingThis2DObject)
+
+            if (hasSubElements)
+            {
+                const ImGuiStyle& style = ImGui::GetStyle();
+                const float buttonSize = 18.0f;
+                const float buttonSpacing = style.ItemInnerSpacing.x;
+                const float buttonsWidth = buttonSize * 2.0f + buttonSpacing;
+                const float rightAlignedX = ImGui::GetWindowContentRegionMax().x - buttonsWidth;
+                if (ImGui::GetCursorPosX() < rightAlignedX)
+                    ImGui::SameLine(rightAlignedX);
+                else
+                    ImGui::SameLine();
+
+                ImGui::PushID(i);
+                if (drawVisibilityButton("##showAllSubElements", true))
+                {
+                    for (size_t subIndex = 0; subIndex < object->GetSubElementCount(); ++subIndex)
+                        object->SetSubElementVisible(subIndex, true);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Show all sub-elements");
+                ImGui::SameLine(0.0f, buttonSpacing);
+                if (drawVisibilityButton("##hideAllSubElements", false))
+                {
+                    for (size_t subIndex = 0; subIndex < object->GetSubElementCount(); ++subIndex)
+                        object->SetSubElementVisible(subIndex, false);
+                    if (isObject2D)
+                        app.ClearSelected2DSubElement();
+                    else
+                        object->ClearSelectedSubElement();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Hide all sub-elements");
+                ImGui::PopID();
+            }
+
+            if (isObject2D && hasSubElements && nodeOpen && !editingThis2DObject)
             {
                 if (app.GetSelectedObjectIndex() != i)
                     app.SetSelectedObjectIndex(i);
@@ -1205,7 +1521,7 @@ void ImGuiLayer::DrawProjectPanel()
                 app.SetViewportRenderMode(Application::ViewportRenderMode::Editor);
                 app.SetViewport2DEditMode(true);
             }
-            else if (hasSubElements && !nodeOpen && editingThis2DObject)
+            else if (isObject2D && hasSubElements && !nodeOpen && editingThis2DObject)
             {
                 app.SetViewport2DEditMode(false);
             }
@@ -1215,21 +1531,21 @@ void ImGuiLayer::DrawProjectPanel()
 
             if (hasSubElements && nodeOpen)
             {
-                if (editingThis2DObject)
+                if (editingThis2DObject || !isObject2D)
                 {
-                    for (int subIndex = 0; subIndex < (int)object2D->GetSubElementCount(); ++subIndex)
+                    for (int subIndex = 0; subIndex < (int)object->GetSubElementCount(); ++subIndex)
                     {
-                        Object2D::Object2DElement* subElement = object2D->GetSubElement((size_t)subIndex);
-                        const std::string label = subElement && !subElement->Name.empty() ?
-                            subElement->Name + " " + std::to_string(subIndex + 1) :
+                        const std::string subElementName = object->GetSubElementName((size_t)subIndex);
+                        const std::string label = !subElementName.empty() ?
+                            subElementName + " " + std::to_string(subIndex + 1) :
                             "Element " + std::to_string(subIndex + 1);
-                        const bool subSelected = object2D->IsSubElementSelected(subIndex);
+                        const bool subSelected = object->IsSubElementSelected(subIndex);
                         ImGui::PushID(subIndex);
-                        const bool subVisible = subElement ? subElement->Visible : true;
-                        if (drawVisibilityButton("##subvis", subVisible) && subElement)
+                        const bool subVisible = object->IsSubElementVisible((size_t)subIndex);
+                        if (drawVisibilityButton("##subvis", subVisible))
                         {
-                            subElement->Visible = !subElement->Visible;
-                            if (!subElement->Visible && subSelected)
+                            object->SetSubElementVisible((size_t)subIndex, !subVisible);
+                            if (isObject2D && subVisible && subSelected)
                                 app.ClearSelected2DSubElement();
                         }
                         if (ImGui::IsItemHovered())
@@ -1239,13 +1555,20 @@ void ImGuiLayer::DrawProjectPanel()
                         {
                             if (app.GetSelectedObjectIndex() != i)
                                 app.SetSelectedObjectIndex(i);
-                            app.SetViewportViewMode(Application::ViewportViewMode::View2D);
-                            app.SetViewportRenderMode(Application::ViewportRenderMode::Editor);
-                            app.SetViewport2DEditMode(true);
-                            app.SetSelected2DSubElementIndex(subIndex);
+                            if (isObject2D)
+                            {
+                                app.SetViewportViewMode(Application::ViewportViewMode::View2D);
+                                app.SetViewportRenderMode(Application::ViewportRenderMode::Editor);
+                                app.SetViewport2DEditMode(true);
+                                app.SetSelected2DSubElementIndex(subIndex);
+                            }
+                            else
+                            {
+                                object->SetSelectedSubElementIndex(subIndex);
+                            }
                         }
-                        if (ImGui::IsItemHovered() && subElement)
-                            ImGui::SetTooltip("%zu line segments", subElement->LineIndices.size());
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("%zu line segments", object->GetSubElementLineCount((size_t)subIndex));
                         ImGui::PopID();
                     }
                 }
@@ -1972,6 +2295,88 @@ void ImGuiLayer::QueueDxfImport(const std::filesystem::path& filepath)
     QueueFileImport(filepath);
 }
 
+void ImGuiLayer::DrawPath4DWindow()
+{
+    if (!m_ShowPath4DWindow)
+        return;
+
+    ImGui::SetNextWindowSize(ImVec2(360.0f, 0.0f), ImGuiCond_Appearing);
+    if (!ImGui::Begin("4d\xe5\x88\x80\xe8\xb7\xaf\xe6\x8e\xa7\xe5\x88\xb6\xe7\xaa\x97\xe5\x8f\xa3", &m_ShowPath4DWindow, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextUnformatted("\xe6\x95\xb4\xe4\xbd\x93\xe7\x94\x9f\xe6\x88\x90");
+    ImGui::SameLine(160.0f);
+    if (ImGui::Button("Run##Path4DGenerateAll", ImVec2(120.0f, 0.0f)))
+        TRACE("Path4D generate all requested.");
+
+    ImGui::Separator();
+
+    ImGui::TextUnformatted("\xe8\xb0\x83\xe8\xaf\x95\xe5\x8d\x95slice");
+    ImGui::SameLine(160.0f);
+    if (ImGui::Button("Run##Path4DDebugSingleSlice", ImVec2(120.0f, 0.0f)))
+        TRACE("Path4D debug single slice requested.");
+
+    ImGui::Separator();
+
+    ImGui::TextUnformatted("showSliceMDS");
+    ImGui::SameLine(160.0f);
+    if (ImGui::Button("Run##Path4DShowSliceMDS", ImVec2(120.0f, 0.0f)))
+        ShowSelectedSliceMDS();
+
+    ImGui::End();
+}
+
+void ImGuiLayer::DrawSliceOptionsModal()
+{
+    constexpr const char* popupName = "Slice";
+    if (m_SlicePopupRequested)
+    {
+        ImGui::OpenPopup(popupName);
+        m_SlicePopupRequested = false;
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal(popupName, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    ImGui::TextUnformatted("Direction");
+    ImGui::RadioButton("X", &m_SelectedSliceAxis, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("Y", &m_SelectedSliceAxis, 1);
+    ImGui::SameLine();
+    ImGui::RadioButton("Z", &m_SelectedSliceAxis, 2);
+
+    ImGui::Separator();
+    ImGui::SetNextItemWidth(140.0f);
+    ImGui::InputFloat("Spacing (mm)", &m_SliceLayerHeight, 0.1f, 1.0f, "%.3f");
+    if (m_SliceLayerHeight < 0.0001f)
+        m_SliceLayerHeight = 0.0001f;
+
+    ImGui::Separator();
+    if (ImGui::Button("OK", ImVec2(120.0f, 0.0f)))
+    {
+        glm::vec3 normal(1.0f, 0.0f, 0.0f);
+        if (m_SelectedSliceAxis == 1)
+            normal = glm::vec3(0.0f, 1.0f, 0.0f);
+        else if (m_SelectedSliceAxis == 2)
+            normal = glm::vec3(0.0f, 0.0f, 1.0f);
+
+        auto slices = Application::Get().SliceSelectedModel(m_SliceLayerHeight, normal);
+        TRACE("Sliced selected model: {}", slices ? "success" : "failed");
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)))
+        ImGui::CloseCurrentPopup();
+
+    ImGui::EndPopup();
+}
+
 void ImGuiLayer::DrawImportOptionsModal()
 {
     constexpr const char* popupName = "Import File";
@@ -1980,6 +2385,7 @@ void ImGuiLayer::DrawImportOptionsModal()
         m_ActiveImportPath = m_PendingImportPaths.front();
         m_PendingImportPaths.pop_front();
         m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
+        m_DxfPostProcess = true;
         m_ImportPopupRequested = true;
     }
 
@@ -2017,6 +2423,10 @@ void ImGuiLayer::DrawImportOptionsModal()
 
         ImGui::RadioButton("Convert all DXF geometry to line segments", &mode, 0);
         ImGui::RadioButton("Convert to line segments, then fit arcs", &mode, 1);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(mode != 1);
+        ImGui::Checkbox("Post process", &m_DxfPostProcess);
+        ImGui::EndDisabled();
         ImGui::RadioButton("Import native DXF primitives when available", &mode, 2);
 
         if (mode == 0)
@@ -2038,7 +2448,7 @@ void ImGuiLayer::DrawImportOptionsModal()
         if (!m_ActiveImportPath.empty())
         {
             if (isDxf)
-                loaded = Application::Get().LoadVector2D(m_ActiveImportPath, m_SelectedDxfImportMode) != nullptr;
+                loaded = Application::Get().LoadVector2D(m_ActiveImportPath, m_SelectedDxfImportMode, m_DxfPostProcess) != nullptr;
             else
                 loaded = Application::Get().LoadFileByExtension(m_ActiveImportPath);
         }

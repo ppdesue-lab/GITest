@@ -62,6 +62,56 @@ Mesh::~Mesh()
 	GeometryLibrary::Release(EdgeVertexObject);
 }
 
+Object3D::~Object3D()
+{
+	ReleaseObjectElements();
+}
+
+size_t Object3D::GetSubElementCount() const
+{
+	return m_ObjectElements.size();
+}
+
+std::string Object3D::GetSubElementName(size_t index) const
+{
+	return index < m_ObjectElements.size() ? m_ObjectElements[index].Name : std::string();
+}
+
+bool Object3D::IsSubElementVisible(size_t index) const
+{
+	return index < m_ObjectElements.size() ? m_ObjectElements[index].Visible : true;
+}
+
+void Object3D::SetSubElementVisible(size_t index, bool visible)
+{
+	if (index >= m_ObjectElements.size())
+		return;
+
+	m_ObjectElements[index].Visible = visible;
+	if (!visible && m_SelectedSubElementIndex == (int)index)
+		m_SelectedSubElementIndex = -1;
+}
+
+size_t Object3D::GetSubElementLineCount(size_t index) const
+{
+	return index < m_ObjectElements.size() ? m_ObjectElements[index].LineCount : 0;
+}
+
+void Object3D::SetSelectedSubElementIndex(int index)
+{
+	if (index < -1 || index >= (int)m_ObjectElements.size())
+		index = -1;
+	m_SelectedSubElementIndex = index;
+}
+
+void Object3D::ReleaseObjectElements()
+{
+	for (Object3DElement& element : m_ObjectElements)
+		GeometryLibrary::Release(element.Geometry);
+	m_ObjectElements.clear();
+	m_SelectedSubElementIndex = -1;
+}
+
 void Mesh::UpdateBoundingSphere()
 {
 	Bounds = {};

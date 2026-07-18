@@ -320,7 +320,7 @@ void Object2D::Draw(const glm::mat4& view, const glm::mat4 proj, bool transparen
         m_LineShader->Bind();
         m_LineShader->SetMat4("u_View", view);
         m_LineShader->SetMat4("u_Projection", proj);
-        RenderCommand::SetPointSize(5.0f);
+        RenderCommand::SetPointSize(9.0f);
         Ref<VertexArray> batchedPointVertexArray = GeometryLibrary::Resolve(m_BatchedPointGeometry);
         if (batchedPointVertexArray && m_BatchedPointVertexCount > 0)
         {
@@ -456,6 +456,36 @@ void Object2D::SetSelectedSubElementIndices(const std::vector<int>& indices)
 
     m_SelectedSubElementIndex = m_SelectedSubElementIndices.empty() ? -1 : m_SelectedSubElementIndices.front();
     RebuildSelectedSubElementGeometry();
+}
+
+std::string Object2D::GetSubElementName(size_t index) const
+{
+    const Object2DElement* element = GetSubElement(index);
+    return element ? element->Name : std::string();
+}
+
+bool Object2D::IsSubElementVisible(size_t index) const
+{
+    const Object2DElement* element = GetSubElement(index);
+    return element ? element->Visible : true;
+}
+
+void Object2D::SetSubElementVisible(size_t index, bool visible)
+{
+    Object2DElement* element = GetSubElement(index);
+    if (!element || element->Visible == visible)
+        return;
+
+    element->Visible = visible;
+    if (!visible && IsSubElementSelected((int)index))
+        SetSelectedSubElementIndex(-1);
+    m_BatchedGeometryDirty = true;
+}
+
+size_t Object2D::GetSubElementLineCount(size_t index) const
+{
+    const Object2DElement* element = GetSubElement(index);
+    return element ? element->LineIndices.size() : 0;
 }
 
 bool Object2D::IsSubElementSelected(int index) const
@@ -669,6 +699,7 @@ void Object2D::EnsureBatchedGeometries()
     m_BatchedPointGeometry = {};
     m_BatchedVertexCount = 0;
     m_BatchedPointVertexCount = 0;
+    m_BatchedLineInstances.clear();
     m_BatchedElementMatrices.clear();
     m_BatchedElementVisible.clear();
     m_BatchedElementMatrices.reserve(m_SubElements.size());

@@ -12,6 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 #make an imgui folder and put all of these files in the imgui folder
 add_subdirectory(src) #libimgui
+add_subdirectory(vulkan_compute)
 
 add_executable(sandbox sandbox/sandbox.cpp)
 target_link_libraries(sandbox PRIVATE ${kengine_lib})

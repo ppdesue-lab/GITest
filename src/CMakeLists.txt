@@ -19,6 +19,7 @@ set(KENGINE_OPENCL_LIBRARY "${KENGINE_OPENCL_ROOT}/lib/x86_64/OpenCL.lib")
 set(KENGINE_OCCT_ROOT "D:/gitclones/CarveraCAM/thirdparty/occt" CACHE PATH "OpenCASCADE installation used by the STEP loader")
 set(KENGINE_OCCT_AUX_RUNTIME_DIR "D:/soft/Mayo-0.9.0-win64-binaries" CACHE PATH "Directory containing auxiliary DLLs required by this OCCT build")
 set(KENGINE_GLM_ROOT "D:/gitclones/CarveraCAM/thirdparty/glm" CACHE PATH "Project GLM include root")
+set(KENGINE_TOOLPATH4D_ROOT "D:/gitclones/MakeraStudio/trunk/src/thirdparty/toolpath4d" CACHE PATH "4D toolpath core source directory")
 set(KENGINE_OCCT_LIB_DIR "${KENGINE_OCCT_ROOT}/win64/vc14/lib")
 set(KENGINE_OCCT_LIBRARIES
   "${KENGINE_OCCT_LIB_DIR}/TKernel.lib"
@@ -90,6 +91,13 @@ target_include_directories(GeometryProcess PUBLIC
   ${KENGINE_GLM_ROOT}
 )
 target_link_libraries(GeometryProcess PUBLIC assimp)
+
+if(EXISTS "${KENGINE_TOOLPATH4D_ROOT}/CMakeLists.txt")
+  add_subdirectory("${KENGINE_TOOLPATH4D_ROOT}" "${CMAKE_BINARY_DIR}/toolpath4d-build" EXCLUDE_FROM_ALL)
+  target_include_directories(path4d_toolpath_core PUBLIC ${KENGINE_GLM_ROOT})
+else()
+  message(FATAL_ERROR "KENGINE_TOOLPATH4D_ROOT does not contain CMakeLists.txt: ${KENGINE_TOOLPATH4D_ROOT}")
+endif()
 
 #glfw
 FetchContent_Declare(
@@ -223,6 +231,7 @@ set(third_party_libs
   libimgui
   tanim
   dime
+  path4d_toolpath_core
   GeometryProcess
   EnTT::EnTT
   ${KENGINE_OPENCL_LIBRARY}
