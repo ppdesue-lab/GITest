@@ -11,6 +11,15 @@ struct RendererLineInstance
     glm::vec4 Start = glm::vec4(0.0f);
     glm::vec4 End = glm::vec4(0.0f);
     glm::vec4 Color = glm::vec4(1.0f);
+    glm::vec4 Meta0 = glm::vec4(0.0f);
+    glm::vec4 Meta1 = glm::vec4(0.0f);
+};
+
+class RendererLineInstanceBuffer
+{
+public:
+    virtual ~RendererLineInstanceBuffer() = default;
+    virtual uint32_t GetLineCount() const = 0;
 };
 
 class Renderer
@@ -36,7 +45,12 @@ public:
     virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) = 0;
     virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount) = 0;
     virtual void DrawPoints(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) = 0;
+    virtual Ref<RendererLineInstanceBuffer> CreateLineInstanceBuffer(
+        const RendererLineInstance* lines, uint32_t lineCount) = 0;
     virtual bool DrawInstancedLines(const RendererLineInstance* lines, uint32_t lineCount,
+        const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
+        const glm::vec2& viewportSize) = 0;
+    virtual bool DrawInstancedLines(const Ref<RendererLineInstanceBuffer>& lineBuffer, uint32_t lineCount,
         const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
         const glm::vec2& viewportSize) = 0;
 

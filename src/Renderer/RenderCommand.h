@@ -73,11 +73,24 @@ public:
         s_RendererAPI->DrawPoints(vertexArray, vertexCount);
     };
 
+    static Ref<RendererLineInstanceBuffer> CreateLineInstanceBuffer(
+        const RendererLineInstance* lines, uint32_t lineCount)
+    {
+        return s_RendererAPI->CreateLineInstanceBuffer(lines, lineCount);
+    }
+
     static bool DrawInstancedLines(const RendererLineInstance* lines, uint32_t lineCount,
         const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
         const glm::vec2& viewportSize)
     {
         return s_RendererAPI->DrawInstancedLines(lines, lineCount, view, proj, model, viewportSize);
+    }
+
+    static bool DrawInstancedLines(const Ref<RendererLineInstanceBuffer>& lineBuffer, uint32_t lineCount,
+        const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
+        const glm::vec2& viewportSize)
+    {
+        return s_RendererAPI->DrawInstancedLines(lineBuffer, lineCount, view, proj, model, viewportSize);
     }
 
     static void SetLineWidth(float width)

@@ -2225,14 +2225,17 @@ void ImGuiLayer::DrawViewportPanel()
             if (m_ViewportSelectRectActive && is2D)
             {
                 ImDrawList* drawList = ImGui::GetWindowDrawList();
+                const bool windowSelection = m_ViewportSelectEnd.x >= m_ViewportSelectStart.x;
                 ImVec2 rectMin(
                     itemMin.x + (std::min)(m_ViewportSelectStart.x, m_ViewportSelectEnd.x),
                     itemMin.y + (std::min)(m_ViewportSelectStart.y, m_ViewportSelectEnd.y));
                 ImVec2 rectMax(
                     itemMin.x + (std::max)(m_ViewportSelectStart.x, m_ViewportSelectEnd.x),
                     itemMin.y + (std::max)(m_ViewportSelectStart.y, m_ViewportSelectEnd.y));
-                drawList->AddRectFilled(rectMin, rectMax, IM_COL32(80, 150, 255, 36));
-                drawList->AddRect(rectMin, rectMax, IM_COL32(90, 180, 255, 210), 0.0f, 0, 1.5f);
+                const ImU32 fillColor = windowSelection ? IM_COL32(80, 150, 255, 36) : IM_COL32(70, 210, 120, 36);
+                const ImU32 edgeColor = windowSelection ? IM_COL32(90, 180, 255, 210) : IM_COL32(80, 220, 130, 220);
+                drawList->AddRectFilled(rectMin, rectMax, fillColor);
+                drawList->AddRect(rectMin, rectMax, edgeColor, 0.0f, 0, 1.5f);
             }
 
             if (viewportHovered)
@@ -2386,6 +2389,7 @@ void ImGuiLayer::DrawImportOptionsModal()
         m_PendingImportPaths.pop_front();
         m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
         m_DxfPostProcess = true;
+        m_GCodeUseInstancedRendering = false;
         m_ImportPopupRequested = true;
     }
 
@@ -2407,8 +2411,11 @@ void ImGuiLayer::DrawImportOptionsModal()
     std::transform(extension.begin(), extension.end(), extension.begin(),
         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     const bool isDxf = extension == ".dxf";
+    const bool isGCode = extension == ".gcode" || extension == ".nc" ||
+        extension == ".cnc" || extension == ".tap";
 
-    ImGui::TextUnformatted(isDxf ? "Select how to import this DXF file." : "Import this file with default settings.");
+    ImGui::TextUnformatted(isDxf ? "Select how to import this DXF file." :
+        (isGCode ? "Select how to render this GCode file." : "Import this file with default settings."));
     if (!filename.empty())
         ImGui::TextDisabled("%s", filename.c_str());
     ImGui::Separator();
@@ -2436,19 +2443,27 @@ void ImGuiLayer::DrawImportOptionsModal()
         else
             m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
     }
+    else if (isGCode)
+    {
+        ImGui::Checkbox("Use instanced line rendering", &m_GCodeUseInstancedRendering);
+        ImGui::TextDisabled("Off: original DrawLines path, usually faster for large NC files.");
+        ImGui::TextDisabled("On: screen-space thick lines, higher quality but heavier.");
+    }
     else
     {
         ImGui::Dummy(ImVec2(1.0f, 72.0f));
     }
 
     ImGui::Separator();
-    if (ImGui::Button(isDxf ? "Import" : "OK", ImVec2(120.0f, 0.0f)))
+    if (ImGui::Button((isDxf || isGCode) ? "Import" : "OK", ImVec2(120.0f, 0.0f)))
     {
         bool loaded = true;
         if (!m_ActiveImportPath.empty())
         {
             if (isDxf)
                 loaded = Application::Get().LoadVector2D(m_ActiveImportPath, m_SelectedDxfImportMode, m_DxfPostProcess) != nullptr;
+            else if (isGCode)
+                loaded = Application::Get().LoadGCode(m_ActiveImportPath, m_GCodeUseInstancedRendering) != nullptr;
             else
                 loaded = Application::Get().LoadFileByExtension(m_ActiveImportPath);
         }
@@ -2937,27 +2952,34 @@ void ImGuiLayer::SelectObjectsInViewportRect(const glm::vec2& start, const glm::
     minPoint = glm::clamp(minPoint, glm::vec2(0.0f), viewportSize);
     maxPoint = glm::clamp(maxPoint, glm::vec2(0.0f), viewportSize);
 
-    if (glm::length(maxPoint - minPoint) < 4.0f)
+    const bool pointPick = glm::length(maxPoint - minPoint) < 4.0f;
+    if (pointPick)
         maxPoint = minPoint + glm::vec2(1.0f);
 
     std::vector<int> pickedObjects;
-    const int samplesX = (int)glm::clamp((maxPoint.x - minPoint.x) / 24.0f + 1.0f, 1.0f, 16.0f);
-    const int samplesY = (int)glm::clamp((maxPoint.y - minPoint.y) / 24.0f + 1.0f, 1.0f, 16.0f);
-    for (int y = 0; y < samplesY; ++y)
+    if (pointPick)
     {
-        const float ty = samplesY == 1 ? 0.5f : (float)y / (float)(samplesY - 1);
-        for (int x = 0; x < samplesX; ++x)
+        const glm::vec2 sample = (minPoint + maxPoint) * 0.5f;
+        const int pickupX = (int)sample.x;
+        const int pickupY = ViewportMouseToFramebufferY(sample.y, viewportSize.y);
+        const int objectIndex = app.ReadPickupPixel(pickupX, pickupY) - 1;
+        if (objectIndex >= 0 && objectIndex < app.GetScene().GetCount())
+            pickedObjects.push_back(objectIndex);
+    }
+    else
+    {
+        const bool requireFullyContained = end.x >= start.x;
+        const Ref<Camera> camera = app.GetViewportCamera();
+        const glm::mat4 view = camera->GetViewMatrix();
+        const glm::mat4 projection = camera->GetProjectionMatrix();
+        const auto& objects = app.GetScene().GetObjects();
+        for (size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
         {
-            const float tx = samplesX == 1 ? 0.5f : (float)x / (float)(samplesX - 1);
-            const glm::vec2 sample = glm::mix(minPoint, maxPoint, glm::vec2(tx, ty));
-            const int pickupX = (int)sample.x;
-            const int pickupY = ViewportMouseToFramebufferY(sample.y, viewportSize.y);
-            const int objectIndex = app.ReadPickupPixel(pickupX, pickupY) - 1;
-            if (objectIndex >= 0 && objectIndex < app.GetScene().GetCount() &&
-                std::find(pickedObjects.begin(), pickedObjects.end(), objectIndex) == pickedObjects.end())
-            {
-                pickedObjects.push_back(objectIndex);
-            }
+            const Scene::Entry& entry = objects[objectIndex];
+            const Ref<Object2D> object2D = entry.Object ? std::dynamic_pointer_cast<Object2D>(entry.Object) : nullptr;
+            if (entry.Visible && object2D && object2D->IsGeometryInViewportRect(view, projection,
+                viewportSize, minPoint, maxPoint, requireFullyContained))
+                pickedObjects.push_back((int)objectIndex);
         }
     }
 
@@ -3000,23 +3022,27 @@ void ImGuiLayer::Select2DSubElementsInViewportRect(const glm::vec2& start, const
     if (appendSelection)
         pickedSubElements = object2D->GetSelectedSubElementIndices();
 
-    const int samplesX = pointPick ? 1 : (int)glm::clamp((maxPoint.x - minPoint.x) / 10.0f + 1.0f, 2.0f, 64.0f);
-    const int samplesY = pointPick ? 1 : (int)glm::clamp((maxPoint.y - minPoint.y) / 10.0f + 1.0f, 2.0f, 64.0f);
-    for (int y = 0; y < samplesY; ++y)
+    if (pointPick)
     {
-        const float ty = samplesY == 1 ? 0.5f : (float)y / (float)(samplesY - 1);
-        for (int x = 0; x < samplesX; ++x)
+        const glm::vec2 sample = (minPoint + maxPoint) * 0.5f;
+        const int pickupX = (int)sample.x;
+        const int pickupY = ViewportMouseToFramebufferY(sample.y, viewportSize.y);
+        const int subElementIndex = app.ReadPickupPixel(pickupX, pickupY) - 1;
+        if (subElementIndex >= 0 && subElementIndex < (int)object2D->GetSubElementCount() &&
+            std::find(pickedSubElements.begin(), pickedSubElements.end(), subElementIndex) == pickedSubElements.end())
+            pickedSubElements.push_back(subElementIndex);
+    }
+    else
+    {
+        const bool requireFullyContained = end.x >= start.x;
+        const Ref<Camera> camera = app.GetViewportCamera();
+        const std::vector<int> rectMatches = object2D->FindSubElementsInViewportRect(
+            camera->GetViewMatrix(), camera->GetProjectionMatrix(), viewportSize,
+            minPoint, maxPoint, requireFullyContained);
+        for (int subElementIndex : rectMatches)
         {
-            const float tx = samplesX == 1 ? 0.5f : (float)x / (float)(samplesX - 1);
-            const glm::vec2 sample = glm::mix(minPoint, maxPoint, glm::vec2(tx, ty));
-            const int pickupX = (int)sample.x;
-            const int pickupY = ViewportMouseToFramebufferY(sample.y, viewportSize.y);
-            const int subElementIndex = app.ReadPickupPixel(pickupX, pickupY) - 1;
-            if (subElementIndex >= 0 && subElementIndex < (int)object2D->GetSubElementCount() &&
-                std::find(pickedSubElements.begin(), pickedSubElements.end(), subElementIndex) == pickedSubElements.end())
-            {
+            if (std::find(pickedSubElements.begin(), pickedSubElements.end(), subElementIndex) == pickedSubElements.end())
                 pickedSubElements.push_back(subElementIndex);
-            }
         }
     }
 

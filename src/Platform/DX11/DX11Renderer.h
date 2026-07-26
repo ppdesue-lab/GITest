@@ -12,7 +12,12 @@ public:
 	void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) override;
 	void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t indexCount) override;
 	void DrawPoints(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) override;
+	Ref<RendererLineInstanceBuffer> CreateLineInstanceBuffer(
+		const RendererLineInstance* lines, uint32_t lineCount) override;
 	bool DrawInstancedLines(const RendererLineInstance* lines, uint32_t lineCount,
+		const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
+		const glm::vec2& viewportSize) override;
+	bool DrawInstancedLines(const Ref<RendererLineInstanceBuffer>& lineBuffer, uint32_t lineCount,
 		const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
 		const glm::vec2& viewportSize) override;
 	void SetLineWidth(float width) override;

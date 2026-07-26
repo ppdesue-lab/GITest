@@ -61,7 +61,7 @@ public:
 	Scene& GetScene() { return m_Scene; }
 	Ref<Object3D> LoadObject3D(const std::filesystem::path& filepath);
 	Ref<Object3D> LoadTexturePlane(const std::filesystem::path& filepath);
-	Ref<Object3D> LoadGCode(const std::filesystem::path& filepath);
+	Ref<Object3D> LoadGCode(const std::filesystem::path& filepath, bool useInstancedRendering = false);
 	Ref<Object3D> LoadVector2D(const std::filesystem::path& filepath,
 		DxfImportMode mode = DxfImportMode::LinesWithArcFit, bool bPostProcess = true);
 	Ref<Object3D> LoadManixVolume();

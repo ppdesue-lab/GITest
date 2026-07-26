@@ -16,6 +16,60 @@ Microsoft::WRL::ComPtr<ID3D11PixelShader> s_InstancedLinePS;
 Microsoft::WRL::ComPtr<ID3D11Buffer> s_InstancedLineBuffer;
 Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> s_InstancedLineSRV;
 Microsoft::WRL::ComPtr<ID3D11Buffer> s_InstancedLineCBuffer;
+uint32_t s_InstancedLineCapacity = 0;
+
+class DX11LineInstanceBuffer : public RendererLineInstanceBuffer
+{
+public:
+	DX11LineInstanceBuffer(const RendererLineInstance* lines, uint32_t lineCount)
+		: m_LineCount(lineCount)
+	{
+		if (!lines || lineCount == 0)
+			return;
+
+		ID3D11Device* device = DX11Context::GetDevice();
+		if (!device)
+			return;
+
+		D3D11_BUFFER_DESC bufferDesc = {};
+		bufferDesc.ByteWidth = lineCount * (uint32_t)sizeof(RendererLineInstance);
+		bufferDesc.Usage = D3D11_USAGE_DEFAULT;
+		bufferDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		bufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		bufferDesc.StructureByteStride = sizeof(RendererLineInstance);
+
+		D3D11_SUBRESOURCE_DATA initData = {};
+		initData.pSysMem = lines;
+		if (FAILED(device->CreateBuffer(&bufferDesc, &initData, &m_Buffer)))
+		{
+			::Log::GetCoreLogger()->error("[DX11Renderer] Failed to create static instanced line buffer");
+			m_LineCount = 0;
+			return;
+		}
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+		srvDesc.Buffer.NumElements = lineCount;
+		if (FAILED(device->CreateShaderResourceView(m_Buffer.Get(), &srvDesc, &m_SRV)))
+		{
+			::Log::GetCoreLogger()->error("[DX11Renderer] Failed to create static instanced line SRV");
+			m_Buffer.Reset();
+			m_LineCount = 0;
+			return;
+		}
+	}
+
+	uint32_t GetLineCount() const override { return m_LineCount; }
+	ID3D11ShaderResourceView* GetSRV() const { return m_SRV.Get(); }
+	bool IsValid() const { return m_SRV != nullptr && m_LineCount > 0; }
+
+private:
+	Microsoft::WRL::ComPtr<ID3D11Buffer> m_Buffer;
+	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_SRV;
+	uint32_t m_LineCount = 0;
+};
 
 HRESULT CompileInstancedLineShader(const char* source, const char* entry, const char* target, ID3DBlob** blob)
 {
@@ -40,6 +94,8 @@ bool EnsureInstancedLineShaders(ID3D11Device* device)
             float4 Start;
             float4 End;
             float4 Color;
+            float4 Meta0;
+            float4 Meta1;
         };
 
         StructuredBuffer<LineInstance> u_Lines : register(t0);
@@ -56,21 +112,40 @@ bool EnsureInstancedLineShaders(ID3D11Device* device)
         {
             float4 Position : SV_POSITION;
             float4 Color : COLOR0;
+            float4 Meta0 : TEXCOORD0;
+            float LinearDepth : TEXCOORD1;
         };
 
-        float4 TransformLinePoint(float3 localPosition)
+        float4 TransformLinePoint(float3 localPosition, out float linearDepth)
         {
             float4 local = float4(localPosition, 1.0);
             float4 world = mul(u_Model, local);
             float4 view = mul(u_View, world);
+            linearDepth = max(-view.z, 0.0001);
             return mul(u_Projection, view);
+        }
+
+        float4 ResolveLineColor(float4 inputColor, float4 meta0)
+        {
+            if (meta0.x >= 0.5 && meta0.x < 1.5)
+            {
+                float colorType = meta0.y;
+                if (colorType < 0.5)
+                    return float4(1.0, 0.12, 0.08, 1.0);
+                if (colorType < 1.5)
+                    return float4(0.08, 0.88, 0.18, 1.0);
+                return float4(0.15, 0.45, 1.0, 1.0);
+            }
+            return inputColor;
         }
 
         VSOut VSMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
         {
             LineInstance segment = u_Lines[instanceID];
-            float4 clipStart = TransformLinePoint(segment.Start.xyz);
-            float4 clipEnd = TransformLinePoint(segment.End.xyz);
+            float startDepth = 0.0;
+            float endDepth = 0.0;
+            float4 clipStart = TransformLinePoint(segment.Start.xyz, startDepth);
+            float4 clipEnd = TransformLinePoint(segment.End.xyz, endDepth);
             float2 startNdc = clipStart.xy / max(abs(clipStart.w), 0.000001);
             float2 endNdc = clipEnd.xy / max(abs(clipEnd.w), 0.000001);
             float2 viewport = max(u_LineParams.xy, float2(1.0, 1.0));
@@ -87,13 +162,24 @@ bool EnsureInstancedLineShaders(ID3D11Device* device)
 
             VSOut output;
             output.Position = clipPos + float4(offsetNdc * clipPos.w, 0.0, 0.0);
-            output.Color = segment.Color;
+            output.Color = ResolveLineColor(segment.Color, segment.Meta0);
+            output.Meta0 = segment.Meta0;
+            output.LinearDepth = useEnd ? endDepth : startDepth;
             return output;
         }
 
         float4 PSMain(VSOut input) : SV_TARGET
         {
-            return input.Color;
+            float4 color = input.Color;
+            if (input.Meta0.x >= 0.5 && input.Meta0.x < 1.5)
+            {
+                float depthMetric = log2(input.LinearDepth + 10.0);
+                float depthSlope = abs(ddx(depthMetric)) + abs(ddy(depthMetric));
+                float shade = exp(-60.0 * depthSlope * 4.0);
+                shade = clamp(lerp(1.0, shade, 0.6), 0.45, 1.0);
+                color.rgb *= shade;
+            }
+            return color;
         }
     )";
 
@@ -130,6 +216,57 @@ bool EnsureInstancedLineCBuffer(ID3D11Device* device)
 		::Log::GetCoreLogger()->error("[DX11Renderer] Failed to create instanced line constant buffer");
 		return false;
 	}
+	return true;
+}
+
+bool DrawInstancedLinesFromSRV(ID3D11ShaderResourceView* srv, uint32_t lineCount,
+	const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
+	const glm::vec2& viewportSize, float lineWidth)
+{
+	if (!srv || lineCount == 0)
+		return false;
+
+	ID3D11Device* device = DX11Context::GetDevice();
+	ID3D11DeviceContext* context = DX11Context::GetDeviceContext();
+	if (!device || !context)
+		return false;
+
+	if (!EnsureInstancedLineShaders(device) || !EnsureInstancedLineCBuffer(device))
+		return false;
+
+	struct LineCBuffer
+	{
+		glm::mat4 View;
+		glm::mat4 Projection;
+		glm::mat4 Model;
+		glm::vec4 Params;
+	};
+
+	D3D11_MAPPED_SUBRESOURCE mapped = {};
+	if (FAILED(context->Map(s_InstancedLineCBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+		return false;
+
+	const glm::vec2 safeViewportSize(glm::max(viewportSize.x, 1.0f), glm::max(viewportSize.y, 1.0f));
+	LineCBuffer cb = {};
+	cb.View = view;
+	cb.Projection = proj;
+	cb.Model = model;
+	cb.Params = glm::vec4(safeViewportSize, lineWidth, 0.0f);
+	memcpy(mapped.pData, &cb, sizeof(cb));
+	context->Unmap(s_InstancedLineCBuffer.Get(), 0);
+
+	ID3D11Buffer* cbuffer = s_InstancedLineCBuffer.Get();
+	context->IASetInputLayout(nullptr);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+	context->VSSetShader(s_InstancedLineVS.Get(), nullptr, 0);
+	context->VSSetConstantBuffers(0, 1, &cbuffer);
+	context->VSSetShaderResources(0, 1, &srv);
+	context->GSSetShader(nullptr, nullptr, 0);
+	context->PSSetShader(s_InstancedLinePS.Get(), nullptr, 0);
+	context->DrawInstanced(4, lineCount, 0, 0);
+
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	context->VSSetShaderResources(0, 1, &nullSRV);
 	return true;
 }
 }
@@ -237,6 +374,15 @@ void DX11Renderer::DrawPoints(const Ref<VertexArray>& vertexArray, uint32_t vert
 	DX11Shader::SetPointExpansion(false, 1.0f);
 }
 
+Ref<RendererLineInstanceBuffer> DX11Renderer::CreateLineInstanceBuffer(
+	const RendererLineInstance* lines, uint32_t lineCount)
+{
+	if (!lines || lineCount == 0)
+		return nullptr;
+	Ref<DX11LineInstanceBuffer> buffer = CreateRef<DX11LineInstanceBuffer>(lines, lineCount);
+	return buffer->IsValid() ? buffer : nullptr;
+}
+
 bool DX11Renderer::DrawInstancedLines(const RendererLineInstance* lines, uint32_t lineCount,
 	const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
 	const glm::vec2& viewportSize)
@@ -253,71 +399,66 @@ bool DX11Renderer::DrawInstancedLines(const RendererLineInstance* lines, uint32_
 	if (!EnsureInstancedLineShaders(device) || !EnsureInstancedLineCBuffer(device))
 		return false;
 
-	s_InstancedLineSRV.Reset();
-	s_InstancedLineBuffer.Reset();
-
-	D3D11_BUFFER_DESC bufferDesc = {};
-	bufferDesc.ByteWidth = (UINT)(lineCount * sizeof(RendererLineInstance));
-	bufferDesc.Usage = D3D11_USAGE_DEFAULT;
-	bufferDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	bufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-	bufferDesc.StructureByteStride = sizeof(RendererLineInstance);
-
-	D3D11_SUBRESOURCE_DATA initData = {};
-	initData.pSysMem = lines;
-	if (FAILED(device->CreateBuffer(&bufferDesc, &initData, &s_InstancedLineBuffer)))
+	if (!s_InstancedLineBuffer || lineCount > s_InstancedLineCapacity)
 	{
-		::Log::GetCoreLogger()->error("[DX11Renderer] Failed to create instanced line buffer");
-		return false;
-	}
-
-	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-	srvDesc.Buffer.FirstElement = 0;
-	srvDesc.Buffer.NumElements = lineCount;
-	if (FAILED(device->CreateShaderResourceView(s_InstancedLineBuffer.Get(), &srvDesc, &s_InstancedLineSRV)))
-	{
-		::Log::GetCoreLogger()->error("[DX11Renderer] Failed to create instanced line SRV");
 		s_InstancedLineBuffer.Reset();
-		return false;
+		s_InstancedLineSRV.Reset();
+		s_InstancedLineCapacity = lineCount;
+
+		D3D11_BUFFER_DESC bufferDesc = {};
+		bufferDesc.ByteWidth = (UINT)(s_InstancedLineCapacity * sizeof(RendererLineInstance));
+		bufferDesc.Usage = D3D11_USAGE_DEFAULT;
+		bufferDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		bufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		bufferDesc.StructureByteStride = sizeof(RendererLineInstance);
+
+		if (FAILED(device->CreateBuffer(&bufferDesc, nullptr, &s_InstancedLineBuffer)))
+		{
+			::Log::GetCoreLogger()->error("[DX11Renderer] Failed to create instanced line buffer");
+			s_InstancedLineCapacity = 0;
+			return false;
+		}
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+		srvDesc.Buffer.NumElements = s_InstancedLineCapacity;
+		if (FAILED(device->CreateShaderResourceView(s_InstancedLineBuffer.Get(), &srvDesc, &s_InstancedLineSRV)))
+		{
+			::Log::GetCoreLogger()->error("[DX11Renderer] Failed to create instanced line SRV");
+			s_InstancedLineBuffer.Reset();
+			s_InstancedLineCapacity = 0;
+			return false;
+		}
 	}
+	D3D11_BOX updateBox = {};
+	updateBox.left = 0;
+	updateBox.right = lineCount * sizeof(RendererLineInstance);
+	updateBox.top = 0;
+	updateBox.bottom = 1;
+	updateBox.front = 0;
+	updateBox.back = 1;
+	context->UpdateSubresource(s_InstancedLineBuffer.Get(), 0, &updateBox, lines, 0, 0);
+	return DrawInstancedLinesFromSRV(s_InstancedLineSRV.Get(), lineCount,
+		view, proj, model, viewportSize, m_LineWidth);
+}
 
-	struct LineCBuffer
-	{
-		glm::mat4 View;
-		glm::mat4 Projection;
-		glm::mat4 Model;
-		glm::vec4 Params;
-	};
-
-	D3D11_MAPPED_SUBRESOURCE mapped = {};
-	if (FAILED(context->Map(s_InstancedLineCBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+bool DX11Renderer::DrawInstancedLines(const Ref<RendererLineInstanceBuffer>& lineBuffer, uint32_t lineCount,
+	const glm::mat4& view, const glm::mat4& proj, const glm::mat4& model,
+	const glm::vec2& viewportSize)
+{
+	PROFILE_SCOPE("DX11.DrawInstancedLines.Static");
+	if (!lineBuffer || lineCount == 0)
 		return false;
 
-	const glm::vec2 safeViewportSize(glm::max(viewportSize.x, 1.0f), glm::max(viewportSize.y, 1.0f));
-	LineCBuffer cb = {};
-	cb.View = view;
-	cb.Projection = proj;
-	cb.Model = model;
-	cb.Params = glm::vec4(safeViewportSize, m_LineWidth, 0.0f);
-	memcpy(mapped.pData, &cb, sizeof(cb));
-	context->Unmap(s_InstancedLineCBuffer.Get(), 0);
+	const DX11LineInstanceBuffer* buffer = dynamic_cast<const DX11LineInstanceBuffer*>(lineBuffer.get());
+	if (!buffer || !buffer->IsValid())
+		return false;
 
-	ID3D11Buffer* cbuffer = s_InstancedLineCBuffer.Get();
-	ID3D11ShaderResourceView* srv = s_InstancedLineSRV.Get();
-	context->IASetInputLayout(nullptr);
-	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-	context->VSSetShader(s_InstancedLineVS.Get(), nullptr, 0);
-	context->VSSetConstantBuffers(0, 1, &cbuffer);
-	context->VSSetShaderResources(0, 1, &srv);
-	context->GSSetShader(nullptr, nullptr, 0);
-	context->PSSetShader(s_InstancedLinePS.Get(), nullptr, 0);
-	context->DrawInstanced(4, lineCount, 0, 0);
-
-	ID3D11ShaderResourceView* nullSRV = nullptr;
-	context->VSSetShaderResources(0, 1, &nullSRV);
-	return true;
+	const uint32_t drawCount = glm::min(lineCount, buffer->GetLineCount());
+	return DrawInstancedLinesFromSRV(buffer->GetSRV(), drawCount,
+		view, proj, model, viewportSize, m_LineWidth);
 }
 
 void DX11Renderer::SetLineWidth(float width)

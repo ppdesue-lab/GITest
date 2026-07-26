@@ -98,6 +98,12 @@ public:
     }
 
 private:
+    enum class DistanceMode
+    {
+        Absolute,
+        Incremental
+    };
+
     void LoadFromStream(std::istream& input, const std::string& sourceName)
     {
         m_SourceName = sourceName;
@@ -112,6 +118,7 @@ private:
         glm::vec3 currentPosition(0.0f);
         glm::vec3 currentRotary(0.0f);
         std::string currentMotionCode;
+        DistanceMode currentDistanceMode = DistanceMode::Absolute;
         int currentTool = 0;
         int currentToolpath = 0;
         bool currentLaser = false;
@@ -161,7 +168,10 @@ private:
                 currentLaser = true;
             }
 
-            const bool explicitMotion = IsMotionLine(line);
+            UpdateDistanceMode(line, currentDistanceMode);
+
+            std::string explicitMotionCode;
+            const bool explicitMotion = TryExtractMotionCode(line, explicitMotionCode);
             const bool modalContinuation = !explicitMotion && IsModalMotionContinuationLine(line, currentMotionCode);
             if (!explicitMotion && !modalContinuation)
                 continue;
@@ -171,10 +181,15 @@ private:
                 currentTool = 1;
                 EnsureDefaultTool(currentTool);
             }
-            currentPosition = ParseMotionLine(line, currentPosition);
-            currentRotary = ParseRotaryMotion(line, currentRotary);
+            // G53 is non-modal and addresses the machine coordinate system directly.
+            // With no work-offset model in this parser, that means absolute values for
+            // this block even when the active distance mode is G91.
+            const bool absoluteBlock = ContainsGCode(line, 53) ||
+                currentDistanceMode == DistanceMode::Absolute;
+            currentPosition = ParseMotionLine(line, currentPosition, absoluteBlock);
+            currentRotary = ParseRotaryMotion(line, currentRotary, absoluteBlock);
             if (explicitMotion)
-                currentMotionCode = ExtractMotionCode(line);
+                currentMotionCode = explicitMotionCode;
 
             Move move;
             move.Code = currentMotionCode;
@@ -238,9 +253,95 @@ private:
         return it == values.end() || it->second.empty() ? fallback : std::stoi(it->second);
     }
 
-    static bool IsMotionLine(const std::string& line)
+    static bool TryParseGCodeAt(const std::string& line, size_t pos, int& code, size_t& end)
     {
-        return line.rfind("G0", 0) == 0 || line.rfind("G1", 0) == 0;
+        if (pos >= line.size() || std::toupper(static_cast<unsigned char>(line[pos])) != 'G')
+            return false;
+
+        size_t cursor = pos + 1;
+        if (cursor >= line.size() || !std::isdigit(static_cast<unsigned char>(line[cursor])))
+            return false;
+
+        code = 0;
+        while (cursor < line.size() && std::isdigit(static_cast<unsigned char>(line[cursor])))
+        {
+            code = code * 10 + (line[cursor] - '0');
+            ++cursor;
+        }
+
+        // Decimal G codes (for example G90.1) are distinct modal commands and
+        // must not be mistaken for their integer prefix.
+        if (cursor < line.size() && line[cursor] == '.')
+        {
+            ++cursor;
+            bool hasNonZeroFraction = false;
+            while (cursor < line.size() && std::isdigit(static_cast<unsigned char>(line[cursor])))
+            {
+                hasNonZeroFraction |= line[cursor] != '0';
+                ++cursor;
+            }
+            if (hasNonZeroFraction)
+                return false;
+        }
+
+        end = cursor;
+        return true;
+    }
+
+    static bool ContainsGCode(const std::string& line, int wantedCode)
+    {
+        const size_t comment = line.find(';');
+        const size_t limit = comment == std::string::npos ? line.size() : comment;
+        for (size_t pos = 0; pos < limit; ++pos)
+        {
+            int code = -1;
+            size_t end = pos + 1;
+            if (TryParseGCodeAt(line, pos, code, end) && code == wantedCode)
+                return true;
+            if (end > pos + 1)
+                pos = end - 1;
+        }
+        return false;
+    }
+
+    static void UpdateDistanceMode(const std::string& line, DistanceMode& mode)
+    {
+        const size_t comment = line.find(';');
+        const size_t limit = comment == std::string::npos ? line.size() : comment;
+        for (size_t pos = 0; pos < limit; ++pos)
+        {
+            int code = -1;
+            size_t end = pos + 1;
+            if (TryParseGCodeAt(line, pos, code, end))
+            {
+                if (code == 90)
+                    mode = DistanceMode::Absolute;
+                else if (code == 91)
+                    mode = DistanceMode::Incremental;
+            }
+            if (end > pos + 1)
+                pos = end - 1;
+        }
+    }
+
+    static bool TryExtractMotionCode(const std::string& line, std::string& motionCode)
+    {
+        bool found = false;
+        const size_t comment = line.find(';');
+        const size_t limit = comment == std::string::npos ? line.size() : comment;
+        for (size_t pos = 0; pos < limit; ++pos)
+        {
+            int code = -1;
+            size_t end = pos + 1;
+            if (TryParseGCodeAt(line, pos, code, end) && (code == 0 || code == 1))
+            {
+                motionCode = code == 0 ? "G0" : "G1";
+                found = true;
+            }
+            if (end > pos + 1)
+                pos = end - 1;
+        }
+        return found;
     }
 
     static bool ContainsCommand(const std::string& line, const std::string& command)
@@ -275,15 +376,6 @@ private:
         return !currentMotionCode.empty() && HasCoordinateWords(line);
     }
 
-    static std::string ExtractMotionCode(const std::string& line)
-    {
-        if (line.size() >= 3 && std::isdigit(static_cast<unsigned char>(line[2])))
-            return std::string() + line[0] + line[2];
-        if (line.size() >= 2)
-            return line.substr(0, 2);
-        return line;
-    }
-
     static int ParseToolNumber(const std::string& line)
     {
         size_t pos = 1;
@@ -313,22 +405,32 @@ private:
         return true;
     }
 
-    static glm::vec3 ParseMotionLine(const std::string& line, const glm::vec3& current)
+    static bool ApplyAxisValue(const std::string& line, char axis, float current,
+        bool absolute, float& next)
+    {
+        float commanded = 0.0f;
+        if (!TryParseAxisValue(line, axis, commanded))
+            return false;
+        next = absolute ? commanded : current + commanded;
+        return true;
+    }
+
+    static glm::vec3 ParseMotionLine(const std::string& line, const glm::vec3& current, bool absolute)
     {
         glm::vec3 next = current;
-        TryParseAxisValue(line, 'X', next.x);
-        TryParseAxisValue(line, 'Y', next.y);
-        TryParseAxisValue(line, 'Z', next.z);
+        ApplyAxisValue(line, 'X', current.x, absolute, next.x);
+        ApplyAxisValue(line, 'Y', current.y, absolute, next.y);
+        ApplyAxisValue(line, 'Z', current.z, absolute, next.z);
         return next;
     }
 
-    glm::vec3 ParseRotaryMotion(const std::string& line, const glm::vec3& current)
+    glm::vec3 ParseRotaryMotion(const std::string& line, const glm::vec3& current, bool absolute)
     {
         glm::vec3 next = current;
         bool changed = false;
-        changed |= TryParseAxisValue(line, 'A', next.x);
-        changed |= TryParseAxisValue(line, 'B', next.y);
-        changed |= TryParseAxisValue(line, 'C', next.z);
+        changed |= ApplyAxisValue(line, 'A', current.x, absolute, next.x);
+        changed |= ApplyAxisValue(line, 'B', current.y, absolute, next.y);
+        changed |= ApplyAxisValue(line, 'C', current.z, absolute, next.z);
         if (changed)
         {
             m_HasRotaryMotion = true;

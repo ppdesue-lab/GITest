@@ -630,8 +630,8 @@ void Application::Run()
                 : shadedOpaqueColor;
             if (useTransparentComposite)
                 RenderTransparentStepEdges(postProcessFBO->GetDepthAttachmentRendererID());
-            if (m_ViewportRenderMode == ViewportRenderMode::Editor && !viewport2D &&
-                supportsOpenGLPostProcessing && !IsMSAAEnabled() && m_FXAA->Enabled())
+            if (m_ViewportRenderMode == ViewportRenderMode::Editor &&
+                !IsMSAAEnabled() && m_FXAA->Enabled())
             {
                 m_FXAA->Render(sceneColor);
             }
@@ -639,7 +639,7 @@ void Application::Run()
             {
                 PROFILE_SCOPE("Outline.Composite");
                 uint64_t outlineSource = sceneColor;
-                if (supportsOpenGLPostProcessing && !viewport2D && !IsMSAAEnabled() &&
+                if (!IsMSAAEnabled() &&
                     m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
                     outlineSource = m_FXAA->GetOutputTexture();
                 CompositeSelectedOutline(outlineSource);
@@ -889,10 +889,10 @@ Ref<Object3D> Application::LoadTexturePlane(const std::filesystem::path& filepat
     return object;
 }
 
-Ref<Object3D> Application::LoadGCode(const std::filesystem::path& filepath)
+Ref<Object3D> Application::LoadGCode(const std::filesystem::path& filepath, bool useInstancedRendering)
 {
     Ref<GCodeObject> object = CreateRef<GCodeObject>();
-    if (!object->LoadFromFile(filepath))
+    if (!object->LoadFromFile(filepath, useInstancedRendering))
         return nullptr;
 
     std::string displayName;
@@ -2335,7 +2335,7 @@ uint64_t Application::GetViewportColorTextureID() const
         return m_SVGF->GetOutputTexture();
     if (m_ViewportRenderMode == ViewportRenderMode::Rendering && m_PathTracer && m_PathTracer->GetOutputTexture())
         return m_PathTracer->GetOutputTexture();
-    if (!IsViewport2D() && !IsMSAAEnabled() && m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
+    if (!IsMSAAEnabled() && m_FXAA && m_FXAA->Enabled() && m_FXAA->GetOutputTexture())
         return m_FXAA->GetOutputTexture();
     if (m_OITCompositeValid && m_OITCompositeTexture)
         return m_OITCompositeTexture;

@@ -1,5 +1,6 @@
 #include "GCodeObject.h"
 
+#include <Application.h>
 #include <Renderer/Buffer.h>
 #include <Renderer/RenderCommand.h>
 #include <Renderer/VertexArray.h>
@@ -33,15 +34,16 @@ GCodeObject::GCodeObject()
     EnsureShader();
 }
 
-bool GCodeObject::LoadFromFile(const std::filesystem::path& filepath)
+bool GCodeObject::LoadFromFile(const std::filesystem::path& filepath, bool useInstancedRendering)
 {
     const std::string content = ReadTextFile(filepath);
     if (content.empty())
         return false;
-    return LoadFromContent(content, filepath.u8string());
+    return LoadFromContent(content, filepath.u8string(), useInstancedRendering);
 }
 
-bool GCodeObject::LoadFromContent(const std::string& content, const std::string& sourceName)
+bool GCodeObject::LoadFromContent(const std::string& content, const std::string& sourceName,
+    bool useInstancedRendering)
 {
     try
     {
@@ -53,6 +55,7 @@ bool GCodeObject::LoadFromContent(const std::string& content, const std::string&
         return false;
     }
 
+    m_UseInstancedRendering = useInstancedRendering;
     m_SourceName = sourceName;
     if (!BuildLineGeometry())
         return false;
@@ -140,6 +143,11 @@ void GCodeObject::EnsureShader()
 bool GCodeObject::BuildLineGeometry()
 {
     m_LineVertices.clear();
+    m_LineInstances.clear();
+    m_LineInstanceBuffer = nullptr;
+    m_NonFastLineInstanceBuffer = nullptr;
+    m_NonFastLineInstanceCount = 0;
+    m_NonFastDisplayCounts.clear();
     m_SegmentToMoveIndex.clear();
     m_TotalDistance = 0.0f;
 
@@ -148,6 +156,8 @@ bool GCodeObject::BuildLineGeometry()
         return false;
 
     int segmentIndex = 0;
+    std::vector<RendererLineInstance> nonFastLineInstances;
+    m_NonFastDisplayCounts.push_back(0);
     for (size_t i = 1; i < moves.size(); ++i)
     {
         const gcode::Move& prev = moves[i - 1];
@@ -164,7 +174,17 @@ bool GCodeObject::BuildLineGeometry()
             (float)segmentIndex, (float)curr.ToolNumber, (float)curr.ToolpathNumber });
         m_LineVertices.push_back({ glm::vec4(curr.Position, curr.RotaryDegrees.x), colorType,
             (float)segmentIndex, (float)curr.ToolNumber, (float)curr.ToolpathNumber });
+        RendererLineInstance instance;
+        instance.Start = glm::vec4(prev.Position, prev.RotaryDegrees.x);
+        instance.End = glm::vec4(curr.Position, curr.RotaryDegrees.x);
+        instance.Color = glm::vec4(1.0f);
+        instance.Meta0 = glm::vec4(1.0f, colorType, (float)segmentIndex, 0.0f);
+        instance.Meta1 = glm::vec4((float)curr.ToolNumber, (float)curr.ToolpathNumber, 0.0f, 0.0f);
+        m_LineInstances.push_back(instance);
+        if (colorType >= 0.5f)
+            nonFastLineInstances.push_back(instance);
         m_SegmentToMoveIndex.push_back(i);
+        m_NonFastDisplayCounts.push_back((uint32_t)nonFastLineInstances.size());
         m_TotalDistance += glm::distance(prev.Position, curr.Position);
         ++segmentIndex;
     }
@@ -173,6 +193,18 @@ bool GCodeObject::BuildLineGeometry()
     m_DisplayIndex = m_TotalSegments;
     if (m_LineVertices.empty())
         return false;
+
+    if (m_UseInstancedRendering)
+    {
+        m_LineInstanceBuffer = RenderCommand::CreateLineInstanceBuffer(m_LineInstances.data(),
+            (uint32_t)m_LineInstances.size());
+        if (!nonFastLineInstances.empty())
+        {
+            m_NonFastLineInstanceCount = (uint32_t)nonFastLineInstances.size();
+            m_NonFastLineInstanceBuffer = RenderCommand::CreateLineInstanceBuffer(nonFastLineInstances.data(),
+                m_NonFastLineInstanceCount);
+        }
+    }
 
     m_LineVertexArray = VertexArray::Create();
     auto vertexBuffer = VertexBuffer::Create(reinterpret_cast<float*>(m_LineVertices.data()),
@@ -328,16 +360,39 @@ void GCodeObject::Draw(const glm::mat4& view, const glm::mat4 proj, bool transpa
     if (transparentPass || !m_LineVertexArray || !m_LineShader || m_LineVertices.empty())
         return;
 
-    m_LineShader->Bind();
-    m_LineShader->SetMat4("u_Model", Transfm.GetMatrix());
-    m_LineShader->SetMat4("u_View", view);
-    m_LineShader->SetMat4("u_Projection", proj);
-    m_LineShader->SetInt("u_DisplayIndex", m_DisplayIndex);
-    m_LineShader->SetInt("u_HideFastMoves", m_ShowFastMoves ? 0 : 1);
-
     RenderCommand::SetLineWidth(2.0f);
-    RenderCommand::DrawLines(m_LineVertexArray, (uint32_t)m_LineVertices.size());
+    const glm::mat4 objectTransform = Transfm.GetMatrix();
+    const uint32_t displayCount = glm::clamp(m_DisplayIndex, 0, m_TotalSegments);
+    const glm::vec2 viewportSize = Application::Get().GetViewportSize();
+    bool drewInstancedLines = false;
+    if (m_UseInstancedRendering && displayCount > 0)
+    {
+        if (m_ShowFastMoves && m_LineInstanceBuffer)
+        {
+            drewInstancedLines = RenderCommand::DrawInstancedLines(m_LineInstanceBuffer, displayCount,
+                view, proj, objectTransform, viewportSize);
+        }
+        else if (!m_ShowFastMoves && m_NonFastLineInstanceBuffer)
+        {
+            const uint32_t nonFastDisplayCount = displayCount < m_NonFastDisplayCounts.size() ?
+                m_NonFastDisplayCounts[displayCount] : m_NonFastLineInstanceCount;
+            drewInstancedLines = nonFastDisplayCount == 0 ||
+                RenderCommand::DrawInstancedLines(m_NonFastLineInstanceBuffer, nonFastDisplayCount,
+                    view, proj, objectTransform, viewportSize);
+        }
+    }
+
+    if (!drewInstancedLines && displayCount > 0)
+    {
+        m_LineShader->Bind();
+        m_LineShader->SetMat4("u_Model", objectTransform);
+        m_LineShader->SetMat4("u_View", view);
+        m_LineShader->SetMat4("u_Projection", proj);
+        m_LineShader->SetInt("u_DisplayIndex", m_DisplayIndex);
+        m_LineShader->SetInt("u_HideFastMoves", m_ShowFastMoves ? 0 : 1);
+        RenderCommand::DrawLines(m_LineVertexArray, (uint32_t)m_LineVertices.size());
+    }
 
     if (m_ShowTool && m_CurrentToolMesh)
-        m_CurrentToolMesh->Draw(view, proj, Transfm.GetMatrix(), 1.0f, false);
+        m_CurrentToolMesh->Draw(view, proj, objectTransform, 1.0f, false);
 }

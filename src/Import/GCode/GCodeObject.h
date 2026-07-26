@@ -2,6 +2,7 @@
 
 #include "CNCParser.h"
 #include <Object3D.h>
+#include <Renderer/Renderer.h>
 #include <Renderer/Shader.h>
 #include <filesystem>
 #include <map>
@@ -22,8 +23,9 @@ class GCodeObject : public Object3D
 public:
     GCodeObject();
 
-    bool LoadFromFile(const std::filesystem::path& filepath);
-    bool LoadFromContent(const std::string& content, const std::string& sourceName = "<content>");
+    bool LoadFromFile(const std::filesystem::path& filepath, bool useInstancedRendering = false);
+    bool LoadFromContent(const std::string& content, const std::string& sourceName = "<content>",
+        bool useInstancedRendering = false);
     void Draw(const glm::mat4& view, const glm::mat4 proj, bool transparentPass = false) override;
 
     void SetProgress(float progress);
@@ -55,6 +57,11 @@ private:
     gcode::CNCProgram m_Program;
     std::string m_SourceName;
     std::vector<GCodeLineVertex> m_LineVertices;
+    std::vector<RendererLineInstance> m_LineInstances;
+    Ref<RendererLineInstanceBuffer> m_LineInstanceBuffer;
+    Ref<RendererLineInstanceBuffer> m_NonFastLineInstanceBuffer;
+    uint32_t m_NonFastLineInstanceCount = 0;
+    std::vector<uint32_t> m_NonFastDisplayCounts;
     std::vector<size_t> m_SegmentToMoveIndex;
     Ref<VertexArray> m_LineVertexArray;
     Ref<Shader> m_LineShader;
@@ -69,4 +76,5 @@ private:
     bool m_Playing = false;
     bool m_ShowFastMoves = true;
     bool m_ShowTool = true;
+    bool m_UseInstancedRendering = false;
 };

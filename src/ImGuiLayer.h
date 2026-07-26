@@ -110,6 +110,7 @@ private:
     std::filesystem::path m_ActiveImportPath;
     DxfImportMode m_SelectedDxfImportMode = DxfImportMode::LinesWithArcFit;
     bool m_DxfPostProcess = true;
+    bool m_GCodeUseInstancedRendering = false;
 
     // Console
     static std::deque<ConsoleMessage> s_ConsoleMessages;

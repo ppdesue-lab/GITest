@@ -52,6 +52,12 @@ public:
     const std::vector<int>& GetSelectedSubElementIndices() const { return m_SelectedSubElementIndices; }
     bool GetObjectBounds(glm::vec3& minimum, glm::vec3& maximum) const;
     bool GetSelectedSubElementBounds(glm::vec3& minimum, glm::vec3& maximum) const;
+    bool IsGeometryInViewportRect(const glm::mat4& view, const glm::mat4& projection,
+        const glm::vec2& viewportSize, const glm::vec2& rectMinimum, const glm::vec2& rectMaximum,
+        bool requireFullyContained) const;
+    std::vector<int> FindSubElementsInViewportRect(const glm::mat4& view, const glm::mat4& projection,
+        const glm::vec2& viewportSize, const glm::vec2& rectMinimum, const glm::vec2& rectMaximum,
+        bool requireFullyContained) const;
     void SetSelectedSubElementIndex(int index) override;
     void SetSelectedSubElementIndices(const std::vector<int>& indices);
     void ClearSelectedSubElement() override { SetSelectedSubElementIndex(-1); }
@@ -68,10 +74,13 @@ private:
     void EnsurePatternShader();
     void ReleaseElementGeometries();
     void ReleaseBatchedGeometries();
-    void EnsureBatchedGeometries();
+    void EnsureBatchedGeometries(bool hideSelectedSubElements = false);
     void BuildElementGeometry(Object2DElement& element);
     void RebuildSelectedSubElementGeometry();
     Ref<VertexArray> BuildVertexArray(const std::vector<VertexColor>& vertices) const;
+    bool IsSubElementInViewportRect(const Object2DElement& element, const glm::mat4& view,
+        const glm::mat4& projection, const glm::vec2& viewportSize, const glm::vec2& rectMinimum,
+        const glm::vec2& rectMaximum, bool requireFullyContained) const;
 
     std::string m_SourceName;
     std::vector<Vector2DLine> m_Lines;
@@ -84,6 +93,7 @@ private:
     std::vector<RendererLineInstance> m_BatchedLineInstances;
     std::vector<glm::mat4> m_BatchedElementMatrices;
     std::vector<uint8_t> m_BatchedElementVisible;
+    bool m_BatchedHidesSelectedSubElements = false;
     bool m_BatchedGeometryDirty = true;
     GeometryHandle m_SelectedSubElementGeometry;
     uint32_t m_SelectedSubElementVertexCount = 0;

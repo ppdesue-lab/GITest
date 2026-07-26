@@ -166,6 +166,62 @@ bool Mat4NearlyEqual(const glm::mat4& a, const glm::mat4& b)
     return true;
 }
 
+bool PointInsideRect(const glm::vec2& point, const glm::vec2& minimum, const glm::vec2& maximum)
+{
+    return point.x >= minimum.x && point.x <= maximum.x &&
+        point.y >= minimum.y && point.y <= maximum.y;
+}
+
+bool SegmentIntersectsRect(const glm::vec2& start, const glm::vec2& end,
+    const glm::vec2& minimum, const glm::vec2& maximum)
+{
+    if (PointInsideRect(start, minimum, maximum) || PointInsideRect(end, minimum, maximum))
+        return true;
+
+    const glm::vec2 delta = end - start;
+    float enter = 0.0f;
+    float leave = 1.0f;
+    const auto clip = [&](float direction, float distance) {
+        constexpr float kEpsilon = 0.000001f;
+        if (std::abs(direction) <= kEpsilon)
+            return distance >= 0.0f;
+
+        const float ratio = distance / direction;
+        if (direction < 0.0f)
+        {
+            if (ratio > leave)
+                return false;
+            enter = (std::max)(enter, ratio);
+        }
+        else
+        {
+            if (ratio < enter)
+                return false;
+            leave = (std::min)(leave, ratio);
+        }
+        return true;
+    };
+
+    return clip(-delta.x, start.x - minimum.x) &&
+        clip(delta.x, maximum.x - start.x) &&
+        clip(-delta.y, start.y - minimum.y) &&
+        clip(delta.y, maximum.y - start.y) &&
+        enter <= leave;
+}
+
+bool ProjectToViewport(const glm::vec3& worldPosition, const glm::mat4& view,
+    const glm::mat4& projection, const glm::vec2& viewportSize, glm::vec2& screenPosition)
+{
+    const glm::vec4 clipPosition = projection * view * glm::vec4(worldPosition, 1.0f);
+    if (clipPosition.w <= 0.000001f)
+        return false;
+
+    const glm::vec3 ndc = glm::vec3(clipPosition) / clipPosition.w;
+    screenPosition.x = (ndc.x * 0.5f + 0.5f) * viewportSize.x;
+    screenPosition.y = (0.5f - ndc.y * 0.5f) * viewportSize.y;
+    return std::isfinite(screenPosition.x) && std::isfinite(screenPosition.y);
+}
+
 }
 
 Object2D::~Object2D()
@@ -303,7 +359,9 @@ void Object2D::Draw(const glm::mat4& view, const glm::mat4 proj, bool transparen
     RenderCommand::EnableDepthTest(true);
     RenderCommand::SetLineWidth(2.0f);
     const glm::mat4 objectTransform = Transfm.GetMatrix();
-    EnsureBatchedGeometries();
+    const bool hideSelectedSubElements = Application::Get().IsViewport2DEditMode() &&
+        !m_SelectedSubElementIndices.empty();
+    EnsureBatchedGeometries(hideSelectedSubElements);
     Ref<VertexArray> batchedVertexArray = GeometryLibrary::Resolve(m_BatchedGeometry);
     const glm::vec2 viewportSize = Application::Get().GetViewportSize();
     const bool drewInstancedLines = !m_BatchedLineInstances.empty() &&
@@ -441,6 +499,7 @@ void Object2D::SetSelectedSubElementIndex(int index)
         m_SelectedSubElementIndices.push_back(index);
     m_SelectedSubElementIndex = index;
     RebuildSelectedSubElementGeometry();
+    m_BatchedGeometryDirty = true;
 }
 
 void Object2D::SetSelectedSubElementIndices(const std::vector<int>& indices)
@@ -456,6 +515,7 @@ void Object2D::SetSelectedSubElementIndices(const std::vector<int>& indices)
 
     m_SelectedSubElementIndex = m_SelectedSubElementIndices.empty() ? -1 : m_SelectedSubElementIndices.front();
     RebuildSelectedSubElementGeometry();
+    m_BatchedGeometryDirty = true;
 }
 
 std::string Object2D::GetSubElementName(size_t index) const
@@ -565,6 +625,96 @@ bool Object2D::GetSelectedSubElementBounds(glm::vec3& minimum, glm::vec3& maximu
     return hasPoint;
 }
 
+bool Object2D::IsSubElementInViewportRect(const Object2DElement& element, const glm::mat4& view,
+    const glm::mat4& projection, const glm::vec2& viewportSize, const glm::vec2& rectMinimum,
+    const glm::vec2& rectMaximum, bool requireFullyContained) const
+{
+    std::vector<VertexColor> rawVertices;
+    rawVertices.reserve(std::max(element.PrimitiveIndices.size(), element.LineIndices.size()) * 2);
+    if (element.PrimitiveIndices.empty() || !AppendElementPrimitiveLineVertices(element, m_Primitives, rawVertices))
+    {
+        for (uint32_t lineIndex : element.LineIndices)
+        {
+            if (lineIndex >= m_Lines.size())
+                continue;
+            const Vector2DLine& line = m_Lines[lineIndex];
+            rawVertices.emplace_back(glm::vec3(line.Start, 0.0f), line.Color);
+            rawVertices.emplace_back(glm::vec3(line.End, 0.0f), line.Color);
+        }
+    }
+
+    const glm::mat4 model = Transfm.GetMatrix() * element.Transfm.GetMatrix();
+    bool hasProjectedSegment = false;
+    for (size_t i = 0; i + 1 < rawVertices.size(); i += 2)
+    {
+        const glm::vec3 localStart(glm::vec2(rawVertices[i].Position) - element.Center, 0.0f);
+        const glm::vec3 localEnd(glm::vec2(rawVertices[i + 1].Position) - element.Center, 0.0f);
+        const glm::vec3 worldStart = glm::vec3(model * glm::vec4(localStart, 1.0f));
+        const glm::vec3 worldEnd = glm::vec3(model * glm::vec4(localEnd, 1.0f));
+        glm::vec2 screenStart(0.0f);
+        glm::vec2 screenEnd(0.0f);
+        if (!ProjectToViewport(worldStart, view, projection, viewportSize, screenStart) ||
+            !ProjectToViewport(worldEnd, view, projection, viewportSize, screenEnd))
+        {
+            if (requireFullyContained)
+                return false;
+            continue;
+        }
+
+        hasProjectedSegment = true;
+        if (requireFullyContained)
+        {
+            if (!PointInsideRect(screenStart, rectMinimum, rectMaximum) ||
+                !PointInsideRect(screenEnd, rectMinimum, rectMaximum))
+                return false;
+        }
+        else if (SegmentIntersectsRect(screenStart, screenEnd, rectMinimum, rectMaximum))
+        {
+            return true;
+        }
+    }
+
+    return requireFullyContained && hasProjectedSegment;
+}
+
+bool Object2D::IsGeometryInViewportRect(const glm::mat4& view, const glm::mat4& projection,
+    const glm::vec2& viewportSize, const glm::vec2& rectMinimum, const glm::vec2& rectMaximum,
+    bool requireFullyContained) const
+{
+    bool hasVisibleGeometry = false;
+    for (const Object2DElement& element : m_SubElements)
+    {
+        if (!element.Visible || element.VertexCount == 0)
+            continue;
+
+        hasVisibleGeometry = true;
+        const bool matches = IsSubElementInViewportRect(element, view, projection, viewportSize,
+            rectMinimum, rectMaximum, requireFullyContained);
+        if (!requireFullyContained && matches)
+            return true;
+        if (requireFullyContained && !matches)
+            return false;
+    }
+    return requireFullyContained && hasVisibleGeometry;
+}
+
+std::vector<int> Object2D::FindSubElementsInViewportRect(const glm::mat4& view, const glm::mat4& projection,
+    const glm::vec2& viewportSize, const glm::vec2& rectMinimum, const glm::vec2& rectMaximum,
+    bool requireFullyContained) const
+{
+    std::vector<int> matches;
+    for (size_t elementIndex = 0; elementIndex < m_SubElements.size(); ++elementIndex)
+    {
+        const Object2DElement& element = m_SubElements[elementIndex];
+        if (!element.Visible || element.VertexCount == 0)
+            continue;
+        if (IsSubElementInViewportRect(element, view, projection, viewportSize,
+            rectMinimum, rectMaximum, requireFullyContained))
+            matches.push_back((int)elementIndex);
+    }
+    return matches;
+}
+
 Object2D::Object2DElement* Object2D::GetSubElement(size_t index)
 {
     if (index >= m_SubElements.size())
@@ -670,9 +820,10 @@ void Object2D::ReleaseBatchedGeometries()
     m_BatchedGeometryDirty = true;
 }
 
-void Object2D::EnsureBatchedGeometries()
+void Object2D::EnsureBatchedGeometries(bool hideSelectedSubElements)
 {
     bool needsRebuild = m_BatchedGeometryDirty ||
+        m_BatchedHidesSelectedSubElements != hideSelectedSubElements ||
         m_BatchedElementMatrices.size() != m_SubElements.size() ||
         m_BatchedElementVisible.size() != m_SubElements.size();
 
@@ -707,11 +858,12 @@ void Object2D::EnsureBatchedGeometries()
 
     size_t lineVertexReserve = 0;
     size_t pointVertexReserve = 0;
-    for (const Object2DElement& element : m_SubElements)
+    for (size_t elementIndex = 0; elementIndex < m_SubElements.size(); ++elementIndex)
     {
+        const Object2DElement& element = m_SubElements[elementIndex];
         m_BatchedElementMatrices.push_back(element.Transfm.GetMatrix());
         m_BatchedElementVisible.push_back(element.Visible ? 1 : 0);
-        if (!element.Visible)
+        if (!element.Visible || (hideSelectedSubElements && IsSubElementSelected((int)elementIndex)))
             continue;
 
         lineVertexReserve += element.VertexCount;
@@ -723,9 +875,11 @@ void Object2D::EnsureBatchedGeometries()
     std::vector<VertexColor> pointVertices;
     pointVertices.reserve(pointVertexReserve);
 
-    for (const Object2DElement& element : m_SubElements)
+    for (size_t elementIndex = 0; elementIndex < m_SubElements.size(); ++elementIndex)
     {
-        if (!element.Visible || element.VertexCount == 0)
+        const Object2DElement& element = m_SubElements[elementIndex];
+        if (!element.Visible || element.VertexCount == 0 ||
+            (hideSelectedSubElements && IsSubElementSelected((int)elementIndex)))
             continue;
 
         std::vector<VertexColor> rawVertices;
@@ -797,6 +951,7 @@ void Object2D::EnsureBatchedGeometries()
         m_BatchedPointVertexCount = (uint32_t)pointVertices.size();
     }
 
+    m_BatchedHidesSelectedSubElements = hideSelectedSubElements;
     m_BatchedGeometryDirty = false;
 }
 
